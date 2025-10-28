@@ -9,4 +9,4 @@ from .base import PhysicalModel
 from .smoke import SmokeModel
 
 # You can add other models here later
-# from .burgers import BurgersModel
+from .burgers import BurgersModel
