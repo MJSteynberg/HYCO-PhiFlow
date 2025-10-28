@@ -1,0 +1,32 @@
+# configs/smoke_multi_inflow.yaml
+
+model_name: "SmokeModel"
+
+domain:
+  size_x: 80
+  size_y: 100
+resolution:
+  x: 64
+  y: 80
+
+dt: 1.0
+
+# --- FIX: Define inflow parameters here ---
+pde_params:
+  nu: 0.1
+  buoyancy: 1.0
+  inflow_radius: 10.0
+  # Store the randomization ranges from the original script
+  inflow_rand_x_range: [0.2, 0.6]  # (min_factor, mult_factor)
+  inflow_rand_y_range: [0.1, 0.2]  # (min_factor, mult_factor)
+
+data_generation:
+  num_simulations: 5
+  total_steps: 50
+  save_interval: 1
+
+output_data:
+  output_dir: "data/"
+  dataset_name: "smoke_multi_inflow_v1"
+  fields_to_save: ["density", "velocity", "inflow"]
+  fields_scheme: "dVVc"
