@@ -1,3 +1,5 @@
+# scripts/run_data_generation.py
+
 import os
 import sys
 import yaml
@@ -17,7 +19,8 @@ from phi.torch.flow import (
     extrapolation,
     math,
     batch,
-    spatial
+    spatial,
+    channel
 )
 
 # --- Our Model Imports ---
@@ -48,7 +51,7 @@ def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     # Make a copy so we can pop items from it
     pde_params = config.get('pde_params', {}).copy()
     
-    # --- FIX: Generate inflow_center from config ranges ---
+    # --- Generate inflow_center from config ranges ---
     x_range = pde_params.pop('inflow_rand_x_range', [0.2, 0.6])
     y_range = pde_params.pop('inflow_rand_y_range', [0.1, 0.2])
     
@@ -59,9 +62,8 @@ def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     pde_params['inflow_center'] = (rand_x, rand_y)
     
     print(f"Generated new inflow position: ({rand_x:.1f}, {rand_y:.1f})")
-    # 'inflow_radius' is already in pde_params
-    # 'nu' and 'buoyancy' are also in there
-    # --- END FIX ---
+    # All other params (nu, buoyancy, batch_size, inflow_rate, etc.)
+    # are still in the pde_params dict.
 
     # 3. Get the Model Class
     try:
@@ -74,7 +76,7 @@ def get_physical_model(config: dict) -> physical_models.PhysicalModel:
         domain=domain,
         resolution=resolution,
         dt=config['dt'],
-        **pde_params  # Unpacks nu, buoyancy, inflow_center, inflow_radius
+        **pde_params  # Unpacks batch_size, nu, buoyancy, inflow_center, etc.
     )
     return model
 
@@ -97,21 +99,21 @@ def run_generation(config_path: str):
     
     with h5py.File(dset_path, 'w') as f:
         
-        # --- FIX: Match original group name ---
         sims_group = f.create_group('sims')
-        # --- END FIX ---
         
         for i in range(gen_cfg['num_simulations']):
             print(f"\n--- Running Simulation {i+1}/{gen_cfg['num_simulations']} ---")
             
             # --- 1. Get a new model with a new random inflow ---
+            # This model will have batch_size=1
             model = get_physical_model(config)
             
             # --- 2. Get initial state (with batch_size=1) ---
-            # We add a time dimension
+            # --- FIX: Call new method signature ---
+            # model.get_initial_state() now returns a batched state
             state_list = [
                 s.expand(batch(time=1))
-                for s in model.get_initial_state(batch_size=1)
+                for s in model.get_initial_state() # <-- CHANGED
             ]
             
             # --- 3. Run the simulation loop ---
@@ -124,8 +126,9 @@ def run_generation(config_path: str):
                         new_slice = next_state[j].expand(batch(time=1))
                         state_list[j] = math.concat([state_list[j], new_slice], 'time')
 
-            # --- 4. Prepare data for saving (This part was correct) ---
-            vel, den = state_list[0], state_list[1]
+            # --- 4. Prepare data for saving (This part is correct) ---
+            # (Assumes get_initial_state returns (velocity, density))
+            vel, den = state_list[0], state_list[1] 
             vel_x_cen = vel.vector['x'].at(den)
             vel_y_cen = vel.vector['y'].at(den)
             
@@ -133,25 +136,23 @@ def run_generation(config_path: str):
                 den.values,
                 vel_x_cen.values,
                 vel_y_cen.values,
-                model.inflow.values
+                model.inflow.values # This will broadcast from (1, 1, Y, X)
             ], dim=channel('channels'))
             
-            sim_data_np = sim_data.numpy('time, channels, y, x')
+            # Remove the batch=1 dim, keep (T, C, Y, X)
+            sim_data_np = sim_data.numpy('time, channels, y, x') 
             sims_group.create_dataset(f'sim{i}', data=sim_data_np)
         
-        # --- 5. Save metadata ---
+        # --- 5. Save metadata (This part is correct) ---
         print("\nAll simulations complete. Saving metadata...")
         
-        # --- FIX: Match original metadata keys and values ---
         f.attrs['PDE'] = config.get('pde_name', 'Incompressible Navier-Stokes with Boussinesq')
         f.attrs['Fields Scheme'] = out_cfg['fields_scheme']
         f.attrs['Fields'] = out_cfg['fields_to_save']
         f.attrs['Constants'] = []  # Match original
         
-        # Match original Dt logic (sim_dt * save_interval)
         saved_dt = config['dt'] * gen_cfg['save_interval']
         f.attrs['Dt'] = float(saved_dt)
-        # --- END FIX ---
 
 if __name__ == "__main__":
     # We point to our new config file
