@@ -5,6 +5,7 @@ from phi.torch.flow import *
 from phi.math import jit_compile, batch
 from .base import PhysicalModel  # <-- Import our new base class
 import random
+from typing import Dict
 
 
 # --- JIT-Compiled Physics Function ---
@@ -118,7 +119,7 @@ class SmokeModel(PhysicalModel):
         print(f"SmokeModel created inflow at {inflow_center} "
               f"with shape {self.inflow.shape}")
 
-    def get_initial_state(self) -> tuple[StaggeredGrid, CenteredGrid]:
+    def get_initial_state(self) -> Dict[str, Field]:
         """
         Returns an initial state of (zero velocity, zero density).
         """
@@ -144,19 +145,20 @@ class SmokeModel(PhysicalModel):
         # No more batch size check against inflow,
         # as self.inflow (batch=1) will broadcast to batch=N
         
-        return velocity_0, density_0
+        return {"velocity": velocity_0, "density": density_0}
 
-    def step(self, velocity: StaggeredGrid, density: CenteredGrid) -> tuple[StaggeredGrid, CenteredGrid]:
+    def step(self, velocity: StaggeredGrid, density: CenteredGrid) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """
         # This is unchanged and will now use the internally created self.inflow
-        return _smoke_physics_step(
-            velocity=velocity,
-            density=density,
-            inflow=self.inflow,
-            domain=self.domain,
-            dt=self.dt,
-            buoyancy_factor=self.buoyancy,
-            nu=self.nu
-        )
+        new_velocity, new_density =_smoke_physics_step(
+                velocity=velocity,
+                density=density,
+                inflow=self.inflow,
+                domain=self.domain,
+                dt=self.dt,
+                buoyancy_factor=self.buoyancy,
+                nu=self.nu
+            )
+        return {"velocity": new_velocity, "density": new_density}

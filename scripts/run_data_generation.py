@@ -14,9 +14,14 @@ from src.data_generation.generator import run_generation
 
 if __name__ == "__main__":
     # --- Define Configuration ---
+    experiments = ['burgers', 'smoke']
 
-    CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'smoke.yaml')
+    CONFIG_FILE_PATHS = {
+        'burgers': os.path.join(PROJECT_ROOT, 'configs', 'burgers.yaml'),
+        'smoke': os.path.join(PROJECT_ROOT, 'configs', 'smoke.yaml')
+    }
 
-    
     # --- Run ---
-    run_generation(CONFIG_FILE_PATH, PROJECT_ROOT)
+    for exp in experiments:
+        config_path = CONFIG_FILE_PATHS[exp]
+        run_generation(config_path, PROJECT_ROOT)

@@ -6,10 +6,10 @@ domain:
   size_x: 100
   size_y: 100
 resolution:
-  x: 256
-  y: 256
+  x: 512
+  y: 512
 
-dt: 0.5
+dt: 0.2
 
 # --- UPDATED: Added batch_size and inflow_rate ---
 pde_params:
@@ -22,12 +22,12 @@ pde_params:
   inflow_rand_y_range: [0.15, 0.05]
 
 data_generation:
-  num_simulations: 10
-  total_steps: 100
+  num_simulations: 50
+  total_steps: 200
   save_interval: 1
 
 output_data:
   output_dir: "data/"
   dataset_name: "smoke_v1"
-  fields_to_save: ["density", "velocity", "inflow"]
-  fields_scheme: "dVVc"
+  fields_to_save: ["density", "Velocity", "inflow"]
+  fields_scheme: "dVVi"

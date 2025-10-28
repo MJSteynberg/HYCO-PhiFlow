@@ -71,21 +71,23 @@ class BurgersModel(PhysicalModel):
         b = batch(batch=self.batch_size)
 
         velocity_0 = StaggeredGrid(
-            Noise(batch=b, scale=20), # Initialize with noise
+            Noise(scale=20), # Initialize with noise
             extrapolation.PERIODIC,    # Use periodic boundaries
             x=self.resolution.get_size('x'),
             y=self.resolution.get_size('y'),
             bounds=self.domain,
         )
-        
-        return velocity_0
-    
+        velocity_0 = math.expand(velocity_0, b)
+
+        return {"velocity": velocity_0}
+
     def step(self, velocity: StaggeredGrid) -> StaggeredGrid:
         """
         Performs a single simulation step.
         """
-        return _burgers_physics_step(
+        new_velocity = _burgers_physics_step(
             velocity=velocity,
             dt=self.dt,
             nu=self.nu
         )
+        return {"velocity": new_velocity}

@@ -6,10 +6,10 @@ domain:
   size_x: 100
   size_y: 100
 resolution:
-  x: 128
-  y: 128
+  x: 512
+  y: 512
 
-dt: 0.5
+dt: 0.2
 
 # --- UPDATED: Added batch_size and inflow_rate ---
 pde_params:
@@ -17,12 +17,12 @@ pde_params:
   nu: 0.0
 
 data_generation:
-  num_simulations: 1
-  total_steps: 50
+  num_simulations: 100
+  total_steps: 200
   save_interval: 1
 
 output_data:
   output_dir: "data/"
   dataset_name: "burgers_v1"
-  fields_to_save: ["velocity"]
+  fields_to_save: ["Velocity"]
   fields_scheme: "VV"
