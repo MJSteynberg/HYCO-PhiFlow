@@ -112,7 +112,7 @@ def run_generation(config_path: str):
             # --- FIX: Call new method signature ---
             # model.get_initial_state() now returns a batched state
             state_list = [
-                s.expand(batch(time=1))
+                math.expand(s, batch(time=1))
                 for s in model.get_initial_state() # <-- CHANGED
             ]
             
@@ -123,7 +123,7 @@ def run_generation(config_path: str):
                 
                 if t % gen_cfg['save_interval'] == 0:
                     for j in range(len(state_list)):
-                        new_slice = next_state[j].expand(batch(time=1))
+                        new_slice = math.expand(next_state[j], batch(time=1))
                         state_list[j] = math.concat([state_list[j], new_slice], 'time')
 
             # --- 4. Prepare data for saving (This part is correct) ---
@@ -138,9 +138,9 @@ def run_generation(config_path: str):
                 vel_y_cen.values,
                 model.inflow.values # This will broadcast from (1, 1, Y, X)
             ], dim=channel('channels'))
-            
+            print(f"Simulation {i} data shape (with batch=1): {sim_data.shape}")
             # Remove the batch=1 dim, keep (T, C, Y, X)
-            sim_data_np = sim_data.numpy('time, channels, y, x') 
+            sim_data_np = sim_data.batch[0].numpy('time, channels, y, x') 
             sims_group.create_dataset(f'sim{i}', data=sim_data_np)
         
         # --- 5. Save metadata (This part is correct) ---

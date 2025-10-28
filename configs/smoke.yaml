@@ -24,11 +24,11 @@ pde_params:
 
 data_generation:
   num_simulations: 5
-  total_steps: 50
+  total_steps: 10
   save_interval: 1
 
 output_data:
   output_dir: "data/"
-  dataset_name: "smoke_multi_inflow_v1"
+  dataset_name: "smoke_v1"
   fields_to_save: ["density", "velocity", "inflow"]
   fields_scheme: "dVVc"
