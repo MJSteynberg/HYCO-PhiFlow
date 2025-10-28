@@ -23,8 +23,8 @@ pde_params:
   inflow_rand_y_range: [0.1, 0.2]  # (min_factor, mult_factor)
 
 data_generation:
-  num_simulations: 5
-  total_steps: 10
+  num_simulations: 10
+  total_steps: 50
   save_interval: 1
 
 output_data:

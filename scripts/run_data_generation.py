@@ -142,17 +142,17 @@ def run_generation(config_path: str):
             # Remove the batch=1 dim, keep (T, C, Y, X)
             sim_data_np = sim_data.batch[0].numpy('time, channels, y, x') 
             sims_group.create_dataset(f'sim{i}', data=sim_data_np)
-        
+
         # --- 5. Save metadata (This part is correct) ---
         print("\nAll simulations complete. Saving metadata...")
-        
-        f.attrs['PDE'] = config.get('pde_name', 'Incompressible Navier-Stokes with Boussinesq')
-        f.attrs['Fields Scheme'] = out_cfg['fields_scheme']
-        f.attrs['Fields'] = out_cfg['fields_to_save']
-        f.attrs['Constants'] = []  # Match original
-        
+
+        sims_group.attrs['PDE'] = config.get('pde_name', 'Incompressible Navier-Stokes with Boussinesq')
+        sims_group.attrs['Fields Scheme'] = out_cfg['fields_scheme']
+        sims_group.attrs['Fields'] = out_cfg['fields_to_save']
+        sims_group.attrs['Constants'] = []  # Match original
+
         saved_dt = config['dt'] * gen_cfg['save_interval']
-        f.attrs['Dt'] = float(saved_dt)
+        sims_group.attrs['Dt'] = float(saved_dt)
 
 if __name__ == "__main__":
     # We point to our new config file
