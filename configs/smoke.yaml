@@ -6,8 +6,8 @@ domain:
   size_x: 80
   size_y: 100
 resolution:
-  x: 64
-  y: 80
+  x: 128
+  y: 160
 
 dt: 1.0
 
@@ -18,9 +18,8 @@ pde_params:
   buoyancy: 1.0
   inflow_radius: 10.0
   inflow_rate: 0.1 
-  # Store the randomization ranges from the original script
-  inflow_rand_x_range: [0.2, 0.6]  # (min_factor, mult_factor)
-  inflow_rand_y_range: [0.1, 0.2]  # (min_factor, mult_factor)
+  inflow_rand_x_range: [0.2, 0.8]
+  inflow_rand_y_range: [0.15, 0.25]
 
 data_generation:
   num_simulations: 10

@@ -4,10 +4,12 @@ import torch
 from phi.torch.flow import *
 from phi.math import jit_compile, batch
 from .base import PhysicalModel  # <-- Import our new base class
+import random
+
 
 # --- JIT-Compiled Physics Function ---
 # (This is kept separate for performance and clarity)
-# @jit_compile Uncomment when everything is working
+@jit_compile
 def _smoke_physics_step(velocity, density, inflow, domain, dt, buoyancy_factor, nu):
     """
     Performs one physics-based smoke simulation step.
@@ -60,9 +62,11 @@ class SmokeModel(PhysicalModel):
                  batch_size: int = 1,
                  nu: float = 0.0,
                  buoyancy: float = 1.0,
-                 inflow_center: tuple = (40.0, 15.0), # Default center
+                 inflow_center = None,
                  inflow_radius: float = 10.0,
                  inflow_rate: float = 0.1,
+                 inflow_rand_x_range: list = [0.2, 0.8],
+                 inflow_rand_y_range: list = [0.15, 0.25],
                  **pde_params): # To catch any other unused params
         """
         Initializes the smoke model.
@@ -86,7 +90,14 @@ class SmokeModel(PhysicalModel):
             buoyancy=buoyancy
         )
         
-        # Store inflow params
+        if inflow_center is None:
+            rand_x = self.domain.size[0] * (inflow_rand_x_range[0] + inflow_rand_x_range[1] * random.random())
+            rand_y = self.domain.size[1] * (inflow_rand_y_range[0] + inflow_rand_y_range[1] * random.random())
+            inflow_center = (rand_x, rand_y)
+            # This print statement will now come from the model itself
+            print(f"Generated new inflow position: ({rand_x:.1f}, {rand_y:.1f})")
+
+
         self.inflow_center = math.tensor(inflow_center, channel(vector='x,y'))
         self.inflow_radius = inflow_radius
         self.inflow_rate = inflow_rate
