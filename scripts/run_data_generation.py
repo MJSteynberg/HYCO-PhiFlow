@@ -14,15 +14,9 @@ from src.data_generation.generator import run_generation
 
 if __name__ == "__main__":
     # --- Define Configuration ---
-<<<<<<< HEAD
-<<<<<<< HEAD
+
     CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'burgers.yaml')
-=======
-    CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'smoke.yaml')
->>>>>>> 3a81eeb2ed50798d643659d7b56a5015a3a0b60b
-=======
-    CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'smoke.yaml')
->>>>>>> 3a81eeb2ed50798d643659d7b56a5015a3a0b60b
+
     
     # --- Run ---
     run_generation(CONFIG_FILE_PATH, PROJECT_ROOT)
