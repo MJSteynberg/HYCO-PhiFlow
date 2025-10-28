@@ -7,8 +7,13 @@ domain:
   size_y: 100
 resolution:
 <<<<<<< HEAD
+<<<<<<< HEAD
   x: 256
   y: 256
+=======
+  x: 128
+  y: 160
+>>>>>>> 3a81eeb2ed50798d643659d7b56a5015a3a0b60b
 =======
   x: 128
   y: 160
@@ -25,7 +30,11 @@ pde_params:
   inflow_rate: 0.1 
   inflow_rand_x_range: [0.2, 0.8]
 <<<<<<< HEAD
+<<<<<<< HEAD
   inflow_rand_y_range: [0.1, 0.15]
+=======
+  inflow_rand_y_range: [0.15, 0.25]
+>>>>>>> 3a81eeb2ed50798d643659d7b56a5015a3a0b60b
 =======
   inflow_rand_y_range: [0.15, 0.25]
 >>>>>>> 3a81eeb2ed50798d643659d7b56a5015a3a0b60b
