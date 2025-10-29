@@ -23,6 +23,6 @@ data_generation:
 
 output_data:
   output_dir: "data/"
-  dataset_name: "burgers_v1"
+  dataset_name: "burgers_512"
   fields_to_save: ["Velocity"]
   fields_scheme: "VV"

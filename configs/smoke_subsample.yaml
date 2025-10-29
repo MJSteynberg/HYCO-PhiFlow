@@ -1,0 +1,21 @@
+# configs/subsample_burgers.yaml
+
+# --- Specify the ORIGINAL config file ---
+# This is needed to get the domain size, original resolution,
+# and original data output path.
+original_config_path: "configs/smoke_512.yaml"
+
+
+# --- Specify subsampling parameters ---
+subsampling:
+  
+  # New resolution
+  target_resolution:
+    x: 128
+    y: 128
+
+  time_step: 4
+
+  # --- New output location ---
+  output_dir: "data/"
+  dataset_name: "smoke_128_t4" # <-- New name

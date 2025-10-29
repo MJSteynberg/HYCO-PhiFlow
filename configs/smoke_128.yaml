@@ -1,0 +1,50 @@
+# configs/smoke.yaml
+
+model_name: "SmokeModel"
+
+domain:
+  size_x: 100
+  size_y: 100
+resolution:
+  x: 128
+  y: 128
+
+dt: 0.2
+
+# --- UPDATED: Added batch_size and inflow_rate ---
+pde_params:
+  batch_size: 1
+  nu: 0.0
+  buoyancy: 1.0
+  inflow_radius: 10.0
+  inflow_rate: 0.1 
+  inflow_rand_x_range: [0.2, 0.6]
+  inflow_rand_y_range: [0.15, 0.05]
+
+data_generation:
+  num_simulations: 50
+  total_steps: 50
+  save_interval: 1
+
+output_data:
+  output_dir: "data/"
+  dataset_name: "smoke_128"
+  fields_to_save: ["density", "Velocity", "inflow"]
+  fields_scheme: "dVVi"
+
+model:
+  name: 'UNet'
+  # --- Network architecture ---
+  levels: 4
+  filters: 32
+  in_channels: 3   # Must match sum(input_channels)
+  out_channels: 3  # Must match sum(output_channels)
+  
+  # --- Agnostic field definitions ---
+  input_fields: ['density', 'velocity']
+  input_channels: [1, 2]  # 1 for density, 2 for velocity
+  
+  output_fields: ['density', 'velocity']
+  output_channels: [1, 2] # 1 for density, 2 for velocity
+
+  staggered_input_fields: ['velocity']

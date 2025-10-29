@@ -14,27 +14,27 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # --- Simulation Parameters (MUST match generation script) ---
-RES_X = 512
-RES_Y = 512
+RES_X = 128
+RES_Y = 128
 DOMAIN_SIZE_X = 100
 DOMAIN_SIZE_Y = 100
 
 # --- Data Loading Parameters ---
-dataset_name = "smoke_v1"
+dataset_name = "smoke_128"
 local_data_directory = "./data"
 
 # --- Training Parameters ---
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 16
-EPOCHS = 500
+BATCH_SIZE = 8
+EPOCHS = 50
 # This now defines the *length of the autoregressive rollout* during training
-NUM_PREDICT_STEPS = 4 
+NUM_PREDICT_STEPS = 8
 
 # --- Model & Checkpoint Paths ---
-MODEL_PATH = "./smoke"
-MODEL_NAME = f"{local_data_directory}_unet_autoregressive_{NUM_PREDICT_STEPS}step"
+MODEL_PATH = "results/models"
+MODEL_NAME = f"{dataset_name}_unet_autoregressive"
 CHECKPOINT_PATH = os.path.join(MODEL_PATH, f"{MODEL_NAME}.pth")
-MODEL_SCRIPT_PATH = os.path.join(MODEL_PATH, f"{MODEL_NAME}.pt")
+MODEL_SCRIPT_PATH = os.path.join(MODEL_PATH, f"{MODEL_NAME}.pth")
 
 def create_data_loader(data_dir, dset_name, batch_size):
     """
@@ -58,13 +58,11 @@ def create_data_loader(data_dir, dset_name, batch_size):
     loader = Dataloader(
         dset_name,
         load_fields=['density', 'velocity', 'inflow'],
-        
-        # --- THIS IS THE CORRECT CONFIGURATION ---
         time_steps=NUM_PREDICT_STEPS, 
         intermediate_time_steps=True,
         batch_size=batch_size,
         shuffle=True,
-        sel_sims=[0],
+        sel_sims=[0,1,2,3,4,5],
         local_datasets_dir=data_dir
     )
     return loader
@@ -87,7 +85,7 @@ def create_model():
     in_channels = 4
     
     # 12 output channels: (d, vx, vy) for t+1, (d, vx, vy) for t+2, ...
-    out_channels = NUM_PREDICT_STEPS * 3
+    out_channels = 3
     
     model = pnn.u_net(
         in_channels=in_channels,
@@ -145,13 +143,10 @@ def train_epoch(model, train_loader, optimizer, scheduler, loss_fn):
             # 1. Prepare the 4-channel input for the model
             model_input_4c = torch.cat([current_state_3c, inflow_field_4c], dim=1)
             
-            # 2. Forward pass: (B, 4, Y, X) -> (B, 12, Y, X)
+            # 2. Forward pass: (B, 4, Y, X) -> (B, 3, Y, X)
             # The model predicts all 4 future steps based on the *current* input
-            pred_all_steps_12c = model(model_input_4c)
+            pred_this_step_3c = model(model_input_4c)
             
-            # 3. Extract *only* the first predicted step (t+1)
-            # We use this as our prediction for this step of the rollout
-            pred_this_step_3c = pred_all_steps_12c[:, 0:3, :, :] # Shape: (B, 3, Y, X)
             
             # 4. Get the corresponding ground truth for this step
             # y_batch[:, t_step, ...] is the GT at time t+1, t+2, etc.

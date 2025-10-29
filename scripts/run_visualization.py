@@ -14,7 +14,7 @@ from src.visualization.plotter import run_visualization
 
 if __name__ == "__main__":
     # --- Define Configuration ---
-    CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'burgers.yaml')
+    CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, 'configs', 'smoke_128.yaml')
     
     # --- Select simulation to visualize ---
     # You can change this to load any sim from your dataset

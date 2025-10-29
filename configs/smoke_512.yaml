@@ -28,7 +28,7 @@ data_generation:
 
 output_data:
   output_dir: "data/"
-  dataset_name: "smoke_v1"
+  dataset_name: "smoke_512"
   fields_to_save: ["density", "Velocity", "inflow"]
   fields_scheme: "dVVi"
 
