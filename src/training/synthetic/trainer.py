@@ -18,29 +18,27 @@ class SyntheticTrainer:
     """
     def __init__(self, config: Dict[str, Any]):
         """
-        Initializes the trainer, model, data, and optimizers.
-
-        Args:
-            config: A dictionary containing all configuration parameters.
+        Initializes the trainer from a unified configuration dictionary.
         """
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {self.device}")
 
-        # --- Get Parameters from Config ---
-        self.data_dir = config['data_dir']
-        self.dset_name = config['dset_name']
-        self.batch_size = config['batch_size']
-        self.learning_rate = config['learning_rate']
-        self.epochs = config['epochs']
-        self.num_predict_steps = config['num_predict_steps']
+        # --- Derive all parameters from config ---
+        self.data_config = config['data']
+        self.model_config = config['model']['synthetic']
+        self.trainer_config = config['trainer_params']
+        
+        # --- Data and Model specifications ---
+        # This list *must* match the channel order in the HDF5 file.
+        # It is the single source of truth for data loading.
+        self.data_loader_fields: List[str] = self.data_config['fields']
+        self.dset_name = self.data_config['dset_name'] # Also get dset_name from data_config
+        self.data_dir = self.data_config['data_dir'] # And data_dir
 
-        # --- Model Config & Field Specs ---
-        self.model_config = config['model']
         self.input_specs = self.model_config['input_specs']
         self.output_specs = self.model_config['output_specs']
-        
-        # --- NEW: Define field types from specs ---
+
+        # --- Define field types from specs ---
         # Dynamic fields are predicted by the model (in output_specs)
         self.dynamic_fields: List[str] = list(self.output_specs.keys())
         
@@ -49,10 +47,6 @@ class SyntheticTrainer:
             f for f in self.input_specs.keys() if f not in self.output_specs
         ]
         
-        # --- NEW: Get Data Loader field order ---
-        # This list *must* match the channel order in the HDF5 file
-        self.data_loader_fields: List[str] = config['data_loader_fields']
-        
         # Build a spec dict {field_name: channel_count} for *all* loaded fields
         all_specs = {**self.input_specs, **self.output_specs}
         self.data_loader_channels: Dict[str, int] = {
@@ -60,10 +54,16 @@ class SyntheticTrainer:
         }
 
         # --- Paths ---
-        self.model_path = config.get('model_path', 'results/models')
-        self.model_name = config.get('model_name', f"{self.dset_name}_unet_autoregressive")
-        self.checkpoint_path = os.path.join(self.model_path, f"{self.model_name}.pth")
-        os.makedirs(self.model_path, exist_ok=True)
+        model_save_name = self.model_config['model_save_name']
+        model_path_dir = self.model_config['model_path']
+        self.checkpoint_path = os.path.join(model_path_dir, f"{model_save_name}.pth")
+        os.makedirs(model_path_dir, exist_ok=True)
+
+        # --- Training parameters ---
+        self.learning_rate = self.trainer_config['learning_rate']
+        self.epochs = self.trainer_config['epochs']
+        self.batch_size = self.trainer_config['batch_size']
+        self.num_predict_steps = self.trainer_config['num_predict_steps']
 
         # --- Setup Components ---
         self.train_loader = self._create_data_loader()

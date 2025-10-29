@@ -1,0 +1,51 @@
+# --- Task Definition ---
+task: 'train' # Can be 'generate', 'train', 'evaluate', 'subsample'
+project_root: '.' # Relative path to project root
+
+# --- Data Configuration (for all tasks) ---
+data:
+  data_dir: 'data/'
+  dset_name: 'burgers_128'
+  fields: ['velocity']
+
+# --- Model Definitions (Plug-and-Play) ---
+model:
+  # Physical model used for data generation
+  physical:
+    name: 'BurgersModel' # Class name in src.models.physical
+    domain: { size_x: 100, size_y: 100 }
+    resolution: { x: 128, y: 128 }
+    dt: 0.8
+    pde_params:
+      batch_size: 1
+      nu: 0.0
+  
+  # Synthetic model used for training/evaluation
+  synthetic:
+    name: 'UNet' # Class name in src.models.synthetic
+    model_path: 'results/models'
+    model_save_name: 'burgers_unet_128'
+    # The model's internal structure is defined by its specs
+    input_specs:
+      velocity: 2
+    output_specs:
+      velocity: 2
+    # Hyperparameters for the UNet class itself
+    architecture:
+      levels: 4
+      filters: 64
+      batch_norm: true
+
+# --- Task-Specific Parameters ---
+# Parameters for the 'generate' task
+generation_params:
+  num_simulations: 100
+  total_steps: 50
+  save_interval: 1
+
+# Parameters for the 'train' task
+trainer_params:
+  learning_rate: 1.0e-4
+  batch_size: 16
+  epochs: 50
+  num_predict_steps: 4 # Autoregressive rollout length

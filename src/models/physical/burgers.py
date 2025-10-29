@@ -2,6 +2,7 @@ import torch
 from phi.torch.flow import *
 from phi.math import jit_compile, batch
 from .base import PhysicalModel  # <-- Assuming this base class exists
+from typing import Dict
 
 # --- JIT-Compiled Physics Function ---
 @jit_compile
@@ -63,7 +64,7 @@ class BurgersModel(PhysicalModel):
         # No inflow or buoyancy parameters needed
         print(f"BurgersModel created with nu={self.nu}")
 
-    def get_initial_state(self) -> StaggeredGrid:
+    def get_initial_state(self) -> Dict[str, Field]:
         """
         Returns an initial state of (noisy velocity).
         We use periodic boundaries as they are common for Burgers.
@@ -81,7 +82,7 @@ class BurgersModel(PhysicalModel):
 
         return {"velocity": velocity_0}
 
-    def step(self, velocity: StaggeredGrid) -> StaggeredGrid:
+    def step(self, velocity: StaggeredGrid) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """
