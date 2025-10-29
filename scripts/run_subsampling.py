@@ -27,7 +27,7 @@ if __name__ == "__main__":
     CONFIG_FILE_PATH = os.path.join(
         PROJECT_ROOT, 
         'configs', 
-        'smoke_subsample.yaml' # <-- Example config
+        'burgers_subsample.yaml' # <-- Example config
     )
     
     if not os.path.exists(CONFIG_FILE_PATH):

@@ -1,18 +1,26 @@
+# scripts/run_evaluation.py
+
 import os
+import sys
 import torch
-import phiml.nn as pnn  # For re-building the U-Net
-from pbdl.torch.loader import Dataloader
-from phi.torch.flow import (
-    Box,
-    CenteredGrid,
-    extrapolation,
-    vis,
-    math,
-    channel,
-    batch,
-    spatial
+import yaml
+from phi.torch.flow import Box, math
+from typing import List
+
+# --- Add project root to path ---
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(PROJECT_ROOT)
+
+# --- NEW: Import our UNet model ---
+from src.models.synthetic.unet import UNet
+
+# --- NEW: Import our generic plotting/loading functions ---
+from src.visualization.plotter import (
+    load_config,
+    load_data,
+    reconstruct_fields_from_specs,
+    plot_comparison
 )
-import matplotlib.pyplot as plt
 
 print("Imports complete. Ready to evaluate.")
 
@@ -20,38 +28,15 @@ print("Imports complete. Ready to evaluate.")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# --- Simulation Parameters (MUST match generation script) ---
-RES_X = 128
-RES_Y = 128
-DOMAIN_SIZE_X = 100
-DOMAIN_SIZE_Y = 100
-DOMAIN = Box(x=DOMAIN_SIZE_X, y=DOMAIN_SIZE_Y)
 
-# --- Data Generation Parameters ---
-TOTAL_STEPS = 50
-SAVE_INTERVAL = 1
-NUM_SAVED_STATES = (TOTAL_STEPS // SAVE_INTERVAL) + 1 # 51
-
-# --- File Paths ---
-dataset_name = "smoke_128"
-local_data_directory = "./data"
-# --- MODIFIED: Point to the new 4-step model ---
-MODEL_PATH = os.path.join("./results/models", f"{dataset_name}_unet_autoregressive.pth")
-
-
-def load_trained_model(model_path):
+def load_trained_model(model_path, config):
     """
-    Loads the trained U-Net model from a .pth file.
+    (This function is unchanged from your last version)
+    Loads the trained U-Net model using the new UNet class.
     """
     print(f"Loading trained model from {model_path}...")
     
-    # --- MODIFIED: Must match the 4-step model architecture ---
-    model = pnn.u_net(
-        in_channels=4,  # density, vx, vy, inflow
-        out_channels=3, # 3 * 4 = 12
-        levels=4,
-        filters=64
-    ).to(device)
+    model = UNet(config=config).to(device)
     
     if not os.path.exists(model_path):
         print(f"Error: Model file not found at {model_path}")
@@ -65,217 +50,157 @@ def load_trained_model(model_path):
     return model
 
 
-def load_data(data_dir, dset_name, total_time_steps):
-    """
-    Loads the full simulation data (all frames) using a workaround
-    for the pbdl.Dataloader.
-    
-    We set time_steps=1 to get 50 samples, which are pairs
-    (frame 0, frame 1) ... (frame 49, frame 50).
-    We stack all x_batches (0-49) and then add the last y_batch (50).
-    
-    Returns:
-        torch.Tensor: A tensor of shape (time, channels, y, x)
-    """
-    print(f"Loading ground truth dataset '{dset_name}' from {data_dir}...")
-    
-    hdf5_filepath = os.path.join(data_dir, f"{dset_name}.hdf5")
-    if not os.path.exists(hdf5_filepath):
-        print(f"Error: HDF5 file not found at {hdf5_filepath}")
-        return None
-
-    try:
-        data_loader = Dataloader(
-            dset_name,
-            load_fields=['density', 'velocity', 'inflow'],
-            
-            # --- THE WORKAROUND ---
-            # 1. time_steps=1: This will find 50 samples.
-            time_steps=1, 
-            sel_sims=[10],
-            batch_size=1,
-            shuffle=False,
-            local_datasets_dir=data_dir
-        )
-        
-        # This will correctly report 50 samples
-        print(f"Dataloader found {len(data_loader.dataset)} samples. Stacking all {total_time_steps} frames...")
-
-        all_steps_list = []
-        last_y_batch = None
-        
-        # --- 2. Fix the loop: Dataloader returns 2 items ---
-        for x_batch, y_batch in data_loader:
-            # x_batch is (B, T_in, C, H, W) -> (1, 1, 4, 80, 64)
-            # y_batch is (B, T_out, C, H, W) -> (1, 1, 4, 80, 64)
-            
-            # 3. Append the input frame (x_batch)
-            step_data = x_batch.squeeze(0).squeeze(0).to(device)
-            all_steps_list.append(step_data)
-            
-            # 4. Store the target frame (y_batch)
-            last_y_batch = y_batch
-        
-        # 5. After the loop (which ran 50 times), add the final frame
-        if last_y_batch is not None:
-            final_step_data = last_y_batch.squeeze(0).squeeze(0).to(device)
-            all_steps_list.append(final_step_data)
-
-        if not all_steps_list:
-            print("Error: No data loaded. Dataloader was empty.")
-            return None
-
-        # Stack all tensors (50 + 1)
-        data_sequence = torch.stack(all_steps_list, dim=0)
-        
-        # Final shape should be (51, 4, 80, 64)
-        print(f"Data stacked. Final sequence shape: {data_sequence.shape}")
-        
-        if data_sequence.shape[0] != total_time_steps:
-             print(f"--- WARNING ---")
-             print(f"Loader logic failed. Expected {total_time_steps} frames, but stacked {data_sequence.shape[0]}.")
-             print(f"--- END WARNING ---")
-
-        return data_sequence
-    
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        return None
-
-
 @torch.no_grad()
-def run_autoregressive_rollout(model, initial_state_4channel, num_steps):
+def run_autoregressive_rollout(model: UNet, 
+                               initial_state_tensor: torch.Tensor, 
+                               data_loader_fields: List[str],
+                               num_steps: int) -> torch.Tensor:
     """
-    Generates a full simulation sequence using the multi-step model.
-    At each step, we predict 4 steps but only use the first one.
+    --- MODIFIED: This is now generic and input-agnostic ---
+    Generates a full simulation sequence using the dictionary-based model.
     """
     print(f"Running autoregressive rollout for {num_steps} steps...")
     
-    predicted_states_3channel = []
+    predicted_states_list = []
     
-    # 1. Get the physics part of the initial state (channels 0, 1, 2)
-    initial_physics = initial_state_4channel[0:3, ...]
-    predicted_states_3channel.append(initial_physics)
+    # --- Generic Field Setup ---
+    all_specs = {**model.INPUT_SPECS, **model.OUTPUT_SPECS}
+    data_loader_channels = {f: all_specs[f] for f in data_loader_fields}
     
-    # 2. Get the static 1-channel inflow mask (channel 3)
-    inflow_mask_1channel = initial_state_4channel[3, ...].unsqueeze(0)
-    inflow_mask_batch = inflow_mask_1channel.unsqueeze(0).to(device)
+    # Get specs for dynamic (predicted) fields
+    output_specs = model.OUTPUT_SPECS
+    dynamic_fields = list(output_specs.keys())
+    
+    # Get names of static (input-only) fields
+    static_fields = [f for f in model.INPUT_SPECS if f not in model.OUTPUT_SPECS]
 
-    # 3. The first *input* to the model
-    current_input_4channel = initial_state_4channel.unsqueeze(0).to(device)
+    # --- Unpack Initial State (T=0) ---
+    current_state_dict = {} # (e.g., {'density': ..., 'velocity': ...})
+    static_field_dict = {}  # (e.g., {'inflow': ...})
     
+    start_channel = 0
+    for field_name in data_loader_fields:
+        num_channels = data_loader_channels[field_name]
+        end_channel = start_channel + num_channels
+        
+        field_tensor_batch = initial_state_tensor[start_channel:end_channel, ...].unsqueeze(0).to(device)
+        
+        if field_name in dynamic_fields:
+            current_state_dict[field_name] = field_tensor_batch
+        if field_name in static_fields:
+            static_field_dict[field_name] = field_tensor_batch
+            
+        start_channel = end_channel
+
+    # 1. Store the initial dynamic state (T=0)
+    # We re-combine the dict values into a tensor for storage.
+    initial_dynamic_tensor = torch.cat(
+        [current_state_dict[key] for key in output_specs.keys()], dim=1
+    ).squeeze(0)
+    predicted_states_list.append(initial_dynamic_tensor)
+    
+    
+    # 2. --- Generic Rollout Loop ---
     for step in range(num_steps):
-        # 1. Predict 4 steps (12 channels)
-        # Input: (1, 4, Y, X) -> Output: (1, 12, Y, X)
-        predicted_3_channels = model(current_input_4channel)
+        # 1. Prepare the input dictionary
+        model_input_dict = {**current_state_dict, **static_field_dict}
         
+        # 2. Predict: (Dict) -> (Dict)
+        pred_dict = model(model_input_dict)
         
-        # 3. Store the 3-channel prediction (move to CPU)
-        predicted_states_3channel.append(predicted_3_channels.squeeze(0))
+        # 3. Store the prediction tensor
+        pred_tensor = torch.cat(
+            [pred_dict[key] for key in output_specs.keys()], dim=1
+        ).squeeze(0)
         
-        # 4. Create the *next* 4-channel input for the model
-        current_input_4channel = torch.cat(
-            (predicted_3_channels, inflow_mask_batch),
-            dim=1 # Concatenate along the channel axis
-        )
+        predicted_states_list.append(pred_tensor)
+        
+        # 4. Set up for the next iteration
+        current_state_dict = pred_dict
         
     # Stack all states (T=0 to T=50) along the time dimension
-    full_sequence = torch.stack(predicted_states_3channel, dim=0)
+    full_sequence = torch.stack(predicted_states_list, dim=0)
     
-    # Final shape will be (51, 3, 80, 64)
     print(f"Rollout complete. Predicted sequence shape: {full_sequence.shape}")
     return full_sequence
 
 
-def reconstruct_fields(data_sequence):
-    """
-    Converts the raw data tensor back into PhiFlow Field objects.
-    This function handles both 3-channel and 4-channel tensors
-    because it only uses channels 0, 1, and 2.
-    """
-    if data_sequence is None: return None, None
-    print("Reconstructing PhiFlow fields...")
-    
-    if data_sequence.ndim == 3:
-        data_sequence = data_sequence.unsqueeze(0) 
-    
-    smoke_data_torch = data_sequence[:, 0, ...]    # Ch 0
-    velo_data_torch = data_sequence[:, 1:3, ...] # Ch 1, 2
-    velo_data_torch = velo_data_torch.permute(0, 2, 3, 1)
-
-    smoke_values = math.tensor(smoke_data_torch, batch('time'), spatial('y,x'))
-    velocity_values = math.tensor(velo_data_torch, batch('time'), spatial('y,x'), channel(vector='x,y'))
-
-    smoke_field = CenteredGrid(smoke_values, extrapolation=extrapolation.BOUNDARY, bounds=DOMAIN)
-    velocity_field = CenteredGrid(velocity_values, extrapolation=extrapolation.ZERO, bounds=DOMAIN)
-    
-    print(f"Smoke field shape: {smoke_field.shape}")
-    print(f"Velocity field shape: {velocity_field.shape}")
-    
-    return smoke_field, velocity_field
-
-
-def visualize_comparison(smoke_truth, vel_truth, smoke_pred, vel_pred):
-    """
-    Shows a side-by-side animation of ground truth and prediction.
-    """
-    if smoke_truth is None or smoke_pred is None:
-        print("Cannot visualize. One of the fields is None.")
-        return
-
-    print("Showing side-by-side comparison (close window to exit)...")
-    vis.plot(
-        {
-            'Ground Truth': smoke_truth,
-            'Prediction': smoke_pred,
-        },
-        animate='time', 
-        title="Ground Truth vs. Model Rollout"
-    )
-    plt.show()
-    plt.close()
-
-
 if __name__ == "__main__":
-    # 1. Load the trained model
-    model = load_trained_model(MODEL_PATH)
+    
+    # --- NEW: Config-driven execution ---
+    if len(sys.argv) < 2:
+        print("Error: Please provide the path to a training config YAML.")
+        print("Usage: python scripts/run_evaluation.py configs/smoke_128.yaml")
+        exit()
+        
+    config_path = sys.argv[1]
+    
+    # 1. Load Configs
+    train_config = load_config(config_path)
+    
+    # Get parameters from the *same config* used for training
+    data_cfg = train_config['data_config']
+    domain_cfg = train_config['domain']
+    model_cfg = train_config['model']
+    
+    dataset_name = data_cfg['dset_name']
+    data_dir = data_cfg['data_dir']
+    data_loader_fields = data_cfg['data_loader_fields']
+    
+    sim_cfg = train_config['simulation']
+    num_saved_states = (sim_cfg['total_steps'] // sim_cfg['save_interval']) + 1
+    total_steps = sim_cfg['total_steps']
+
+    # 2. Re-create the Domain object
+    domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
+    
+    # 3. Load the trained model
+    model_name = train_config['model_name']
+    model_path = os.path.join(train_config['model_path'], f"{model_name}.pth")
+    model = load_trained_model(model_path, config=model_cfg)
     
     if model is None:
         exit()
 
-    # 2. Load the full ground truth (GT) sequence
-    # This will have 4 channels: (density, vx, vy, inflow)
+    # 4. Load the full ground truth (GT) sequence
+    sim_to_load = 50 # Hard-code sim 30 for evaluation
     gt_sequence_tensor = load_data(
-        data_dir=local_data_directory,
+        data_dir=data_dir,
         dset_name=dataset_name,
-        total_time_steps=NUM_SAVED_STATES # 51
+        fields_to_load=data_loader_fields,
+        sim_index=sim_to_load,
+        total_time_steps=num_saved_states
     )
     
     if gt_sequence_tensor is None:
         exit()
         
-    # 3. Get the initial state (T=0) to start the rollout
-    # Shape: (4, 80, 64)
-    initial_state_tensor = gt_sequence_tensor[0]
+    # 5. Get the initial state (T=0)
+    initial_state_tensor = gt_sequence_tensor[0] # (C, Y, X)
 
-    # 4. Run the autoregressive rollout
-    # This will have 3 channels: (density, vx, vy)
+    # 6. Run the autoregressive rollout
     pred_sequence_tensor = run_autoregressive_rollout(
         model=model,
-        initial_state_4channel=initial_state_tensor,
-        num_steps=TOTAL_STEPS  # Predict 50 new steps
+        initial_state_tensor=initial_state_tensor,
+        data_loader_fields=data_loader_fields,
+        num_steps=total_steps
     )
 
-    # 5. Reconstruct all fields for visualization
-    # reconstruct_fields can handle the 4-channel GT and 3-channel pred
+    # 7. Reconstruct all fields for visualization
+    # We use the *output_specs* for the prediction tensor
+    # We use the *data_loader_fields* for the ground truth tensor
+    
     print("Reconstructing ground truth fields...")
-    smoke_gt, velocity_gt = reconstruct_fields(gt_sequence_tensor)
+    gt_all_specs = {**model_cfg['input_specs'], **model_cfg['output_specs']}
+    gt_specs_ordered = {f: gt_all_specs[f] for f in data_loader_fields}
+    gt_fields = reconstruct_fields_from_specs(
+        gt_sequence_tensor, gt_specs_ordered, domain
+    )
     
     print("Reconstructing predicted fields...")
-    smoke_pred, velocity_pred = reconstruct_fields(pred_sequence_tensor)
-    
-    # 6. Show the side-by-side animation
-    visualize_comparison(
-        smoke_gt, velocity_gt,
-        smoke_pred, velocity_pred
+    pred_fields = reconstruct_fields_from_specs(
+        pred_sequence_tensor, model_cfg['output_specs'], domain
     )
+    
+    # 8. Show the side-by-side animation
+    plot_comparison(gt_fields, pred_fields, sim_name=dataset_name, sim_index=sim_to_load)

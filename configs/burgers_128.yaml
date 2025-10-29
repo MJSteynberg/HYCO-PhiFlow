@@ -2,27 +2,47 @@
 
 model_name: "BurgersModel"
 
+# --- Domain & Simulation ---
 domain:
   size_x: 100
   size_y: 100
 resolution:
   x: 128
   y: 128
-
 dt: 0.2
 
-# --- UPDATED: Added batch_size and inflow_rate ---
+simulation:
+  num_simulations: 100
+  total_steps: 50
+  save_interval: 1
+
+# --- Data Config ---
+data_config:
+  data_dir: "data/"
+  dset_name: "burgers_128"
+  # Corrected to lowercase "velocity"
+  data_loader_fields: ["velocity"]
+
+# --- PDE Params (for data generation) ---
 pde_params:
   batch_size: 1
   nu: 0.0
 
-data_generation:
-  num_simulations: 100
-  total_steps: 200
-  save_interval: 1
+# --- Training Config ---
+learning_rate: 1.0e-4
+batch_size: 8
+epochs: 50
+num_predict_steps: 8 # Autoregressive rollout length
 
-output_data:
-  output_dir: "data/"
-  dataset_name: "burgers_128"
-  fields_to_save: ["Velocity"]
-  fields_scheme: "VV"
+# --- Model Config ---
+model_path: "results/models"
+model_name: "burgers_128_unet_autoregressive"
+
+model:
+  input_specs:
+    velocity: 1
+  output_specs:
+    velocity: 1
+  levels: 4
+  filters: 64
+  batch_norm: true

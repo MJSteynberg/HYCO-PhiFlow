@@ -4,7 +4,7 @@ import os
 import torch
 import yaml
 import numpy as np
-from pbdl.torch.loader import Dataloader  # <-- Make sure this is imported
+from pbdl.torch.loader import Dataloader
 from phi.torch.flow import (
     Box,
     CenteredGrid,
@@ -17,8 +17,10 @@ from phi.torch.flow import (
 )
 import phi.field as field
 import matplotlib.pyplot as plt
+from typing import Dict, List
 
 # --- Helper to load config ---
+# (Used by run_evaluation.py)
 def load_config(config_path: str) -> dict:
     """
     Loads a YAML config file.
@@ -35,22 +37,14 @@ def load_config(config_path: str) -> dict:
     return config
 
 # --- Config-driven Data Loader ---
-
+# (Used by run_evaluation.py)
 def load_data(data_dir: str, 
               dset_name: str, 
               fields_to_load: list,
-              sim_index: int = 0):
+              sim_index: int = 0,
+              total_time_steps: int = 51):
     """
     Loads the full time sequence for a single simulation using pbdl.
-    
-    Args:
-        data_dir: Path to the directory containing the HDF5 file.
-        dset_name: Name of the dataset (e.g., "smoke_v1").
-        fields_to_load (list): List of field names to load (from config).
-        sim_index: Which simulation to load (default is 0).
-        
-    Returns:
-        torch.Tensor: A tensor of shape (time, channels, y, x)
     """
     print(f"Loading dataset '{dset_name}' from {data_dir} for sim {sim_index}...")
     print(f"pbdl will load fields: {fields_to_load}")
@@ -63,23 +57,29 @@ def load_data(data_dir: str,
     try:
         data_loader = Dataloader(
             dset_name,
-            load_fields=fields_to_load, # Use the parameter
-            time_steps=1,
+            load_fields=fields_to_load,
+            time_steps=1, 
             sel_sims=[sim_index], 
             batch_size=1,
             shuffle=False,
             local_datasets_dir=data_dir
         )
         
+        print(f"Dataloader found {len(data_loader.dataset)} samples. Stacking all {total_time_steps} frames...")
+
         all_steps_list = []
-        print(f"Stacking all time steps from dataloader for sim {sim_index}...")
-        
+        last_y_batch = None
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        for data_batch, params in data_loader:
-            step_data = data_batch.squeeze(0).squeeze(0).to(device) # Shape: (C, Y, X)
+        for x_batch, y_batch in data_loader:
+            step_data = x_batch.squeeze(0).squeeze(0).to(device)
             all_steps_list.append(step_data)
-            
+            last_y_batch = y_batch
+        
+        if last_y_batch is not None:
+            final_step_data = last_y_batch.squeeze(0).squeeze(0).to(device)
+            all_steps_list.append(final_step_data)
+
         if not all_steps_list:
             print("Error: No data loaded. Dataloader was empty.")
             return None
@@ -87,197 +87,122 @@ def load_data(data_dir: str,
         data_sequence = torch.stack(all_steps_list, dim=0) # Shape: (T, C, Y, X)
         
         print(f"Data stacked. Final sequence shape: {data_sequence.shape}")
+
+        if data_sequence.shape[0] != total_time_steps:
+             print(f"--- WARNING ---")
+             print(f"Loader logic failed. Expected {total_time_steps} frames, but stacked {data_sequence.shape[0]}.")
+             print(f"--- END WARNING ---")
+
         return data_sequence
 
     except Exception as e:
         print(f"Error loading data with pbdl: {e}")
-        print("Please ensure 'fields_to_save' in your config matches the pbdl schema.")
         return None
 
-# --- Config-driven Field Reconstructor ---
-
-def reconstruct_fields(data_sequence: torch.Tensor, 
-                       fields_to_save: list,
-                       domain: Box):
+# --- Generic, Spec-driven Field Reconstructor ---
+# (Used by run_evaluation.py)
+def reconstruct_fields_from_specs(data_sequence: torch.Tensor, 
+                                  specs: Dict[str, int], 
+                                  domain: Box) -> Dict[str, CenteredGrid]:
     """
-    Converts the raw data tensor back into a dictionary of PhiFlow Fields.
-    (This is the version from our last fix, which works)
+    Converts a raw data tensor back into a dictionary of PhiFlow Fields
+    based on a spec dictionary (e.g., {'density': 1, 'velocity': 2}).
+    
+    This is the preferred, generic way to reconstruct fields.
     """
     if data_sequence is None:
         return {}
 
-    print(f"Reconstructing fields based on config: {fields_to_save}")
-    
+    print(f"Reconstructing fields based on specs: {specs}")
     fields_dict = {}
     channel_index = 0
     
-    for field_name in fields_to_save:
-        field_name_lower = field_name.lower()
-        print(f"  Processing field '{field_name}' at channel index {channel_index}...")
-
-        if field_name_lower == 'density' or field_name_lower == 'inflow':
-            # Case 1: Scalar Field (density, inflow)
-            data_slice = data_sequence[:, channel_index, :, :]
-            data_slice = data_slice.permute(0, 2, 1) # (T, Y, X) -> (T, X, Y)
-            dims = batch('time') & spatial('x,y') 
-
-            values = math.tensor(data_slice, dims)
+    for field_name, num_channels in specs.items():
+        print(f"  Processing '{field_name}' ({num_channels} channels) at index {channel_index}...")
+        
+        data_slice_torch = data_sequence[:, channel_index:channel_index+num_channels, ...]
+        
+        if num_channels == 1:
+            # --- Scalar Field (density, inflow, or 1D velocity) ---
+            data_slice_torch = data_slice_torch.squeeze(1) # (T, Y, X)
+            data_slice_torch = data_slice_torch.permute(0, 2, 1) # (T, Y, X) -> (T, X, Y)
+            dims = batch('time') & spatial('x,y')
             
-            fields_dict[field_name_lower] = CenteredGrid(
+            values = math.tensor(data_slice_torch, dims)
+            
+            fields_dict[field_name] = CenteredGrid(
                 values,
                 extrapolation=extrapolation.BOUNDARY,
                 bounds=domain
             )
-            channel_index += 1 
-
-        elif field_name_lower == 'velocity':
-            # Case 2: Vector Field (Velocity)
-            data_slice_torch = data_sequence[:, channel_index:channel_index+2, :, :] # (T, 2, Y, X)
-            data_slice_torch = data_slice_torch.permute(0, 3, 2, 1) # (T, X, Y, 2)
+            
+            if field_name == 'velocity':
+                fields_dict[field_name] = fields_dict[field_name].with_extrapolation(extrapolation.PERIODIC)
+        
+        elif num_channels == 2:
+            # --- 2D Vector Field (velocity) ---
+            data_slice_torch = data_slice_torch.permute(0, 3, 2, 1) # (T, 2, Y, X) -> (T, X, Y, 2)
             dims = batch('time') & spatial('x,y') & channel(vector='x,y')
             
             values = math.tensor(data_slice_torch, dims)
             
-            fields_dict['velocity'] = CenteredGrid(
+            fields_dict[field_name] = CenteredGrid(
                 values,
                 extrapolation=extrapolation.ZERO,
                 bounds=domain
             )
-            channel_index += 2
             
         else:
-            print(f"Warning: Unknown field '{field_name}' in config. Skipping.")
-            if 'velocity' in field_name_lower:
-                channel_index += 2
-            else:
-                channel_index += 1
+            print(f"Warning: Skipping field '{field_name}'. Unsupported channel count: {num_channels}")
+
+        channel_index += num_channels
 
     print(f"Reconstruction complete. Found fields: {list(fields_dict.keys())}")
     return fields_dict
 
-# --- Plotting Functions ---
 
-def plot_density(density_field: CenteredGrid, title: str):
+# --- Comparison Plotter ---
+# (Used by run_evaluation.py)
+def plot_comparison(gt_fields: Dict[str, CenteredGrid], 
+                    pred_fields: Dict[str, CenteredGrid],
+                    sim_name: str = "",
+                    sim_index: int = 0):
     """
-    Shows an animation of a scalar field (like density or inflow).
+    Shows a side-by-side animation for all common fields.
     """
-    if density_field is None: return
-    print(f"Plotting '{title}' (close window to continue)...")
+    print("Plotting side-by-side comparisons...")
     
-    vis.plot(
-        density_field,
-        animate='time',      
-        title=title,
-    )
-    plt.show()
-    plt.close()
-
-def plot_velocity(velocity_field: CenteredGrid, title: str):
-    """
-    Shows an animation of a vector field (velocity streamlines).
-    """
-    if velocity_field is None: return
-    print(f"Plotting '{title}' (close window to continue)...")
+    common_fields = set(gt_fields.keys()) & set(pred_fields.keys())
     
-    vis.plot(
-        velocity_field,
-        animate='time',      
-        title=title,
-    )
-    plt.show()
-    plt.close()
-
-# --- NEW FUNCTION ---
-def plot_magnitude(velocity_field: CenteredGrid, title: str):
-    """
-    Calculates and shows an animation of the velocity magnitude.
-    
-    Args:
-        velocity_field: The vector field to plot.
-        title: The title for the plot.
-    """
-    if velocity_field is None: return
-    print(f"Plotting '{title}' (close window to continue)...")
-    
-    # Calculate the magnitude
-    magnitude = field.vec_length(velocity_field)
-    
-    # Plot the scalar magnitude field (will default to heatmap)
-    vis.plot(
-        magnitude,
-        animate='time',      
-        title=title,
-    )
-    plt.show()
-    plt.close()
-
-# --- Main Visualization Function (Updated) ---
-
-def run_visualization(config_path: str, project_root: str, sim_to_load: int = 0):
-    """
-    Main function to run visualization based on a config.
-    Will plot all fields found in the data.
-    """
-    # 1. Load the configuration
-    config = load_config(config_path)
-
-    # 2. Extract parameters from config
-    domain_cfg = config['domain']
-    out_cfg = config['output_data']
-    
-    # 3. Re-create the Domain object
-    domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
-    
-    # 4. Define data path
-    data_dir = os.path.join(project_root, out_cfg['output_dir'])
-    dataset_name = out_cfg['dataset_name']
-    
-    # 5. Get the list of fields to load *from the config*
-    fields_to_load = out_cfg['fields_to_save']
-    
-    print(f"Configuration loaded. Visualizing sim {sim_to_load}...")
-    
-    # 6. Load the data
-    data = load_data(
-        data_dir=data_dir,
-        dset_name=dataset_name,
-        fields_to_load=fields_to_load,
-        sim_index=sim_to_load
-    )
-    
-    if data is None:
-        print("Failed to load data. Exiting.")
+    if not common_fields:
+        print("No common fields found between Ground Truth and Prediction.")
         return
 
-    # 7. Reconstruct fields
-    fields = reconstruct_fields(
-        data_sequence=data, 
-        fields_to_save=fields_to_load,
-        domain=domain
-    )
-    
-    # 8. Show animation for all reconstructed fields
-    if not fields:
-        print("No fields were reconstructed. Nothing to plot.")
-        return
+    for field_name in common_fields:
+        gt_field = gt_fields[field_name]
+        pred_field = pred_fields[field_name]
         
-    if 'density' in fields:
-        plot_density(
-            fields['density'], 
-            title=f"Density (Sim {sim_to_load})"
-        )
+        if field_name == 'velocity':
+            # This is a 2D vector, plot magnitude
+            gt_field = field.vec_length(gt_field)
+            pred_field = field.vec_length(pred_field)
+            title = f"{field_name.capitalize()} Magnitude (Sim {sim_index})"
+        else:
+            # This is a scalar (density, inflow, or 1D velocity)
+            title = f"{field_name.capitalize()} (Sim {sim_index})"
+            
+        print(f"  -> Plotting {title}")
+
         
-    if 'velocity' in fields:
-        # --- THIS IS THE CHANGE ---
-        # Call plot_magnitude instead of plot_velocity
-        plot_magnitude(
-            fields['velocity'], 
-            title=f"Velocity Magnitude (Sim {sim_to_load})"
+        anim = vis.plot(
+            {
+                'Ground Truth': gt_field,
+                'Prediction': pred_field,
+            },
+            animate='time', 
+            title=title
         )
-        # --- END CHANGE ---
+        save_dir = f"results/plots/{sim_name}"
+        os.makedirs(save_dir, exist_ok=True)
+        anim.save(f"{save_dir}/{field_name}_sim_{sim_index}.gif", fps=10)
         
-    if 'inflow' in fields:
-        plot_density(
-            fields['inflow'], 
-            title=f"Inflow (Sim {sim_to_load})"
-        )

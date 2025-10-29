@@ -14,6 +14,8 @@ subsampling:
     x: 128
     y: 128
 
+  time_step: 4
+
   # --- New output location ---
   output_dir: "data/"
   dataset_name: "burgers_128" # <-- New name

@@ -1,17 +1,27 @@
-# configs/smoke.yaml
-
-model_name: "SmokeModel"
-
+# --- Domain & Simulation ---
+# (From your old config, nested)
 domain:
   size_x: 100
   size_y: 100
 resolution:
   x: 128
   y: 128
+dt: 0.8
 
-dt: 0.2
+simulation:
+  num_simulations: 50
+  total_steps: 50
+  save_interval: 1
 
-# --- UPDATED: Added batch_size and inflow_rate ---
+# --- Data Config ---
+# (Nested from old 'output_data' and new 'data_config')
+data_config:
+  data_dir: "data/"
+  dset_name: "smoke_128"
+  # Note: "Velocity" is corrected to "velocity"
+  data_loader_fields: ["density", "velocity", "inflow"]
+
+# --- PDE Params (for data generation) ---
 pde_params:
   batch_size: 1
   nu: 0.0
@@ -21,30 +31,26 @@ pde_params:
   inflow_rand_x_range: [0.2, 0.6]
   inflow_rand_y_range: [0.15, 0.05]
 
-data_generation:
-  num_simulations: 50
-  total_steps: 50
-  save_interval: 1
+# --- Training Config ---
+# (From your train_unet.py script)
+learning_rate: 1.0e-4
+batch_size: 8
+epochs: 50
+num_predict_steps: 8 # Autoregressive rollout length
 
-output_data:
-  output_dir: "data/"
-  dataset_name: "smoke_128"
-  fields_to_save: ["density", "Velocity", "inflow"]
-  fields_scheme: "dVVi"
+# --- Model Config ---
+# (From your train_unet.py script)
+model_path: "results/models"
+model_name: "smoke_128_unet_autoregressive"
 
 model:
-  name: 'UNet'
-  # --- Network architecture ---
+  input_specs:
+    density: 1
+    velocity: 2
+    inflow: 1
+  output_specs:
+    density: 1
+    velocity: 2
   levels: 4
-  filters: 32
-  in_channels: 3   # Must match sum(input_channels)
-  out_channels: 3  # Must match sum(output_channels)
-  
-  # --- Agnostic field definitions ---
-  input_fields: ['density', 'velocity']
-  input_channels: [1, 2]  # 1 for density, 2 for velocity
-  
-  output_fields: ['density', 'velocity']
-  output_channels: [1, 2] # 1 for density, 2 for velocity
-
-  staggered_input_fields: ['velocity']
+  filters: 64
+  batch_norm: true
