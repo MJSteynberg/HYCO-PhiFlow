@@ -1,46 +1,88 @@
+# run.py
+
 import argparse
 import yaml
 import os
 import sys
+from typing import List, Dict, Any
 
 # Add project root to path to allow imports from 'src'
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(PROJECT_ROOT)
 
-# Import task runners/functions
-# NOTE: These functions must be refactored to accept a single config dict
+# --- Import Task Runners ---
 from src.data_generation.generator import run_generation
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.data_generation.subsample import run_subsampling
+
+# --- NEW: Import PhysicalTrainer ---
+from src.training.physical.trainer import PhysicalTrainer
 # from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
 
 def main():
     parser = argparse.ArgumentParser(description="Unified runner for the PDE modeling project.")
     parser.add_argument('--config', type=str, required=True, help='Path to the unified experiment YAML file.')
-    parser.add_argument('--task', type=str, required=True, choices=['generate', 'train', 'evaluate', 'subsample'], help='The task to run.')
+    
+    # --- MODIFICATION: Removed --task argument ---
+    # The tasks to run are now defined inside the config file.
+    
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+        config: Dict[str, Any] = yaml.safe_load(f)
 
-    # Add project root to config for consistent pathing
+    # --- Add project root and log directory to config ---
     config['project_root'] = PROJECT_ROOT
+    
+    run_config = config['run_params']
 
-    print(f"Loaded configuration from {config['data']['dset_name']} for task '{args.task}'.")
-    print(f"The loaded fields are: {config['data']['fields']}")
+    print(f"--- Loaded Experiment: {run_config['experiment_name']} ---")
+    
+    # --- MODIFICATION: Get tasks from config ---
+    tasks: List[str] = run_config['mode']
+    if isinstance(tasks, str):
+        tasks = [tasks]  # Ensure 'tasks' is a list
 
-    if args.task == 'generate':
-        print(f"--- Running Task: Data Generation ---")
-        run_generation(config)
-    elif args.task == 'train':
-        print(f"--- Running Task: Training ---")
-        trainer = SyntheticTrainer(config)
-        trainer.train()
-    elif args.task == 'evaluate':
-        print(f"--- Running Task: Evaluation ---")
-        raise NotImplementedError("Evaluation task not yet refactored.")
-    elif args.task == 'subsample':
-        raise NotImplementedError("Subsampling task not yet refactored.")
+    print(f"--- Will Run Tasks: {tasks} ---")
+
+    # --- MODIFICATION: Loop over tasks from config ---
+    for task in tasks:
+        print(f"\n--- Running Task: {task.upper()} ---")
+        
+        if task == 'generate':
+            run_generation(config)
+            
+        elif task == 'train':
+            model_type = run_config.get('model_type', 'synthetic')
+            print(f"Model type specified: '{model_type}'")
+
+            if model_type == 'synthetic':
+                # SyntheticTrainer's __init__ takes the full config
+                trainer = SyntheticTrainer(config)
+                trainer.train()
+                
+            elif model_type == 'physical':
+                # PhysicalTrainer's __init__ takes (config, log_dir)
+                trainer = PhysicalTrainer(config)
+                trainer.train()
+                
+            else:
+                raise ValueError(
+                    f"Unknown model_type '{model_type}' in config. "
+                    f"Must be 'synthetic' or 'physical'."
+                )
+
+        elif task == 'evaluate':
+            raise NotImplementedError("Evaluation task not yet refactored.")
+            
+        elif task == 'subsample':
+            # Note: Your original script had this as NotImplemented
+            run_subsampling(config)
+            
+        else:
+            print(f"--- Warning: Unknown task '{task}' in config. Skipping. ---")
+
+    print(f"\n--- Experiment {run_config['experiment_name']} Finished ---")
 
 if __name__ == "__main__":
     main()

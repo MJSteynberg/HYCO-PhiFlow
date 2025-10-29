@@ -39,8 +39,8 @@ class PhysicalModel(ABC):
         # Store other params
         for key, val in pde_params.items():
             setattr(self, key, val)
-        
-        print(f"Initialized {self.__class__.__name__} with resolution={resolution}, dt={dt}")
+
+        print(f"Initialized {self.__class__.__name__} with resolution={resolution}, dt={dt}, pde_params={pde_params}")
 
     @abstractmethod
     def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:

@@ -1,7 +1,10 @@
-# --- Task Definition ---
-task: 'train' # Can be 'generate', 'train', 'evaluate', 'subsample'
-project_root: '.' # Relative path to project root
-
+# --- Run Parameters Block ---
+run_params:
+  experiment_name: "burgers_unet_128_v1"
+  notes: "Training a synthetic UNet model on Burgers 128x128 data."
+  mode: ['train']          # Replaces the top-level 'task' field
+  model_type: 'synthetic'  # Tells run.py to use SyntheticTrainer
+  
 # --- Data Configuration (for all tasks) ---
 data:
   data_dir: 'data/'

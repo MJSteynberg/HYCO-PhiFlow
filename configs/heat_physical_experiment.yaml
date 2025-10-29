@@ -1,0 +1,51 @@
+# configs/heat_inverse_experiment.yaml
+#
+# Config to run the PhysicalTrainer for the inverse heat problem.
+# This finds the 'diffusivity' parameter from data.
+
+run_params:
+  experiment_name: "heat_inverse_problem_v1"
+  notes: "Training a physical model (HeatModel) to find the optimal diffusivity."
+  mode: ['generate', 'train']
+  model_type: 'physical'
+
+# --- Data Configuration ---
+data:
+  data_dir: 'data/'
+  dset_name: 'heat_64' 
+  fields: ['temp']
+  fields_scheme: 't'
+
+# --- Data Generation Parameters ---
+generation_params:
+  # These parameters describe the data in 'dset_name'
+  model_name: 'HeatModel'
+  num_simulations: 1
+  total_steps: 50       # Total steps in the saved simulation data
+  save_interval: 1
+
+# --- Model Definitions (Plug-and-Play) ---
+model:
+  physical:
+    name: 'HeatModel' # Class name in src.models.physical
+    model_path: 'results/models/'
+    model_save_name: 'heat_64'
+      
+    # Model parameters
+    domain: { size_x: 100, size_y: 100 }
+    resolution: { x: 64, y: 64 }
+    dt: 1.0
+    pde_params:
+      diffusivity: 0.5 # Ground truth value used for data generation 
+
+
+
+trainer_params:
+  learning_rate: 1.0e-3  # Learning rate from inverse_heat.py
+  batch_size: 16         # Number of samples per gradient update, not yet implemented in PhysicalTrainer
+  epochs: 50             # Number of passes over the dataset
+  num_predict_steps: 5   
+  
+  train_sim: [0] # Which simulations to use for training
+  initial_guess:
+    diffusivity: 0.1 # Initial guess for diffusivity parameter
