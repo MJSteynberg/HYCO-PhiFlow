@@ -179,7 +179,7 @@ if __name__ == "__main__":
         exit()
 
     # 4. Load the full ground truth (GT) sequence
-    sim_to_load = 10 # Hard-code sim 50 for evaluation
+    sim_to_load = test_sim # Hard-code sim 50 for evaluation
     gt_sequence_tensor = load_data(
         data_dir=data_dir,
         dset_name=dataset_name,

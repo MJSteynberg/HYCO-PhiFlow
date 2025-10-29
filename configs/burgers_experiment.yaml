@@ -19,7 +19,7 @@ model:
     dt: 0.8
     pde_params:
       batch_size: 1
-      nu: 0.0
+      nu: 0.1
   
   # Synthetic model used for training/evaluation
   synthetic:
@@ -40,7 +40,7 @@ model:
 # --- Task-Specific Parameters ---
 # Parameters for the 'generate' task
 generation_params:
-  num_simulations: 25
+  num_simulations: 5
   total_steps: 50
   save_interval: 1
 
@@ -48,7 +48,7 @@ generation_params:
 trainer_params:
   learning_rate: 1.0e-4
   batch_size: 16
-  epochs: 50
+  epochs: 5
   num_predict_steps: 4 
-  train_sim: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] # Simulations to use for training
-  test_sim: [16] # Simulations to use for testing
+  train_sim: [0] # Simulations to use for training
+  test_sim: [3] # Simulations to use for testing

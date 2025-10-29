@@ -1,6 +1,7 @@
 import torch
 from phi.torch.flow import *
 from phi.math import jit_compile, batch
+
 from .base import PhysicalModel  # <-- Assuming this base class exists
 from typing import Dict
 
@@ -18,12 +19,14 @@ def _burgers_physics_step(velocity: StaggeredGrid, dt: float, nu: float) -> Stag
     Returns:
         StaggeredGrid: new_velocity
     """
+
+    if nu > 0:
+        velocity = diffuse.explicit(u = velocity, diffusivity=nu, dt=dt)
     # Advect velocity (self-advection: u * grad(u))
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
     
     # Diffuse velocity (viscosity: nu * laplace(u))
-    if nu > 0:
-        velocity = diffuse.explicit(velocity, nu, dt)
+    
     
     return velocity
 
