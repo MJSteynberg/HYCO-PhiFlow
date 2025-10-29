@@ -59,7 +59,7 @@ class PhysicalModel(ABC):
         pass
 
     @abstractmethod
-    def step(self, *current_state: Field) -> Dict[str, Field]:
+    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Advances the simulation by one time step (dt).
 

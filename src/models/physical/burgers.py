@@ -85,12 +85,12 @@ class BurgersModel(PhysicalModel):
 
         return {"velocity": velocity_0}
 
-    def step(self, velocity: StaggeredGrid) -> Dict[str, Field]:
+    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """
         new_velocity = _burgers_physics_step(
-            velocity=velocity,
+            velocity=current_state["velocity"],
             dt=self.dt,
             nu=self.nu
         )

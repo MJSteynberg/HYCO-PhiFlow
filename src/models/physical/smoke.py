@@ -147,14 +147,14 @@ class SmokeModel(PhysicalModel):
         
         return {"velocity": velocity_0, "density": density_0}
 
-    def step(self, velocity: StaggeredGrid, density: CenteredGrid) -> Dict[str, Field]:
+    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """
         # This is unchanged and will now use the internally created self.inflow
         new_velocity, new_density =_smoke_physics_step(
-                velocity=velocity,
-                density=density,
+                velocity=current_state["velocity"],
+                density=current_state["density"],
                 inflow=self.inflow,
                 domain=self.domain,
                 dt=self.dt,

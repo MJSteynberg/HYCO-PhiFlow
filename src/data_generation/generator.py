@@ -106,7 +106,7 @@ def run_generation(config: dict):
                     for name, field_list in state_lists.items()
                 }
                 
-                next_state_dict = model.step(**current_state_dict)
+                next_state_dict = model.step(current_state_dict)
                 
                 if t % gen_cfg['save_interval'] == 0:
                     for name, new_field in next_state_dict.items():
