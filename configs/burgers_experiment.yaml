@@ -7,6 +7,7 @@ data:
   data_dir: 'data/'
   dset_name: 'burgers_128'
   fields: ['velocity']
+  fields_scheme: 'VV'
 
 # --- Model Definitions (Plug-and-Play) ---
 model:
@@ -39,7 +40,7 @@ model:
 # --- Task-Specific Parameters ---
 # Parameters for the 'generate' task
 generation_params:
-  num_simulations: 100
+  num_simulations: 25
   total_steps: 50
   save_interval: 1
 
@@ -48,4 +49,6 @@ trainer_params:
   learning_rate: 1.0e-4
   batch_size: 16
   epochs: 50
-  num_predict_steps: 4 # Autoregressive rollout length
+  num_predict_steps: 4 
+  train_sim: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] # Simulations to use for training
+  test_sim: [16] # Simulations to use for testing

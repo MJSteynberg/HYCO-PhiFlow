@@ -23,34 +23,28 @@ from phi.torch.flow import (
 import src.models.physical as physical_models
 
 
-def load_config(config_path: str) -> dict:
-    """Loads a YAML config file.
-    (This function is unchanged)
-    """
-    print(f"Loading configuration from: {config_path}")
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
-
 def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     """
     Dynamically imports and instantiates a physical model from config.
-    (This function is unchanged)
     """
-    model_name = config['model_name']
+    # This function is *almost* correct, but it's looking
+    # for 'model_name' at the top level, which is part of the OLD config schema.
+    # The NEW schema has it under config['model']['physical']['name'] [cite: 79]
+    
+    # Get the correct config sub-dictionary
+    phys_model_cfg = config['model']['physical']
+    
+    model_name = phys_model_cfg['name'] # <-- Use new schema
     
     # 1. Build Domain and Resolution
-    domain_cfg = config['domain']
-    res_cfg = config['resolution']
+    domain_cfg = phys_model_cfg['domain']    # <-- Use new schema
+    res_cfg = phys_model_cfg['resolution'] # <-- Use new schema
     
-    # --- MODIFICATION: Hardcode 2D resolution ---
-    # This assumes 'x' and 'y' are always in the config
     domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
     resolution = spatial(x=res_cfg['x'], y=res_cfg['y'])
-    # --- End Modification ---
     
     # 2. Get PDE params
-    pde_params = config.get('pde_params', {}).copy()
+    pde_params = phys_model_cfg.get('pde_params', {}).copy()
 
     # 3. Get the Model Class
     try:
@@ -62,24 +56,25 @@ def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     model = ModelClass(
         domain=domain,
         resolution=resolution,
-        dt=config['dt'],
+        dt=phys_model_cfg['dt'], # <-- Use new schema
         **pde_params
     )
     return model
 
 
-def run_generation(config_path: str, project_root: str):
+def run_generation(config: dict):
     """
     Main function to run data generation based on a config.
     """
-    config = load_config(config_path)
-    gen_cfg = config['data_generation']
-    out_cfg = config['output_data']
+    # Get parameters from the UNIFIED config schema
+    gen_cfg = config['generation_params']      # <-- Use new schema [cite: 82]
+    data_cfg = config['data']                  # <-- Use new schema [cite: 79]
+    project_root = config['project_root']      # <-- Get from config [cite: 115]
 
     # --- Setup HDF5 File ---
-    output_path = os.path.join(project_root, out_cfg['output_dir'])
+    output_path = os.path.join(project_root, data_cfg['data_dir']) # <-- Use new schema
     os.makedirs(output_path, exist_ok=True)
-    dset_path = os.path.join(output_path, f"{out_cfg['dataset_name']}.hdf5")
+    dset_path = os.path.join(output_path, f"{data_cfg['dset_name']}.hdf5") # <-- Use new schema
     
     print(f"Starting {gen_cfg['num_simulations']} simulations.")
     print(f"Data will be saved to: {dset_path}")
@@ -87,15 +82,12 @@ def run_generation(config_path: str, project_root: str):
     with h5py.File(dset_path, 'w') as f:
         
         sims_group = f.create_group('sims')
-        
-        # --- 2. WRAP THE OUTER LOOP ---
-        # This bar will show "Total Simulations [2/10]"
+     
         for i in tqdm(range(gen_cfg['num_simulations']), desc="Total Simulations"):
             
-            # (We keep this print, but remove the \n)
             print(f"--- Running Simulation {i+1}/{gen_cfg['num_simulations']} ---")
             
-            # --- 1. Get a new model with a new random inflow ---
+            # This 'get_physical_model' call now works with the unified config
             model = get_physical_model(config)
             
             # --- 2. Get initial state (with batch_size=1) ---
@@ -123,7 +115,7 @@ def run_generation(config_path: str, project_root: str):
 
             # --- 4. Prepare data for saving (GENERALIZED) ---
             
-            fields_to_save = out_cfg['fields_to_save']
+            fields_to_save = data_cfg['fields']
             data_channels = [] 
             
             # (No need to print here, the progress bar shows it)
@@ -213,10 +205,14 @@ def run_generation(config_path: str, project_root: str):
         # --- 5. Save metadata ---
         print("\nAll simulations complete. Saving metadata...")
         
-        sims_group.attrs['PDE'] = config.get('pde_name', 'Unknown PDE')
-        sims_group.attrs['Fields Scheme'] = out_cfg['fields_scheme']
-        sims_group.attrs['Fields'] = out_cfg['fields_to_save'] 
+        # This part also needs to be updated from the old 'out_cfg'
+        
+        sims_group.attrs['PDE'] = config['model']['physical']['name'] # <-- NEW
+        sims_group.attrs['Fields'] = data_cfg['fields'] # <-- NEW
+        sims_group.attrs['Fields Scheme'] = data_cfg['fields_scheme']
         sims_group.attrs['Constants'] = [] 
         
-        saved_dt = config['dt'] * gen_cfg['save_interval']
+        # Dt is also in a different place
+        # saved_dt = config['dt'] * gen_cfg['save_interval'] # <-- OLD
+        saved_dt = config['model']['physical']['dt'] * gen_cfg['save_interval'] # <-- NEW
         sims_group.attrs['Dt'] = float(saved_dt)

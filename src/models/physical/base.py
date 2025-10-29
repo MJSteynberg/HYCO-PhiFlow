@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from phi.flow import Field, Box
 from phi.math import Shape
 
+from typing import Dict
+
 class PhysicalModel(ABC):
     """
     Abstract Base Class for all physical PDE models.
@@ -41,7 +43,7 @@ class PhysicalModel(ABC):
         print(f"Initialized {self.__class__.__name__} with resolution={resolution}, dt={dt}")
 
     @abstractmethod
-    def get_initial_state(self, batch_size: int = 1) -> tuple[Field, ...]:
+    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Generates a batched initial state (t=0) for the simulation.
         
@@ -51,13 +53,13 @@ class PhysicalModel(ABC):
             batch_size (int): The number of parallel simulations.
 
         Returns:
-            tuple[Field, ...]: A tuple of PhiFlow Fields representing
-                               the initial state (e..g, (velocity_0, density_0)).
+            Dict[str, Field]: A dictionary mapping field names to their
+                              initial Field values.
         """
         pass
 
     @abstractmethod
-    def step(self, *current_state: Field) -> tuple[Field, ...]:
+    def step(self, *current_state: Field) -> Dict[str, Field]:
         """
         Advances the simulation by one time step (dt).
 

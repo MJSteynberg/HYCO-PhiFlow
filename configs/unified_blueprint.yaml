@@ -9,6 +9,7 @@ data:
   # This order defines the "data contract" for the HDF5 file
   # and must be used consistently by loader and generator.
   fields: ['density', 'velocity', 'inflow']
+  fields_scheme: 'dVVi'
 
 # --- Model Definitions (Plug-and-Play) ---
 model:
@@ -56,3 +57,5 @@ trainer_params:
   batch_size: 16
   epochs: 50
   num_predict_steps: 4 # Autoregressive rollout length
+  train_sim: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] # Simulations to use for training
+  test_sim: [16] # Simulations to use for testing

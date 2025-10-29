@@ -2,9 +2,9 @@
 
 import os
 import h5py
-import yaml
 import numpy as np
 from tqdm import tqdm
+import yaml
 
 # --- PhiFlow Imports ---
 from phi.torch.flow import (
@@ -18,24 +18,20 @@ from phi.torch.flow import (
     batch
 )
 
-def load_config(config_path: str) -> dict:
-    """Loads a YAML config file."""
-    print(f"Loading configuration from: {config_path}")
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
 
-def run_subsampling(config_path: str, project_root: str):
+def run_subsampling(config: dict):
     """
     Main function to load a dataset, subsample it,
     and save it to a new HDF5 file.
     """
-    config = load_config(config_path)
+    project_root = config['project_root']
     
-    # --- Get Configs ---
-    # Use original data-gen config to get domain info
-    orig_config_path = os.path.join(project_root, config['original_config_path'])
-    orig_config = load_config(orig_config_path)
+    orig_config_path_rel = config['original_config_path'] # 
+    orig_config_path_abs = os.path.join(project_root, orig_config_path_rel)
+    
+    print(f"Loading original data-gen config from: {orig_config_path_abs}")
+    with open(orig_config_path_abs, 'r') as f:
+        orig_config = yaml.safe_load(f) # We still need yaml here for this one file
     
     domain_cfg = orig_config['domain']
     orig_res_cfg = orig_config['resolution']

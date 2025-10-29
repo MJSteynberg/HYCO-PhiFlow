@@ -31,7 +31,7 @@ print(f"Using device: {device}")
 
 def load_trained_model(model_path, config):
     """
-    (This function is unchanged from your last version)
+    (This function is unchanged)
     Loads the trained U-Net model using the new UNet class.
     """
     print(f"Loading trained model from {model_path}...")
@@ -57,6 +57,7 @@ def run_autoregressive_rollout(model: UNet,
                                num_steps: int) -> torch.Tensor:
     """
     --- MODIFIED: This is now generic and input-agnostic ---
+    (This function is unchanged)
     Generates a full simulation sequence using the dictionary-based model.
     """
     print(f"Running autoregressive rollout for {num_steps} steps...")
@@ -106,7 +107,8 @@ def run_autoregressive_rollout(model: UNet,
         model_input_dict = {**current_state_dict, **static_field_dict}
         
         # 2. Predict: (Dict) -> (Dict)
-        pred_dict = model(model_input_dict)
+        # We pass dt=0.0 as it's not used by this UNet
+        pred_dict = model(model_input_dict, dt=0.0) 
         
         # 3. Store the prediction tensor
         pred_tensor = torch.cat(
@@ -129,41 +131,55 @@ if __name__ == "__main__":
     
     # --- NEW: Config-driven execution ---
     if len(sys.argv) < 2:
-        print("Error: Please provide the path to a training config YAML.")
-        print("Usage: python scripts/run_evaluation.py configs/smoke_128.yaml")
+        print("Error: Please provide the path to a UNIFIED experiment YAML.")
+        print("Usage: python scripts/run_evaluation.py configs/smoke_experiment.yaml")
         exit()
         
     config_path = sys.argv[1]
     
     # 1. Load Configs
-    train_config = load_config(config_path)
+    config = load_config(config_path)
     
-    # Get parameters from the *same config* used for training
-    data_cfg = train_config['data_config']
-    domain_cfg = train_config['domain']
-    model_cfg = train_config['model']
+    # --- Get parameters from the UNIFIED config schema ---
+    data_cfg = config['data']
     
+    # Domain info is under the *physical* model's config
+    domain_cfg = config['model']['physical']['domain'] 
+    
+    # Model info is under the *synthetic* model's config
+    model_cfg = config['model']['synthetic']
+
+    # Training config
+    trainer_cfg = config['trainer_params']
+    
+    # Sim info is under 'generation_params'
+    sim_cfg = config['generation_params']
+
     dataset_name = data_cfg['dset_name']
     data_dir = data_cfg['data_dir']
-    data_loader_fields = data_cfg['data_loader_fields']
+    data_loader_fields = data_cfg['fields'] # <-- Renamed
     
-    sim_cfg = train_config['simulation']
     num_saved_states = (sim_cfg['total_steps'] // sim_cfg['save_interval']) + 1
     total_steps = sim_cfg['total_steps']
+
+    test_sim = trainer_cfg["test_sim"][0]  # Use the first test simulation
 
     # 2. Re-create the Domain object
     domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
     
     # 3. Load the trained model
-    model_name = train_config['model_name']
-    model_path = os.path.join(train_config['model_path'], f"{model_name}.pth")
-    model = load_trained_model(model_path, config=model_cfg)
+    model_name = model_cfg['model_save_name'] # <-- Renamed
+    model_path_dir = model_cfg['model_path']  # <-- Renamed
+    model_path = os.path.join(model_path_dir, f"{model_name}.pth")
+    
+    # Pass the synthetic model's config dict to the UNet constructor
+    model = load_trained_model(model_path, config=model_cfg) 
     
     if model is None:
         exit()
 
     # 4. Load the full ground truth (GT) sequence
-    sim_to_load = 50 # Hard-code sim 30 for evaluation
+    sim_to_load = 10 # Hard-code sim 50 for evaluation
     gt_sequence_tensor = load_data(
         data_dir=data_dir,
         dset_name=dataset_name,

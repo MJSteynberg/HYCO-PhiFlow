@@ -38,11 +38,9 @@ def main():
         trainer.train()
     elif args.task == 'evaluate':
         print(f"--- Running Task: Evaluation ---")
-        # run_evaluation(config) # Placeholder for the refactored evaluation logic
-        print("Evaluation task not yet fully refactored.")
+        raise NotImplementedError("Evaluation task not yet refactored.")
     elif args.task == 'subsample':
-        print(f"--- Running Task: Subsampling ---")
-        run_subsampling(config)
+        raise NotImplementedError("Subsampling task not yet refactored.")
 
 if __name__ == "__main__":
     main()

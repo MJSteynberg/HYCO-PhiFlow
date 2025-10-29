@@ -64,6 +64,7 @@ class SyntheticTrainer:
         self.epochs = self.trainer_config['epochs']
         self.batch_size = self.trainer_config['batch_size']
         self.num_predict_steps = self.trainer_config['num_predict_steps']
+        self.train_sim = self.trainer_config['train_sim']
 
         # --- Setup Components ---
         self.train_loader = self._create_data_loader()
@@ -89,7 +90,7 @@ class SyntheticTrainer:
             intermediate_time_steps=True,
             batch_size=self.batch_size,
             shuffle=True,
-            sel_sims=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+            sel_sims=self.train_sim,
             local_datasets_dir=self.data_dir
         )
         return loader
