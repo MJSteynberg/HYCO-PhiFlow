@@ -31,3 +31,20 @@ output_data:
   dataset_name: "smoke_v1"
   fields_to_save: ["density", "Velocity", "inflow"]
   fields_scheme: "dVVi"
+
+model:
+  name: 'UNet'
+  # --- Network architecture ---
+  levels: 4
+  filters: 32
+  in_channels: 3   # Must match sum(input_channels)
+  out_channels: 3  # Must match sum(output_channels)
+  
+  # --- Agnostic field definitions ---
+  input_fields: ['density', 'velocity']
+  input_channels: [1, 2]  # 1 for density, 2 for velocity
+  
+  output_fields: ['density', 'velocity']
+  output_channels: [1, 2] # 1 for density, 2 for velocity
+
+  staggered_input_fields: ['velocity']

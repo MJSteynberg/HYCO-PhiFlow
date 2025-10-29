@@ -18,7 +18,7 @@ if __name__ == "__main__":
     
     # --- Select simulation to visualize ---
     # You can change this to load any sim from your dataset
-    SIM_INDEX_TO_LOAD = 0
+    SIM_INDEX_TO_LOAD = 32
     
     # --- Run ---
     run_visualization(

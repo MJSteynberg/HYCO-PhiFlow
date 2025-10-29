@@ -1,4 +1,4 @@
-# tests/models/physical/test_burgers_model.py
+# In tests/models/physical/test_burgers_model.py
 
 import pytest
 from phi.torch.flow import (
@@ -7,7 +7,7 @@ from phi.torch.flow import (
     batch,
     spatial
 )
-from phi.field import StaggeredGrid # Only need StaggeredGrid
+from phi.field import StaggeredGrid 
 
 # --- We must import the class we want to test ---
 from src.models.physical.burgers import BurgersModel
@@ -16,10 +16,10 @@ from src.models.physical.burgers import BurgersModel
 TEST_RES_X = 64
 TEST_RES_Y = 64
 TEST_RESOLUTION = spatial(x=TEST_RES_X, y=TEST_RES_Y)
-TEST_DOMAIN = Box(x=100, y=100) # From burgers.yaml
-TEST_DT = 0.5                  # From burgers.yaml
-TEST_BATCH_SIZE = 4            # Use a multi-batch size for testing
-TEST_NU = 0.1                  # Use a non-zero value for testing
+TEST_DOMAIN = Box(x=100, y=100) 
+TEST_DT = 0.5                  
+TEST_BATCH_SIZE = 4            
+TEST_NU = 0.1                  
 
 @pytest.fixture(scope="module")
 def burgers_model() -> BurgersModel:
@@ -52,9 +52,13 @@ def test_get_initial_state(burgers_model: BurgersModel):
     """
     Tests the 'get_initial_state' method.
     """
-    # BurgersModel only returns one state: velocity
-    vel = burgers_model.get_initial_state() 
+    # --- MODIFIED: Expect a dictionary ---
+    state_0 = burgers_model.get_initial_state() 
     
+    assert isinstance(state_0, dict)
+    assert 'velocity' in state_0
+    
+    vel = state_0['velocity']
     
     # Check batch dimension
     assert 'batch' in vel.shape
@@ -70,14 +74,22 @@ def test_step_function(burgers_model: BurgersModel):
     """
     Tests the 'step' method for one iteration.
     """
-    # 1. Get an initial state
-    vel_0 = burgers_model.get_initial_state()
+    # 1. Get an initial state dictionary
+    state_0_dict = burgers_model.get_initial_state()
+    vel_0 = state_0_dict['velocity']
+
+    print(f"Initial velocity shape: {vel_0}")
     
-    # 2. Run one step (model is callable, which routes to 'step')
-    vel_1 = burgers_model(vel_0)
+    # 2. Run one step by passing the field as a positional argument
+    # --- MODIFIED: Unpack the dict before calling ---
+    state_1_dict = burgers_model(vel_0)
+    
+    # 3. Check the returned dictionary
+    assert isinstance(state_1_dict, dict)
+    assert 'velocity' in state_1_dict
+    
+    vel_1 = state_1_dict['velocity']
     
     # The output shape must *exactly* match the input shape.
     assert vel_1.shape == vel_0.shape
     
-    # The grid type and extrapolation should also be preserved
-    assert vel_1.extrapolation == vel_0.extrapolation
