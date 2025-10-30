@@ -2,43 +2,38 @@
 
 from typing import Dict, Any, List
 import torch
-from phiml.math import Tensor
+import phiml.math
 import phiml.nn as pnn
+from phi.torch.flow import *
+from phi import field as phi_field
+from phi.field import native_call
 
 # Import the base class
+from .base import SyntheticModel
+# In src/models/synthetic/unet.py (EXAMPLE)
+from typing import Dict, Any
+from phi.field import CenteredGrid, native_call
+from phiml.nn import u_net  # or from phi.torch.nets import u_net as pnn
 from .base import SyntheticModel
 
 class UNet(SyntheticModel):
     """
-    A generic U-Net wrapper that conforms to the SyntheticModel interface.
-
-    This model is "input agnostic". It assembles an input tensor from
-    a dictionary of fields based on 'input_specs' and disassembles
-    its output tensor into a dictionary based on 'output_specs'.
+    A generic U-Net wrapper that plugs into the SyntheticModel base class.
+    
+    The base class handles all field (Staggered/Centered) conversions.
+    This class just defines the network architecture and the call to it.
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
         Initializes the U-Net model.
-
-        Args:
-            config: A dictionary, expected to contain:
-                - 'input_specs' (Dict[str, int]): Map of {field_name: channels},
-                  e.g., {'density': 1, 'velocity': 2, 'inflow': 1}
-                - 'output_specs' (Dict[str, int]): Map of {field_name: channels},
-                  e.g., {'density': 1, 'velocity': 2}
-                - 'levels' (int): e.g., 4
-                - 'filters' (int): e.g., 64
-                - 'batch_norm' (bool): e.g., True
         """
         super().__init__(config)
-
-        # --- NEW: Calculate in/out channels from specs ---
+        
         in_channels = sum(self.INPUT_SPECS.values())
         out_channels = sum(self.OUTPUT_SPECS.values())
 
-        # The actual PhiFlow U-Net model is held as a submodule
-        self.unet = pnn.u_net(
+        self.unet = u_net(  # Assuming this is your network constructor
             in_channels=in_channels,
             out_channels=out_channels,
             levels=config.get('levels', 4),
@@ -46,34 +41,18 @@ class UNet(SyntheticModel):
             batch_norm=config.get('batch_norm', True),
         )
 
-    def forward(self, state: Dict[str, Tensor], dt: float = 0.0) -> Dict[str, Tensor]:
+    def _predict(self, nn_input_grid: CenteredGrid, dt: float) -> CenteredGrid:
         """
-        Performs one forward pass.
-
-        Args:
-            state: A dictionary of Tensors. Must contain all keys
-                   from 'self.input_specs'.
-            dt: Time step (unused by this model).
-
-        Returns:
-            A dictionary of Tensors containing the predicted fields
-            as defined in 'self.output_specs'.
-        """
-        # 1. --- NEW: Generic assembly of the input tensor ---
-        tensors_to_cat = [state[key] for key in self.INPUT_FIELDS]
+        Performs the core prediction.
         
-            
-        model_input = torch.cat(tensors_to_cat, dim=1) # Concat on channel dim
-
-        # 2. Forward pass
-        pred_tensor = self.unet(model_input)
-
-        # 3. --- NEW: Generic splitting of the output tensor ---
-        output_dict = {}
-        start_channel = 0
-        for field_name, num_channels in self.OUTPUT_SPECS.items():
-            end_channel = start_channel + num_channels
-            output_dict[field_name] = pred_tensor[:, start_channel:end_channel, ...]
-            start_channel = end_channel
-            
-        return output_dict
+        The input grid's 'vector' dimension holds all stacked channels.
+        The output grid must also stack all output channels on 'vector'.
+        """
+        # The base class's `forward` method calls this.
+        # This is now the *only* logic this class needs.
+        return native_call(
+            self.unet, 
+            nn_input_grid, 
+            channel_dim='vector', 
+            channels_last=False
+        )

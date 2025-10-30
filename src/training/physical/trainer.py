@@ -1,175 +1,88 @@
-# src/training/physical/trainer.py
-import time
-from pathlib import Path
-from typing import Dict, Any, List
+# In src/training/physical/trainer_scene.py
+
 import os
+import time
+from typing import Dict, Any, List
 
 # --- PhiFlow Imports ---
 from phi.torch.flow import *
-from phi.field import CenteredGrid, StaggeredGrid, l2_loss 
-from phi.math import jit_compile, batch, gradient, stop_gradient, math, dual 
-# --- 1. ADD THIS IMPORT ---
-from phi.physics._boundaries import Domain, PERIODIC, ZERO
+from phi.field import l2_loss
+from phi.math import math, Tensor
+
 # --- Repo Imports ---
 import src.models.physical as physical_models
-
-# --- PBDL Dataloader Import ---
-from pbdl.torch.loader import Dataloader
 
 
 class PhysicalTrainer:
     """
-    (Class docstring)
+    Solves an inverse problem for a PhysicalModel using data
+    from a PhiFlow Scene.
+
+    This trainer adapts the logic from 'scripts/run_inverse_heat.py'
+    into a reusable class. It uses math.minimize for optimization.
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
-        (init docstring)
+        Initializes the trainer from a unified configuration dictionary.
+
+        Args:
+            config (Dict[str, Any]): The experiment configuration.
         """
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.project_root = config.get('project_root', '.') # Get project root
 
-        # --- 1. Parse Configs ---
+        # --- Parse Configs ---
         self.data_config = config['data']
         self.model_config = config['model']['physical']
         self.trainer_config = config['trainer_params']
         
-        self.data_loader_fields_config: List[str] = self.data_config['fields'] 
-        self.dset_name = self.data_config['dset_name'] 
-        self.data_dir = self.data_config['data_dir'] 
-
-        model_save_name = self.model_config['model_save_name']
-        model_path_dir = self.model_config['model_path']
-        self.checkpoint_path = os.path.join(model_path_dir, f"{model_save_name}.pth")
-        os.makedirs(model_path_dir, exist_ok=True)
-
-        # --- Training parameters ---
-        self.learning_rate = self.trainer_config['learning_rate']
-        self.epochs = self.trainer_config['epochs']
-        self.batch_size = self.trainer_config['batch_size']
-        self.train_sim = self.trainer_config['train_sim']
-        self.num_predict_steps = self.trainer_config['num_predict_steps']
-
-        self.pbdl_load_fields_list = []
-        for field_name in self.data_loader_fields_config:
-            field_name_lower = field_name.lower()
-            if field_name_lower == 'velocity':
-                self.pbdl_load_fields_list.append('velocity') # For x-component
-                self.pbdl_load_fields_list.append('velocity') # For y-component
-            else:
-                self.pbdl_load_fields_list.append(field_name)
+        # --- Get parameters ---
+        self.train_sims: List[int] = self.trainer_config['train_sim']
+        self.num_epochs: int = self.trainer_config['epochs']
+        self.num_predict_steps: int = self.trainer_config['num_predict_steps']
         
-        self.train_loader = self._create_data_loader()
+        self.learnable_params_config = self.trainer_config.get('learnable_parameters', [])
+        
+        # --- Get Ground Truth field names ---
+        self.gt_fields: List[str] = self.data_config['fields']
+        
+        # --- Setup Learnable Parameters ---
+        self.initial_guesses = self._get_initial_guesses()
+
+        # --- Setup Model ---
+        # The model is initialized with the *initial guesses*
         self.model = self._create_model()
         
-        # --- 2. IMPLEMENT YOUR SUGGESTION ---
-        # Create a physics.Domain object from the model's Box and Shape.
-        # We assume PERIODIC boundaries as this matches the models. !!!!!!!!!!!!!!!!!!!!!!!!!!
-        BNDS = {
-            'y':(ZERO, ZERO),
-            'x':(ZERO, ZERO)
-        }
-        self.physics_domain = Domain(
-            x=self.model.resolution.get_size('x'),
-            y=self.model.resolution.get_size('y'),
-            boundaries = BNDS,
-            bounds = self.model.domain
-        )
-        
-        
-        self.learnable_params = self._create_learnable_params()
-        self.grad_function = self._create_gradient_function()
+        print(f"PhysicalTrainerScene initialized. Will optimize for {len(self.initial_guesses)} parameter(s).")
 
-        print(f"PhysicalTrainer initialized with model '{self.model_config['name']}'.")
 
-    def _create_data_loader(self):
-        """Creates the pbdl.Dataloader."""
-        print(f"Setting up data loader for '{self.dset_name}'...")
-        hdf5_filepath = os.path.join(self.data_dir, f"{self.dset_name}.hdf5")
-        if not os.path.exists(hdf5_filepath):
-            raise FileNotFoundError(f"Dataset not found at {hdf5_filepath}")
-
-        loader = Dataloader(
-            self.dset_name,
-            load_fields=self.pbdl_load_fields_list, 
-            time_steps=self.num_predict_steps,
-            intermediate_time_steps=True,
-            batch_size=self.batch_size,
-            shuffle=True,
-            sel_sims=self.train_sim,
-            local_datasets_dir=self.data_dir
-        )
-        print(f"Data loader created. Loading channels: {self.pbdl_load_fields_list}")
-        return loader 
-    
-    
-    def _tensor_to_grid_dict(self, tensor_batch: torch.Tensor) -> Dict[str, Field]:
+    def _create_model(self) -> physical_models.PhysicalModel:
         """
-        Converts a raw (B, C, Y, X) tensor from the data loader into a
-        dictionary of PhiFlow Fields, correctly reconstructing
-        StaggeredGrids by PADDING the sliced components.
+        Instantiates the physical model from the config, setting
+        learnable parameters to their initial guesses.
         """
+        model_name = self.model_config['name']
+        domain_cfg = self.model_config['domain']
+        res_cfg = self.model_config['resolution']
         
-        num_channels_actual = tensor_batch.shape[1]
-        if num_channels_actual != len(self.pbdl_load_fields_list):
-             raise ValueError(
-                f"Channel mismatch: Dataloader was supposed to load "
-                f"{len(self.pbdl_load_fields_list)} channels, but tensor "
-                f"has {num_channels_actual} channels."
-            )
-
-        dynamic_batch_size = tensor_batch.shape[0]
-        batch_dim = batch(batch=dynamic_batch_size)
-        channel_dim = channel(channels=num_channels_actual)
-        spatial_dims_names = self.model.resolution.names[::-1] 
-        spatial_dim = spatial(*spatial_dims_names) 
-        full_4d_shape = batch_dim & channel_dim & spatial_dim
+        domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
+        resolution = spatial(x=res_cfg['x'], y=res_cfg['y'])
         
-        phiml_tensor = wrap(tensor_batch, full_4d_shape)
-        
-        grid_dict = {}
-        channel_idx = 0
-        for field_name in self.data_loader_fields_config:
-            field_name_lower = field_name.lower()
-            
-            if field_name_lower == 'velocity':
-                # Note: Order matches generator (x-comp first, then y-comp)
-                vx = phiml_tensor.channels[channel_idx]
-                vy = phiml_tensor.channels[channel_idx + 1]
-
-                grid = self.physics_domain.staggered_grid( math.stack( [
-                            math.tensor(vy, math.batch('batch'), math.spatial('x,y')),
-                            math.tensor(vx, math.batch('batch'), math.spatial('x,y')),
-                        ], math.dual(vector="x,y")
-                    ) )
-                
-                grid_dict[field_name] = grid
-                channel_idx += 2 
-
-            else:
-                # --- Standard CenteredGrid path (temp, density) ---
-                field_values = phiml_tensor.channels[channel_idx]
-                
-                # --- 3. THE FIX (for consistency) ---
-                grid = self.physics_domain.scalar_grid(
-                    field_values
-                )
-                # --- END FIX ---
-                
-                grid_dict[field_name] = grid
-                channel_idx += 1
-            
-        return grid_dict
-
-    def _create_model(self):
-        """(This function is general)"""
-        domain = Box(x=self.model_config['domain']['size_x'], y=self.model_config['domain']['size_y'])
-        resolution = spatial(x=self.model_config['resolution']['x'], y=self.model_config['resolution']['y'])
+        # Start with a copy of PDE params from config
         pde_params = self.model_config.get('pde_params', {}).copy()
+        
+        # --- IMPORTANT ---
+        # Overwrite/set the *initial guess* for the learnable parameters
+        # on the model instance. The optimizer will update these.
+        for param in self.learnable_params_config:
+            pde_params[param['name']] = param['initial_guess']
+
         try:
-            ModelClass = getattr(physical_models, self.model_config['name'])
+            ModelClass = getattr(physical_models, model_name)
         except AttributeError:
-            raise ImportError(f"Model '{self.model_config['name']}' not found in src/models/physical/__init__.py")
+            raise ImportError(f"Model '{model_name}' not found in src/models/physical/__init__.py")
+
         model = ModelClass(
             domain=domain,
             resolution=resolution,
@@ -177,116 +90,232 @@ class PhysicalTrainer:
             **pde_params
         )
         return model
-
-    def _create_learnable_params(self) -> List[Tensor]:
-        """(This function is general)"""
-        learnable_params_cfg = self.trainer_config.get('learnable_parameters')
-        if not learnable_params_cfg:
-            raise ValueError("Config missing `trainer_params.learnable_parameters` list.")
-        learnable_tensors = []
-        for param_info in learnable_params_cfg:
-            name = param_info['name']
-            guess = param_info['initial_guess']
-            param_tensor = wrap([guess], batch(name))
-            learnable_tensors.append(param_tensor)
-        print(f"Created learnable parameters: {[p.shape.name for p in learnable_tensors]}")
-        return learnable_tensors
-
     
-    def _calculate_loss(self, 
-                        initial_state_tensor: torch.Tensor, 
-                        true_rollout_tensor: torch.Tensor, 
-                        **learnable_params_kwargs) -> Tensor:
-        """(This function is general)"""
+    def _get_initial_guesses(self) -> List[Tensor]:
+        """
+        Extracts the initial guesses for the learnable parameters
+        and wraps them as named PhiFlow Tensors.
+        """
+        guesses = []
+        print("Setting up learnable parameters:")
+        for param in self.learnable_params_config:
+            name = param['name']
+            guess_val = param['initial_guess']
+            print(f"  - {name}: initial_guess={guess_val}")
+            # Wrap the guess in a named Tensor
+            guesses.append(math.tensor(guess_val))
         
-        for param_name, param_value in learnable_params_kwargs.items():
-            if not hasattr(self.model, param_name):
-                raise AttributeError(f"Model {type(self.model)} does not have attribute '{param_name}'")
-            setattr(self.model, param_name, param_value)
+        if not guesses:
+            raise ValueError("No 'learnable_parameters' defined in trainer_params.")
         
-        total_loss = 0.0
-        
-        current_state_dict = self._tensor_to_grid_dict(initial_state_tensor)
-        
-        for step in range(self.num_predict_steps):
-            
-            next_state_dict = self.model.step(current_state_dict)
-            
-            true_tensor_this_step = true_rollout_tensor[:, step, ...] # (B, C, Y, X)
-            
-            true_grid_dict = self._tensor_to_grid_dict(true_tensor_this_step)
-            
-            loss_at_step = 0.0
-            for field_name, true_grid in true_grid_dict.items():
-                if field_name not in next_state_dict:
-                    continue 
-                
-                predicted_grid = next_state_dict[field_name]
-                
-                loss_at_step += l2_loss(predicted_grid - stop_gradient(true_grid))
-            
-            total_loss += loss_at_step
-            
-            current_state_dict = next_state_dict
+        return guesses
+    
+    # Add this method inside the PhysicalTrainerScene class:
 
-        batched_loss = total_loss / self.num_predict_steps
-        scalar_loss = math.mean(batched_loss, dim='batch')
-        return scalar_loss
+    def _load_ground_truth_data(self, sim_index: int) -> Dict[str, Tensor]:
+        """
+        Loads all ground truth data for one simulation from its Scene.
+        Adds a batch dimension to match the model's expected format.
+        
+        Args:
+            sim_index (int): The simulation index to load.
 
-    def _create_gradient_function(self) -> callable:
-        """(This function is general)"""
-        return gradient(
-            self._calculate_loss, 
-            wrt=[p.shape.name for p in self.learnable_params]
+        Returns:
+            Dict[str, Tensor]: A dict mapping field names to their
+                                full time-batched (batchᵇ=1, time, ...) tensors.
+        """
+        scene_parent_dir = os.path.join(
+            self.project_root,
+            self.data_config['data_dir'],
+            self.data_config['dset_name']
         )
-    
-    def train(self):
-        """(This function is general)"""
-        print(f"\n--- Starting Physical Parameter Optimization ---")
-        print(f"Epoch | Avg. Loss  | Current Guess(es)")
-        print(f"-------------------------------------------")
+        scene_name = f"sim_{sim_index:06d}"
+        scene_path = os.path.join(scene_parent_dir, scene_name)
         
-        start_time = time.time()
+        if not os.path.exists(scene_path):
+            # Try to find the scene if the name is not zero-padded
+            scene_path_alt = os.path.join(scene_parent_dir, f"sim_{sim_index}")
+            if os.path.exists(scene_path_alt):
+                 scene_path = scene_path_alt
+            else:
+                 raise FileNotFoundError(
+                     f"Scene not found at {scene_path} or {scene_path_alt}"
+                 )
         
-        current_params_list = self.learnable_params
+        print(f"Loading ground truth from: {scene_path}")
+        scene = Scene.at(scene_path)
         
-        for epoch in range(1, self.epochs + 1):
-            total_epoch_loss = 0.0
-            
-            for x_batch, y_batch in self.train_loader:
+        frames = scene.frames
+        # Limit frames based on num_predict_steps + 1 (for initial state)
+        frames_to_load = frames[:self.num_predict_steps + 1]
+        if len(frames_to_load) < self.num_predict_steps + 1:
+            print(f"Warning: Scene only has {len(frames_to_load)} frames, "
+                  f"but config requested {self.num_predict_steps + 1}.")
+            # Update num_predict_steps to match available data
+            self.num_predict_steps = len(frames_to_load) - 1
+        
+        print(f"Loading {len(frames_to_load)} frames (T=0 to T={self.num_predict_steps}).")
+        
+        data = {}
+        # Load only the fields specified in the config
+        for field_name in self.gt_fields:
+            if field_name not in scene.fieldnames:
+                print(f"Warning: Field '{field_name}' not in Scene. Skipping.")
+                continue
                 
-                x_batch = x_batch.to(self.device) 
-                y_batch = y_batch.to(self.device)
-                
-                param_kwargs = {p.shape.name: p for p in current_params_list}
-                
-                loss, grads_tuple = self.grad_function(
-                    initial_state_tensor=x_batch,
-                    true_rollout_tensor=y_batch,
-                    **param_kwargs
+            field_frames = []
+            for frame in frames_to_load:
+                field_data = scene.read_field(
+                    field_name, 
+                    frame=frame, 
+                    convert_to_backend=True
                 )
-                grads_list = list(grads_tuple)
-                
-                new_params_list = []
-                for param, grad in zip(current_params_list, grads_list):
-                    grad = math.where(math.is_finite(grad), grad, 0.0) 
-                    new_param = param - self.learning_rate * grad
-                    new_params_list.append(new_param)
-                
-                current_params_list = new_params_list
-                total_epoch_loss += loss
+                field_frames.append(field_data)
             
-            avg_epoch_loss = total_epoch_loss / len(self.train_loader)
+            # Stack along the 'time' dimension
+            stacked_field = stack(field_frames, batch('time'))
             
-            if epoch % 5 == 0 or epoch == 1 or epoch == self.epochs:
-                 param_strs = [f"{p.shape.name}={p.native()[0]:.4f}" for p in current_params_list]
-                 print(f"{epoch:<5} | {avg_epoch_loss:<10.6f} | " + ", ".join(param_strs))
+            # --- ADD BATCH DIMENSION ---
+            # Add batch dimension for consistency with model output
+            stacked_field = math.expand(stacked_field, batch(batch=1))
+            
+            data[field_name] = stacked_field
+            print(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
 
-        end_time = time.time()
-        print(f"-------------------------------------------")
-        print(f"Optimization complete in {end_time - start_time:.2f} seconds.")
+        # Store metadata for comparison
+        self.true_pde_params = scene.properties.get('PDE_Params', {})
+        print(f"  True PDE Parameters from metadata: {self.true_pde_params}")
         
-        final_params_str = ", ".join(
-            [f"{p.shape.name}: {p.native()[0]:.6f}" for p in current_params_list]
+        return data
+    
+    # Add this 'train' method to the PhysicalTrainerScene class:
+
+    # In PhysicalTrainerScene class
+
+    def train(self):
+        """
+        Runs the full inverse problem optimization.
+        """
+        print(f"\n--- Starting Physical Parameter Optimization ---")
+        
+        # 1. --- Load Ground Truth Data ---
+        sim_to_train = self.train_sims[0]
+        if len(self.train_sims) > 1:
+            print(f"Warning: Training on sim {sim_to_train}. "
+                  f"Multi-sim training not yet implemented.")
+                
+        gt_data_dict = self._load_ground_truth_data(sim_to_train)
+        
+        # Get the initial state (t=0) for all fields
+        initial_state_dict = {
+            name: field.time[0] 
+            for name, field in gt_data_dict.items()
+            if name in self.model.get_initial_state() # Only fields the model knows
+        }
+
+        # Get the ground truth *rollout* (t=1 to T)
+        gt_rollout_dict = {
+            name: field.time[1:] 
+            for name, field in gt_data_dict.items()
+            if name in initial_state_dict # Must be a predicted field
+        }
+        
+        # 2. --- Define the Loss Function ---
+        
+        # --- FIX 2: Re-enable JIT ---
+        # Pass dicts as non-differentiable auxiliary variables
+        # @jit_compile(auxiliary_args="initial_state_dict, gt_rollout_dict")
+        def loss_function(*learnable_tensors):
+            """
+            Calculates L2 loss for a rollout.
+            Now properly handles batch dimensions.
+            """
+            # 1. Update the model's parameters with the current guess
+            for i, param_config in enumerate(self.learnable_params_config):
+                param_name = param_config['name']
+                setattr(self.model, param_name, learnable_tensors[i])
+            
+            # 2. Simulate forward
+            total_loss = math.tensor(0.0)
+            current_state = initial_state_dict
+            
+            for step in range(self.num_predict_steps):
+                current_state = self.model.step(current_state)
+                
+                # 3. Calculate L2 loss for this step
+                step_loss = 0.0
+                for field_name, gt_rollout in gt_rollout_dict.items():
+                    target = gt_rollout.time[step]  # Has batchᵇ=1
+                    pred = current_state[field_name]  # Has batchᵇ=1
+                    
+                    # Both pred and target should now have matching batch dims
+                    # Compute L2 loss - will reduce over spatial dims, keep batch
+                    field_loss = l2_loss(pred - target)
+                    
+                    # Sum over any remaining dimensions (including batch)
+                    field_loss = math.sum(field_loss)
+                    
+                    step_loss += field_loss
+                
+                total_loss += step_loss
+            
+            return total_loss / self.num_predict_steps
+
+        # 3. --- Run Optimization ---
+        print("\nStarting optimization with math.minimize (L-BFGS-B)...")
+        
+        # Initial loss
+        initial_loss = loss_function(*self.initial_guesses)
+
+        # --- FIX 3: Correct print logic ---
+        initial_guess_strs = [
+            f"{cfg['name']}={self.initial_guesses[i]:.4f}" 
+            for i, cfg in enumerate(self.learnable_params_config)
+        ]
+        print(f"Initial guess: {', '.join(initial_guess_strs)}")
+        print(f"Initial loss: {initial_loss}")
+
+        solve_params = math.Solve(
+            method='L-BFGS-B',
+            abs_tol=1e-6,
+            x0=self.initial_guesses,
+            max_iterations=self.num_epochs,
         )
-        print(f"Final optimized parameters: {final_params_str}")
+        
+        try:
+            # math.minimize returns a TUPLE of optimized tensors
+            estimated_tensors = math.minimize(loss_function, solve_params)
+            print(f"\nOptimization completed!")
+        except Exception as e:
+            print(f"Optimization failed: {e}")
+            import traceback
+            traceback.print_exc()
+            estimated_tensors = tuple(self.initial_guesses) # Return guess on failure
+        
+        final_loss = loss_function(*estimated_tensors)
+        print(f"Final loss: {final_loss}")
+
+        # 4. --- Report Results ---
+        print("\n" + "="*60)
+        print("RESULTS")
+        print("="*60)
+        
+        for i, param_config in enumerate(self.learnable_params_config):
+            name = param_config['name']
+            true_val = self.true_pde_params.get(name, 'N/A')
+            
+            # --- FIX 3: Extract Python value ---
+            estimated_val = estimated_tensors[i]
+            
+            print(f"\nParameter: {name}")
+            print(f"  True value:      {true_val}")
+            print(f"  Estimated value: {estimated_val}")
+            
+            if isinstance(true_val, (int, float)):
+                # Now this math is between floats
+                error = abs(estimated_val - true_val)
+                rel_error = (error / abs(true_val)) * 100 if abs(true_val) > 1e-6 else 0
+                print(f"  Absolute error:  {error}")
+                print(f"  Relative error:  {rel_error:.2f}%")
+        
+        print("="*60)

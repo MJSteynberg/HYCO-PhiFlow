@@ -51,7 +51,7 @@ generation_params:
 trainer_params:
   learning_rate: 1.0e-4
   batch_size: 16
-  epochs: 5
-  num_predict_steps: 4 
+  epochs: 500
+  num_predict_steps: 4
   train_sim: [0] # Simulations to use for training
-  test_sim: [3] # Simulations to use for testing
+  test_sim: [0] # Simulations to use for testing

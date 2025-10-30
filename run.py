@@ -13,12 +13,11 @@ sys.path.append(PROJECT_ROOT)
 # --- Import Task Runners ---
 from src.data_generation.generator import run_generation
 from src.data_generation.generator_scene import run_generation_scene
-from src.training.synthetic.trainer import SyntheticTrainer
+from src.training.synthetic.trainer_scene import SyntheticTrainer
 from src.data_generation.subsample import run_subsampling
 
 # --- NEW: Import PhysicalTrainer ---
 from src.training.physical.trainer import PhysicalTrainer
-from src.training.physical.trainer_scene import PhysicalTrainerScene
 # from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
 
 def main():
@@ -54,7 +53,7 @@ def main():
         if task == 'generate':
             run_generation(config)
 
-        elif task == 'generate_scene':
+        elif task == 'generate_scene' :
             run_generation_scene(config)
             
         elif task == 'train':
@@ -69,7 +68,7 @@ def main():
             elif model_type == 'physical':
                 # Use the new Scene-based trainer for inverse problems
                 print("Using PhysicalTrainerScene for inverse problem.")
-                trainer = PhysicalTrainerScene(config)
+                trainer = PhysicalTrainer(config)
                 trainer.train()
                 
             else:

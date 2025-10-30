@@ -2,7 +2,7 @@
 run_params:
   experiment_name: "smoke_unet_128_v1"
   notes: "Training a synthetic UNet model on Smoke 128x128 data."
-  mode: ['generate', 'train']          # Replaces the top-level 'task' field
+  mode: ['train']          # Replaces the top-level 'task' field
   model_type: 'synthetic'  # Tells run.py to use SyntheticTrainer
 
 # --- Data Configuration (for all tasks) ---
@@ -61,4 +61,4 @@ trainer_params:
   epochs: 50
   num_predict_steps: 4 # Autoregressive rollout length
   train_sim: [0] # Simulations to use for training
-  test_sim: [3] # Simulations to use for testing
+  test_sim: [0] # Simulations to use for testing
