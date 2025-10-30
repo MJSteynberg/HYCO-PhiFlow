@@ -6,7 +6,7 @@
 run_params:
   experiment_name: "smoke_inverse_problem_v1"
   notes: "Training a physical model (SmokeModel) to find the optimal buoyancy and nu."
-  mode: ['generate_scene']
+  mode: ['generate_scene','train']
   model_type: 'physical'
 
 # --- Data Configuration ---
@@ -21,7 +21,7 @@ generation_params:
   # These parameters describe the data in 'dset_name'
   model_name: 'SmokeModel'
   num_simulations: 1
-  total_steps: 10       # Total steps in the saved simulation data
+  total_steps: 50       # Total steps in the saved simulation data
   save_interval: 1
 
 # --- Model Definitions (Plug-and-Play) ---
@@ -55,5 +55,5 @@ trainer_params:
   learnable_parameters:
     - name: 'nu'  # Must match the attribute name in the PhysicalModel
       initial_guess: 0.005
-    - name: 'buoyancy'
-      initial_guess: 0.2
+    - name: 'buoyancy'  # Must match the attribute name in the PhysicalModel
+      initial_guess: 0.5

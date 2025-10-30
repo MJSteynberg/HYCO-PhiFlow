@@ -18,6 +18,7 @@ from src.data_generation.subsample import run_subsampling
 
 # --- NEW: Import PhysicalTrainer ---
 from src.training.physical.trainer import PhysicalTrainer
+from src.training.physical.trainer_scene import PhysicalTrainerScene
 # from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
 
 def main():
@@ -66,8 +67,9 @@ def main():
                 trainer.train()
                 
             elif model_type == 'physical':
-                # PhysicalTrainer's __init__ takes (config, log_dir)
-                trainer = PhysicalTrainer(config)
+                # Use the new Scene-based trainer for inverse problems
+                print("Using PhysicalTrainerScene for inverse problem.")
+                trainer = PhysicalTrainerScene(config)
                 trainer.train()
                 
             else:

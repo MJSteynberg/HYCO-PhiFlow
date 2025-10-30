@@ -90,11 +90,9 @@ def run_generation_scene(config: dict):
         # --- 5. Write initial frame (frame 0) ---
         state_to_save = {}
         for name in data_cfg['fields']:
-            if name in current_state_dict:
-                # Remove batch dimension for saving
-                state_to_save[name] = current_state_dict[name].batch[0]
-            elif name == 'inflow' and hasattr(model, 'inflow'):
-                state_to_save[name] = model.inflow
+            # Remove batch dimension for saving
+            state_to_save[name] = current_state_dict[name].batch[0]
+            
         
         scene.write(state_to_save, frame=0)
         
@@ -112,10 +110,8 @@ def run_generation_scene(config: dict):
                 
                 state_to_save = {}
                 for name in data_cfg['fields']:
-                    if name in current_state_dict:
-                        state_to_save[name] = current_state_dict[name].batch[0]
-                    elif name == 'inflow' and hasattr(model, 'inflow'):
-                        state_to_save[name] = model.inflow
+                    state_to_save[name] = current_state_dict[name].batch[0]
+
                 
                 scene.write(state_to_save, frame=frame_index)
 

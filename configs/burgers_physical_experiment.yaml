@@ -6,7 +6,7 @@
 run_params:
   experiment_name: "burgers_inverse_problem_v1"
   notes: "Training a physical model (BurgersModel) to find the optimal viscosity."
-  mode: ['generate_scene']
+  mode: ['generate_scene', 'train']
   model_type: 'physical'
 
 # --- Data Configuration ---
@@ -51,3 +51,4 @@ trainer_params:
   learnable_parameters:
     - name: 'nu'  # Must match the attribute name in the PhysicalModel
       initial_guess: 0.005
+    

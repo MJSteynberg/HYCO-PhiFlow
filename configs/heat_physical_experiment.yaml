@@ -6,7 +6,7 @@
 run_params:
   experiment_name: "heat_inverse_problem_v1"
   notes: "Training a physical model (HeatModel) to find the optimal diffusivity."
-  mode: ['generate_scene']
+  mode: ['generate_scene', 'train']
   model_type: 'physical'
 
 # --- Data Configuration ---

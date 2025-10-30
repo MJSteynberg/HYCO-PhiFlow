@@ -101,22 +101,9 @@ class SmokeModel(PhysicalModel):
         self.inflow_center = math.tensor(inflow_center, channel(vector='x,y'))
         self.inflow_radius = inflow_radius
         self.inflow_rate = inflow_rate
-
-        # --- FIX: Create the inflow mask internally ---
-        INFLOW_SHAPE = Sphere(center=self.inflow_center, radius=self.inflow_radius)
-        self.inflow = self.inflow_rate * CenteredGrid(
-            INFLOW_SHAPE, 
-            extrapolation.BOUNDARY, 
-            x=self.resolution.get_size('x'),
-            y=self.resolution.get_size('y'),
-            bounds=self.domain
-        )
         
-        # Add a batch dimension for broadcasting
-        self.inflow = math.expand(self.inflow, batch(batch=self.batch_size))
 
-        print(f"SmokeModel created inflow at {inflow_center} "
-              f"with shape {self.inflow.shape}")
+        
         
     @property
     def nu(self) -> float:
@@ -153,11 +140,23 @@ class SmokeModel(PhysicalModel):
             bounds=self.domain,
         )
         density_0 = math.expand(density_0, b)
+
+        INFLOW_SHAPE = Sphere(center=self.inflow_center, radius=self.inflow_radius)
+        inflow_0 = self.inflow_rate * CenteredGrid(
+            INFLOW_SHAPE, 
+            extrapolation.BOUNDARY, 
+            x=self.resolution.get_size('x'),
+            y=self.resolution.get_size('y'),
+            bounds=self.domain
+        )
+        
+        # Add a batch dimension for broadcasting
+        inflow_0 = math.expand(inflow_0, b)
         
         # No more batch size check against inflow,
-        # as self.inflow (batch=1) will broadcast to batch=N
-        
-        return {"velocity": velocity_0, "density": density_0}
+        # as inflow_0 (batch=1) will broadcast to batch=N
+
+        return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
 
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
@@ -167,10 +166,10 @@ class SmokeModel(PhysicalModel):
         new_velocity, new_density =_smoke_physics_step(
                 velocity=current_state["velocity"],
                 density=current_state["density"],
-                inflow=self.inflow,
+                inflow=current_state["inflow"],
                 domain=self.domain,
                 dt=self.dt,
                 buoyancy_factor=self.buoyancy,
                 nu=self.nu
             )
-        return {"velocity": new_velocity, "density": new_density}
+        return {"velocity": new_velocity, "density": new_density, "inflow": current_state["inflow"]}
