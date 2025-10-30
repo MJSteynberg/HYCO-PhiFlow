@@ -120,7 +120,9 @@ class SyntheticTrainer:
             sim_indices=self.train_sim,
             field_names=self.field_names,
             num_frames=self.num_frames,
-            num_predict_steps=self.num_predict_steps
+            num_predict_steps=self.num_predict_steps,
+            dynamic_fields=self.dynamic_fields,
+            static_fields=self.static_fields
         )
         
         # Create PyTorch DataLoader
@@ -177,50 +179,38 @@ class SyntheticTrainer:
         total_loss = 0.0
 
         for initial_state, rollout_targets in self.train_loader:
-            initial_state = initial_state.to(self.device)  # [B, C, H, W]
-            rollout_targets = rollout_targets.to(self.device)  # [B, T, C, H, W]
+            initial_state = initial_state.to(self.device)  # [B, C_all, H, W] - all fields
+            rollout_targets = rollout_targets.to(self.device)  # [B, T, C_dynamic, H, W] - only dynamic
             
-            # Unpack fields from initial state
-            state_dict = self._unpack_tensor_to_dict(initial_state)
-            
-            # Separate static and dynamic fields
-            static_fields = {f: state_dict[f] for f in self.static_fields if f in state_dict}
-            current_state = {f: state_dict[f] for f in self.dynamic_fields}
+            # Start with initial state containing all fields
+            current_state = initial_state  # [B, C_all, H, W]
             
             batch_rollout_loss = 0.0
             self.optimizer.zero_grad()
 
             for t_step in range(self.num_predict_steps):
-                # Concatenate current state with static fields for model input
-                input_tensors = []
+                # Forward pass - model handles static field preservation internally
+                prediction = self.model(current_state)  # [B, C_all, H, W] - returns all fields
+                
+                # Extract only dynamic fields from prediction for loss computation
+                pred_dynamic_tensors = []
+                channel_offset = 0
                 for field_name in self.field_names:
-                    if field_name in current_state:
-                        input_tensors.append(current_state[field_name])
-                    elif field_name in static_fields:
-                        input_tensors.append(static_fields[field_name])
+                    if field_name in self.dynamic_fields:
+                        start, end = self.channel_map[field_name]
+                        pred_dynamic_tensors.append(prediction[:, start:end, :, :])
                 
-                model_input = torch.cat(input_tensors, dim=1)  # [B, C, H, W]
+                pred_dynamic = torch.cat(pred_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
                 
-                # Forward pass
-                prediction = self.model(model_input)  # [B, C_out, H, W]
+                # Get ground truth for this timestep (already only dynamic fields)
+                gt_this_step = rollout_targets[:, t_step, :, :, :]  # [B, C_dynamic, H, W]
                 
-                # Get ground truth for this timestep
-                gt_this_step = rollout_targets[:, t_step, :, :, :]  # [B, C, H, W]
-                
-                # Extract only dynamic field channels from GT
-                gt_dynamic_channels = []
-                for field_name in self.dynamic_fields:
-                    start_ch, end_ch = self.channel_map[field_name]
-                    gt_dynamic_channels.append(gt_this_step[:, start_ch:end_ch, :, :])
-                gt_dynamic = torch.cat(gt_dynamic_channels, dim=1)
-                
-                # Compute loss
-                step_loss = self.loss_fn(prediction, gt_dynamic)
+                # Compute loss on dynamic fields only
+                step_loss = self.loss_fn(pred_dynamic, gt_this_step)
                 batch_rollout_loss += step_loss
                 
-                # Update current state with prediction for next step
-                pred_dict = self._unpack_tensor_to_dict(prediction)
-                current_state = pred_dict
+                # Update current state with full prediction (includes static + dynamic)
+                current_state = prediction
             
             # Average loss over rollout steps
             avg_rollout_loss = batch_rollout_loss / self.num_predict_steps
