@@ -13,7 +13,7 @@ sys.path.append(PROJECT_ROOT)
 # --- Import Task Runners ---
 from src.data_generation.generator import run_generation
 from src.data_generation.generator_scene import run_generation_scene
-from src.training.synthetic.trainer_scene import SyntheticTrainer
+from src.training.synthetic.trainer import SyntheticTrainer
 from src.data_generation.subsample import run_subsampling
 
 # --- NEW: Import PhysicalTrainer ---

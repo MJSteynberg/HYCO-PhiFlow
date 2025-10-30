@@ -1,58 +1,64 @@
 # src/models/synthetic/unet.py
 
-from typing import Dict, Any, List
-import torch
-import phiml.math
-import phiml.nn as pnn
-from phi.torch.flow import *
-from phi import field as phi_field
-from phi.field import native_call
-
-# Import the base class
-from .base import SyntheticModel
-# In src/models/synthetic/unet.py (EXAMPLE)
 from typing import Dict, Any
-from phi.field import CenteredGrid, native_call
-from phiml.nn import u_net  # or from phi.torch.nets import u_net as pnn
-from .base import SyntheticModel
+import torch
+import torch.nn as nn
+from phiml.nn import u_net
 
-class UNet(SyntheticModel):
+
+class UNet(nn.Module):
     """
-    A generic U-Net wrapper that plugs into the SyntheticModel base class.
+    Tensor-based U-Net for efficient training.
     
-    The base class handles all field (Staggered/Centered) conversions.
-    This class just defines the network architecture and the call to it.
+    Works directly with PyTorch tensors in [batch, channels, height, width] format.
+    All Field conversions are handled by DataManager before training.
+    
+    This replaces the old Field-based interface for better performance.
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
         Initializes the U-Net model.
-        """
-        super().__init__(config)
         
-        in_channels = sum(self.INPUT_SPECS.values())
-        out_channels = sum(self.OUTPUT_SPECS.values())
-
-        self.unet = u_net(  # Assuming this is your network constructor
-            in_channels=in_channels,
-            out_channels=out_channels,
-            levels=config.get('levels', 4),
-            filters=config.get('filters', 64),
-            batch_norm=config.get('batch_norm', True),
-        )
-
-    def _predict(self, nn_input_grid: CenteredGrid, dt: float) -> CenteredGrid:
+        Args:
+            config: Model configuration containing:
+                - input_specs: Dict[field_name, num_channels]
+                - output_specs: Dict[field_name, num_channels]
+                - architecture: Dict with levels, filters, batch_norm
         """
-        Performs the core prediction.
+        super().__init__()
         
-        The input grid's 'vector' dimension holds all stacked channels.
-        The output grid must also stack all output channels on 'vector'.
-        """
-        # The base class's `forward` method calls this.
-        # This is now the *only* logic this class needs.
-        return native_call(
-            self.unet, 
-            nn_input_grid, 
-            channel_dim='vector', 
-            channels_last=False
+        self.config = config
+        self.input_specs = config['input_specs']
+        self.output_specs = config['output_specs']
+        
+        # Calculate total channels
+        self.in_channels = sum(self.input_specs.values())
+        self.out_channels = sum(self.output_specs.values())
+        
+        # Get architecture params
+        arch_config = config.get('architecture', {})
+        levels = arch_config.get('levels', 4)
+        filters = arch_config.get('filters', 64)
+        batch_norm = arch_config.get('batch_norm', True)
+        
+        # Build the U-Net using PhiML's u_net
+        self.unet = u_net(
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            levels=levels,
+            filters=filters,
+            batch_norm=batch_norm,
         )
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the U-Net.
+        
+        Args:
+            x: Input tensor of shape [batch, channels, height, width]
+            
+        Returns:
+            Output tensor of shape [batch, channels, height, width]
+        """
+        return self.unet(x)
