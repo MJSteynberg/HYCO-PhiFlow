@@ -80,7 +80,7 @@ class HeatModel(PhysicalModel):
             batch_size (int): Number of parallel states to create.
         """
         # Create a batch shape
-        batch_shape = batch(batch=batch_size)
+        b = batch(batch=batch_size)
         
         temp_0 = CenteredGrid(
             Noise(scale=1, smoothness=5), # Noisy initial temperature
@@ -89,6 +89,7 @@ class HeatModel(PhysicalModel):
             y=self.resolution.get_size('y'),
             bounds=self.domain
         )
+        temp_0 = math.expand(temp_0, b) # Expand to batch size
         return {"temp": temp_0}
 
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:

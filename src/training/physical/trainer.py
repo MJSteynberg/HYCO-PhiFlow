@@ -1,6 +1,4 @@
 # src/training/physical/trainer.py
-
-# src/training/physical/trainer.py
 import time
 from pathlib import Path
 from typing import Dict, Any, List
@@ -8,9 +6,10 @@ import os
 
 # --- PhiFlow Imports ---
 from phi.torch.flow import *
-from phi.field import CenteredGrid, l2_loss
-from phi.math import jit_compile, batch, gradient, stop_gradient, math
-
+from phi.field import CenteredGrid, StaggeredGrid, l2_loss 
+from phi.math import jit_compile, batch, gradient, stop_gradient, math, dual 
+# --- 1. ADD THIS IMPORT ---
+from phi.physics._boundaries import Domain, PERIODIC, ZERO
 # --- Repo Imports ---
 import src.models.physical as physical_models
 
@@ -20,18 +19,12 @@ from pbdl.torch.loader import Dataloader
 
 class PhysicalTrainer:
     """
-    Handles the optimization loop for physical parameters,
-    mirroring the structure of SyntheticTrainer but using
-    manual gradient descent from inverse_heat.py.
+    (Class docstring)
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initializes the trainer from a unified configuration dictionary.
-
-        Args:
-            config: The main configuration dictionary.
-            log_dir: The path to the logging directory for this run.
+        (init docstring)
         """
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,9 +34,9 @@ class PhysicalTrainer:
         self.model_config = config['model']['physical']
         self.trainer_config = config['trainer_params']
         
-        self.data_loader_fields: List[str] = self.data_config['fields']
-        self.dset_name = self.data_config['dset_name'] # Also get dset_name from data_config
-        self.data_dir = self.data_config['data_dir'] # And data_dir
+        self.data_loader_fields_config: List[str] = self.data_config['fields'] 
+        self.dset_name = self.data_config['dset_name'] 
+        self.data_dir = self.data_config['data_dir'] 
 
         model_save_name = self.model_config['model_save_name']
         model_path_dir = self.model_config['model_path']
@@ -57,8 +50,33 @@ class PhysicalTrainer:
         self.train_sim = self.trainer_config['train_sim']
         self.num_predict_steps = self.trainer_config['num_predict_steps']
 
+        self.pbdl_load_fields_list = []
+        for field_name in self.data_loader_fields_config:
+            field_name_lower = field_name.lower()
+            if field_name_lower == 'velocity':
+                self.pbdl_load_fields_list.append('velocity') # For x-component
+                self.pbdl_load_fields_list.append('velocity') # For y-component
+            else:
+                self.pbdl_load_fields_list.append(field_name)
+        
         self.train_loader = self._create_data_loader()
         self.model = self._create_model()
+        
+        # --- 2. IMPLEMENT YOUR SUGGESTION ---
+        # Create a physics.Domain object from the model's Box and Shape.
+        # We assume PERIODIC boundaries as this matches the models. !!!!!!!!!!!!!!!!!!!!!!!!!!
+        BNDS = {
+            'y':(ZERO, ZERO),
+            'x':(ZERO, ZERO)
+        }
+        self.physics_domain = Domain(
+            x=self.model.resolution.get_size('x'),
+            y=self.model.resolution.get_size('y'),
+            boundaries = BNDS,
+            bounds = self.model.domain
+        )
+        
+        
         self.learnable_params = self._create_learnable_params()
         self.grad_function = self._create_gradient_function()
 
@@ -69,172 +87,163 @@ class PhysicalTrainer:
         print(f"Setting up data loader for '{self.dset_name}'...")
         hdf5_filepath = os.path.join(self.data_dir, f"{self.dset_name}.hdf5")
         if not os.path.exists(hdf5_filepath):
-            print(f"Error: Dataset not found at {hdf5_filepath}")
             raise FileNotFoundError(f"Dataset not found at {hdf5_filepath}")
 
-        # This is very similar to SyntheticTrainer
         loader = Dataloader(
             self.dset_name,
-            load_fields=self.data_loader_fields, # e.g., ['temp']
-            time_steps=self.num_predict_steps,   # Use short rollout steps
+            load_fields=self.pbdl_load_fields_list, 
+            time_steps=self.num_predict_steps,
             intermediate_time_steps=True,
             batch_size=self.batch_size,
             shuffle=True,
             sel_sims=self.train_sim,
             local_datasets_dir=self.data_dir
         )
-        print("Data loader created.")
+        print(f"Data loader created. Loading channels: {self.pbdl_load_fields_list}")
         return loader 
     
-    def _tensor_to_grid_dict(self, tensor_batch: torch.Tensor) -> Dict[str, CenteredGrid]:
+    
+    def _tensor_to_grid_dict(self, tensor_batch: torch.Tensor) -> Dict[str, Field]:
         """
         Converts a raw (B, C, Y, X) tensor from the data loader into a
-        dictionary of PhiFlow CenteredGrids.
-        
-        Note: This implementation assumes a single field (e.g., 'temp').
-              It can be generalized if you have more fields.
+        dictionary of PhiFlow Fields, correctly reconstructing
+        StaggeredGrids by PADDING the sliced components.
         """
-        if 'temp' not in self.data_loader_fields:
-             raise ValueError("This trainer is hard-coded for 'temp' field.")
-             
-        # The data tensor from the loader has shape (B, C, Y, X)
-        # where B is *dynamic* (e.g., 16, or 12 for the last batch)
-
-        # 1. Define the 4D shape that *matches* the data tensor's order
         
-        # --- FIX: Get batch size *dynamically* from the tensor ---
+        num_channels_actual = tensor_batch.shape[1]
+        if num_channels_actual != len(self.pbdl_load_fields_list):
+             raise ValueError(
+                f"Channel mismatch: Dataloader was supposed to load "
+                f"{len(self.pbdl_load_fields_list)} channels, but tensor "
+                f"has {num_channels_actual} channels."
+            )
+
         dynamic_batch_size = tensor_batch.shape[0]
-        batch_dim = batch(batch=dynamic_batch_size) # <-- Was batch(batch=self.batch_size)
-        
-        # Channel dimension
-        channel_dim = channel(vector=1)
-
-        # Spatial dimensions in (Y, X) order to match data
+        batch_dim = batch(batch=dynamic_batch_size)
+        channel_dim = channel(channels=num_channels_actual)
         spatial_dims_names = self.model.resolution.names[::-1] 
-        # Leave sizes as None to be inferred by wrap()
-        spatial_dim = spatial(*spatial_dims_names)
-
-        # Combine all 4 dimensions in the correct order: (B, C, Y, X)
+        spatial_dim = spatial(*spatial_dims_names) 
         full_4d_shape = batch_dim & channel_dim & spatial_dim
         
-        # 2. Wrap the tensor with the full 4D shape
         phiml_tensor = wrap(tensor_batch, full_4d_shape)
         
-        # 3. Create the CenteredGrid
-        grid = CenteredGrid(
-            values=phiml_tensor,
-            extrapolation=extrapolation.PERIODIC,
-            bounds=self.model.domain,
-            resolution=self.model.resolution 
-        )
-        
-        return {'temp': grid}
+        grid_dict = {}
+        channel_idx = 0
+        for field_name in self.data_loader_fields_config:
+            field_name_lower = field_name.lower()
+            
+            if field_name_lower == 'velocity':
+                # Note: Order matches generator (x-comp first, then y-comp)
+                vx = phiml_tensor.channels[channel_idx]
+                vy = phiml_tensor.channels[channel_idx + 1]
+
+                grid = self.physics_domain.staggered_grid( math.stack( [
+                            math.tensor(vy, math.batch('batch'), math.spatial('x,y')),
+                            math.tensor(vx, math.batch('batch'), math.spatial('x,y')),
+                        ], math.dual(vector="x,y")
+                    ) )
+                
+                grid_dict[field_name] = grid
+                channel_idx += 2 
+
+            else:
+                # --- Standard CenteredGrid path (temp, density) ---
+                field_values = phiml_tensor.channels[channel_idx]
+                
+                # --- 3. THE FIX (for consistency) ---
+                grid = self.physics_domain.scalar_grid(
+                    field_values
+                )
+                # --- END FIX ---
+                
+                grid_dict[field_name] = grid
+                channel_idx += 1
+            
+        return grid_dict
 
     def _create_model(self):
+        """(This function is general)"""
         domain = Box(x=self.model_config['domain']['size_x'], y=self.model_config['domain']['size_y'])
         resolution = spatial(x=self.model_config['resolution']['x'], y=self.model_config['resolution']['y'])
-
-        # 2. Get PDE params
         pde_params = self.model_config.get('pde_params', {}).copy()
-
-        # 3. Get the Model Class
         try:
             ModelClass = getattr(physical_models, self.model_config['name'])
         except AttributeError:
             raise ImportError(f"Model '{self.model_config['name']}' not found in src/models/physical/__init__.py")
-
-        # 4. Instantiate the model
         model = ModelClass(
             domain=domain,
             resolution=resolution,
-            dt=self.model_config['dt'], # <-- Use new schema
+            dt=self.model_config['dt'],
             **pde_params
         )
         return model
 
     def _create_learnable_params(self) -> List[Tensor]:
-        """
-        Creates the list of phiml Tensors that will be optimized.
-        """
-        initial_guess_cfg = self.trainer_config['initial_guess']
-        
-        # We wrap the guess in a tensor with a batch name.
-        # The name 'diffusivity' is critical for the gradient function.
-        diffusivity_guess = wrap(
-            [initial_guess_cfg['diffusivity']],
-            batch('diffusivity')
-        )
-        
-        return [diffusivity_guess]
+        """(This function is general)"""
+        learnable_params_cfg = self.trainer_config.get('learnable_parameters')
+        if not learnable_params_cfg:
+            raise ValueError("Config missing `trainer_params.learnable_parameters` list.")
+        learnable_tensors = []
+        for param_info in learnable_params_cfg:
+            name = param_info['name']
+            guess = param_info['initial_guess']
+            param_tensor = wrap([guess], batch(name))
+            learnable_tensors.append(param_tensor)
+        print(f"Created learnable parameters: {[p.shape.name for p in learnable_tensors]}")
+        return learnable_tensors
 
     
     def _calculate_loss(self, 
                         initial_state_tensor: torch.Tensor, 
                         true_rollout_tensor: torch.Tensor, 
                         **learnable_params_kwargs) -> Tensor:
-        """
-        The loss function to be differentiated.
+        """(This function is general)"""
         
-        It takes the current guess for learnable parameters,
-        runs a short simulation rollout, and compares to ground truth
-        data from the dataloader.
-        
-        Args:
-            initial_state_tensor: (B, C, Y, X) tensor for t=0.
-            true_rollout_tensor: (B, T, C, Y, X) tensor for t=1 to t=T.
-            **learnable_params_kwargs: e.g., diffusivity=Tensor(...)
-        
-        Returns:
-            Average L2 loss over the short rollout.
-        """
-        
-        # 1. Update the guess model with the new parameter values
-        self.model.diffusivity = learnable_params_kwargs['diffusivity']
+        for param_name, param_value in learnable_params_kwargs.items():
+            if not hasattr(self.model, param_name):
+                raise AttributeError(f"Model {type(self.model)} does not have attribute '{param_name}'")
+            setattr(self.model, param_name, param_value)
         
         total_loss = 0.0
         
-        # 2. Convert the initial (t=0) tensor to a PhiFlow grid dict
         current_state_dict = self._tensor_to_grid_dict(initial_state_tensor)
         
-        # 3. Run the simulation rollout for num_predict_steps
         for step in range(self.num_predict_steps):
             
-            # A. Get prediction from the 'guess' model
             next_state_dict = self.model.step(current_state_dict)
-            predicted_temp = next_state_dict['temp']
             
-            # B. Get the corresponding ground truth tensor for this step
             true_tensor_this_step = true_rollout_tensor[:, step, ...] # (B, C, Y, X)
             
-            # C. Convert ground truth tensor to a PhiFlow grid dict
             true_grid_dict = self._tensor_to_grid_dict(true_tensor_this_step)
             
-            # D. Calculate L2 loss for this step
-            loss_at_step = l2_loss(predicted_temp - stop_gradient(true_grid_dict['temp']))
+            loss_at_step = 0.0
+            for field_name, true_grid in true_grid_dict.items():
+                if field_name not in next_state_dict:
+                    continue 
+                
+                predicted_grid = next_state_dict[field_name]
+                
+                loss_at_step += l2_loss(predicted_grid - stop_gradient(true_grid))
+            
             total_loss += loss_at_step
             
-            # E. Update state for next loop iteration
             current_state_dict = next_state_dict
 
         batched_loss = total_loss / self.num_predict_steps
         scalar_loss = math.mean(batched_loss, dim='batch')
-        # Return the *average* loss over the rollout
         return scalar_loss
 
     def _create_gradient_function(self) -> callable:
-        """
-        Creates the JIT-compiled gradient function.
-        """
+        """(This function is general)"""
         return gradient(
-            self._calculate_loss, wrt=[name.shape.name for name in self.learnable_params])
+            self._calculate_loss, 
+            wrt=[p.shape.name for p in self.learnable_params]
+        )
     
     def train(self):
-        """
-        Runs the full optimization loop (manual gradient descent)
-        using batch-based, short-rollout training.
-        """
+        """(This function is general)"""
         print(f"\n--- Starting Physical Parameter Optimization ---")
-        print(f"Epoch | Avg. Loss  | Current Guess")
+        print(f"Epoch | Avg. Loss  | Current Guess(es)")
         print(f"-------------------------------------------")
         
         start_time = time.time()
@@ -244,18 +253,13 @@ class PhysicalTrainer:
         for epoch in range(1, self.epochs + 1):
             total_epoch_loss = 0.0
             
-            # --- MODIFIED: Loop over the data loader ---
             for x_batch, y_batch in self.train_loader:
                 
-                # Move data to device (Phiml-PyTorch usually handles this,
-                # but explicit is fine)
-                x_batch = x_batch.to(self.device) # (B, C, Y, X)
-                y_batch = y_batch.to(self.device) # (B, T, C, Y, X)
+                x_batch = x_batch.to(self.device) 
+                y_batch = y_batch.to(self.device)
                 
-                # 1. Prepare kwargs for the gradient function
                 param_kwargs = {p.shape.name: p for p in current_params_list}
                 
-                # 2. Calculate loss and gradients for this batch
                 loss, grads_tuple = self.grad_function(
                     initial_state_tensor=x_batch,
                     true_rollout_tensor=y_batch,
@@ -263,32 +267,26 @@ class PhysicalTrainer:
                 )
                 grads_list = list(grads_tuple)
                 
-                # 3. Manual Gradient Descent Step
                 new_params_list = []
                 for param, grad in zip(current_params_list, grads_list):
-                    grad = math.where(math.is_finite(grad), grad, 0.0) # Handle NaN/Inf grads
+                    grad = math.where(math.is_finite(grad), grad, 0.0) 
                     new_param = param - self.learning_rate * grad
                     new_params_list.append(new_param)
                 
                 current_params_list = new_params_list
-                
-                # Add batch loss to epoch loss
-                # .native() gets the raw scalar from the phiml Tensor
                 total_epoch_loss += loss
-            
-            # --- End of data loader loop ---
             
             avg_epoch_loss = total_epoch_loss / len(self.train_loader)
             
-            # 4. Logging
             if epoch % 5 == 0 or epoch == 1 or epoch == self.epochs:
-                 print(f"{epoch:<5} | {avg_epoch_loss:<10.6f} | " + " | ".join([f"{p}" for p in current_params_list]))
+                 param_strs = [f"{p.shape.name}={p.native()[0]:.4f}" for p in current_params_list]
+                 print(f"{epoch:<5} | {avg_epoch_loss:<10.6f} | " + ", ".join(param_strs))
 
         end_time = time.time()
         print(f"-------------------------------------------")
         print(f"Optimization complete in {end_time - start_time:.2f} seconds.")
         
         final_params_str = ", ".join(
-            [f"{p.shape.name}: {p}" for p in current_params_list]
+            [f"{p.shape.name}: {p.native()[0]:.6f}" for p in current_params_list]
         )
         print(f"Final optimized parameters: {final_params_str}")

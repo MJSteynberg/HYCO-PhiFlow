@@ -7,7 +7,7 @@ from typing import Dict
 
 # --- JIT-Compiled Physics Function ---
 @jit_compile
-def _burgers_physics_step(velocity: StaggeredGrid, dt: float, nu: float) -> StaggeredGrid:
+def _burgers_physics_step(velocity: StaggeredGrid, dt: float, nu: Tensor) -> StaggeredGrid:
     """
     Performs one physics-based Burgers' equation step.
 
@@ -20,8 +20,7 @@ def _burgers_physics_step(velocity: StaggeredGrid, dt: float, nu: float) -> Stag
         StaggeredGrid: new_velocity
     """
 
-    if nu > 0:
-        velocity = diffuse.explicit(u = velocity, diffusivity=nu, dt=dt)
+    velocity = diffuse.explicit(u=velocity, diffusivity=nu, dt=dt)
     # Advect velocity (self-advection: u * grad(u))
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
     
@@ -42,8 +41,8 @@ class BurgersModel(PhysicalModel):
                  domain: Box,
                  resolution: Shape,
                  dt: float,
-                 batch_size: int = 1,
-                 nu: float = 0.1,
+                 batch_size: int,
+                 nu: Tensor,
                  **pde_params): # To catch any other unused params
         """
         Initializes the Burgers' model.
@@ -56,6 +55,7 @@ class BurgersModel(PhysicalModel):
             nu (float): Viscosity.
         """
         # Call the parent's init with params it knows about
+        self._nu = nu  # Store viscosity as a private attribute
         super().__init__(
             domain=domain,
             resolution=resolution,
@@ -66,6 +66,14 @@ class BurgersModel(PhysicalModel):
         
         # No inflow or buoyancy parameters needed
         print(f"BurgersModel created with nu={self.nu}")
+
+    @property
+    def nu(self) -> Tensor:
+        return self._nu
+    
+    @nu.setter
+    def nu(self, value: Tensor):
+        self._nu = value
 
     def get_initial_state(self) -> Dict[str, Field]:
         """

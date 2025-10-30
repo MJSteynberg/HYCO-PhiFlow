@@ -37,10 +37,7 @@ def _smoke_physics_step(velocity, density, inflow, domain, dt, buoyancy_factor, 
     # Advect velocity
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
     
-    # Apply viscosity !!!!!!!!!!!!!! This is giving errors !!!!!!!!!!!!!!!!
-    # print(f"Applying viscosity with dt={dt}")
-    # if nu > 0:
-    #     velocity = diffuse.implicit(velocity, nu, dt=dt)
+    velocity = diffuse.explicit(velocity, nu, dt=dt)
     
     # Make incompressible
     velocity, pressure = fluid.make_incompressible(velocity, solve=Solve('CG', 1e-3, rank_deficiency=0, suppress=[phi.math.NotConverged]))
@@ -82,6 +79,8 @@ class SmokeModel(PhysicalModel):
             inflow_radius (float): Radius of the inflow.
         """
         # Call the parent's init with params it knows about
+        self._nu = nu  # Store viscosity as a private attribute
+        self._buoyancy = buoyancy  # Store buoyancy as a private attribute
         super().__init__(
             domain=domain,
             resolution=resolution,
@@ -118,6 +117,19 @@ class SmokeModel(PhysicalModel):
 
         print(f"SmokeModel created inflow at {inflow_center} "
               f"with shape {self.inflow.shape}")
+        
+    @property
+    def nu(self) -> float:
+        return self._nu
+    @nu.setter
+    def nu(self, value: float):
+        self._nu = value
+    @property
+    def buoyancy(self) -> float:
+        return self._buoyancy
+    @buoyancy.setter
+    def buoyancy(self, value: float):
+        self._buoyancy = value
 
     def get_initial_state(self) -> Dict[str, Field]:
         """

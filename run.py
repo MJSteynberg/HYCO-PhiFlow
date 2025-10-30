@@ -12,6 +12,7 @@ sys.path.append(PROJECT_ROOT)
 
 # --- Import Task Runners ---
 from src.data_generation.generator import run_generation
+from src.data_generation.generator_scene import run_generation_scene
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.data_generation.subsample import run_subsampling
 
@@ -51,6 +52,9 @@ def main():
         
         if task == 'generate':
             run_generation(config)
+
+        elif task == 'generate_scene':
+            run_generation_scene(config)
             
         elif task == 'train':
             model_type = run_config.get('model_type', 'synthetic')
