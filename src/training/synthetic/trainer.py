@@ -113,11 +113,13 @@ class SyntheticTrainer:
         raw_data_dir = project_root / self.data_dir / self.dset_name
         cache_dir = project_root / self.data_dir / 'cache'
         
-        # Create DataManager
+        # Create DataManager with validation settings
         data_manager = DataManager(
             raw_data_dir=str(raw_data_dir),
             cache_dir=str(cache_dir),
-            config={'dset_name': self.dset_name}
+            config=self.config,  # Pass full config for validation
+            validate_cache=self.data_config.get('validate_cache', True),
+            auto_clear_invalid=self.data_config.get('auto_clear_invalid', False)
         )
         
         # Create HybridDataset

@@ -22,8 +22,8 @@ trainer_params:
   train_sim: [0, 1, 2]  # Only 3 simulations for speed
   epochs: 2
   batch_size: 16
-  num_predict_steps: 4
-  use_sliding_window: false  # Faster without sliding window
+  num_predict_steps: 3
+  use_sliding_window: true  # Faster without sliding window
 
 evaluation_params:
   test_sim: [0]  # Only test on one simulation
