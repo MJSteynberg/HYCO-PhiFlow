@@ -17,7 +17,7 @@ import torch
 from phi.torch.flow import *
 from phi import math
 from phi.math import Shape, spatial, channel, batch as batch_dim
-from phi.field import Field, CenteredGrid, StaggeredGrid, stagger
+from phi.field import Field, CenteredGrid, StaggeredGrid
 from phi.geom import Box
 from phi.field._field_math import Extrapolation
 from phi import field as field_module
@@ -257,16 +257,21 @@ def tensor_to_field(
         bounds=metadata.domain
     )
     
-    # If we need a StaggeredGrid, use the stagger utility to convert
+    # If we need a StaggeredGrid, use the CORRECT approach:
+    # Pass the centered field to StaggeredGrid constructor which automatically
+    # resamples it to face-centered sample points (as per PhiFlow documentation)
     if metadata.field_type == 'staggered':
-        # Use stagger to convert centered grid to staggered grid
-        # The face_function takes (lower, upper) values and returns face value
-        # For conversion, we average the neighboring cell values
-        staggered_grid = stagger(
-            centered_grid,
-            face_function=lambda lower, upper: (lower + upper) / 2,
-            boundary=metadata.extrapolation,
-            at='face'
+        # CORRECT: StaggeredGrid constructor automatically resamples the Field
+        # to staggered sample points (face centers)
+        # Create resolution kwargs from metadata.resolution
+        resolution_dict = {dim: metadata.resolution.get_size(dim) 
+                          for dim in metadata.spatial_dims}
+        
+        staggered_grid = StaggeredGrid(
+            centered_grid,  # PhiFlow will resample this to face centers
+            metadata.extrapolation,
+            bounds=metadata.domain,
+            **resolution_dict  # e.g., x=128, y=128
         )
         return staggered_grid
     else:

@@ -120,14 +120,27 @@ class HybridDataset(Dataset):
         
         # Convert cached metadata to FieldMetadata objects
         for name, meta in field_metadata_dict.items():
-            # Parse domain from bounds string
-            bounds_str = meta['bounds']
-            try:
-                # Safe evaluation of Box string representation
-                domain = eval(bounds_str, {"Box": Box})
-            except:
-                # Fallback to unit box
-                domain = Box(x=1, y=1)
+            # Get domain from actual bounds values (not string representation)
+            if 'bounds_lower' in meta and 'bounds_upper' in meta:
+                # Use actual bounds values
+                lower = meta['bounds_lower']
+                upper = meta['bounds_upper']
+                
+                # Create Box with correct dimensions
+                if len(lower) == 2:
+                    domain = Box(x=(lower[0], upper[0]), y=(lower[1], upper[1]))
+                elif len(lower) == 3:
+                    domain = Box(x=(lower[0], upper[0]), y=(lower[1], upper[1]), z=(lower[2], upper[2]))
+                else:
+                    # Fallback for unexpected dimensions
+                    domain = Box(x=1, y=1)
+            else:
+                # Fallback for old cache files without bounds_lower/upper
+                try:
+                    bounds_str = meta['bounds']
+                    domain = eval(bounds_str, {"Box": Box})
+                except:
+                    domain = Box(x=1, y=1)
             
             # Extract resolution from tensor shape
             tensor_shape = data['tensor_data'][name].shape  # [time, channels, x, y]

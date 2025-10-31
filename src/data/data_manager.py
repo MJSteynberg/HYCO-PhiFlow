@@ -185,12 +185,18 @@ class DataManager:
             
             # Load all frames for this field
             field_frames = []
+            original_field_type = None  # Track if original was staggered
+            
             for frame_idx in frames_to_load:
                 field_obj = scene.read_field(
                     field_name,
                     frame=frame_idx,
                     convert_to_backend=True  # Converts to torch backend
                 )
+                # Remember if the original field was staggered
+                if original_field_type is None:
+                    original_field_type = 'staggered' if field_obj.is_staggered else 'centered'
+                
                 # Convert staggered grids to centered grids (like UNet does)
                 if field_obj.is_staggered:
                     field_obj = field_obj.at_centers()
@@ -217,14 +223,22 @@ class DataManager:
             tensor_data[field_name] = tensor
             
             # Extract metadata needed to reconstruct the Field
-            # We need: shape, domain, resolution, extrapolation, boundary
+            # We need: shape, domain, resolution, extrapolation, boundary, field_type
             first_field = field_frames[0]
+            
+            # Extract actual bounds values (not just string representation)
+            bounds_lower = tuple([float(first_field.bounds.lower[i]) for i in range(len(first_field.bounds.lower))])
+            bounds_upper = tuple([float(first_field.bounds.upper[i]) for i in range(len(first_field.bounds.upper))])
+            
             field_metadata[field_name] = {
                 'shape': str(first_field.shape),  # Full shape info
                 'spatial_dims': list(first_field.shape.spatial.names),
                 'channel_dims': list(first_field.shape.channel.names) if first_field.shape.channel else [],
                 'extrapolation': str(first_field.extrapolation),
-                'bounds': str(first_field.bounds)  # Store as string for now
+                'bounds': str(first_field.bounds),  # Keep for reference
+                'bounds_lower': bounds_lower,  # Actual lower bounds values
+                'bounds_upper': bounds_upper,  # Actual upper bounds values
+                'field_type': original_field_type  # Store original field type (before conversion to centered)
             }
         
         # Prepare data structure to cache

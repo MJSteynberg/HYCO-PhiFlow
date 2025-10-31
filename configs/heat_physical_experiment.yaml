@@ -6,7 +6,7 @@
 run_params:
   experiment_name: "heat_inverse_problem_v1"
   notes: "Training a physical model (HeatModel) to find the optimal diffusivity."
-  mode: ['generate_scene','train']
+  mode: ['train']  # Skip generation, only train
   model_type: 'physical'
 
 # --- Data Configuration ---
@@ -43,10 +43,10 @@ model:
 trainer_params:
   learning_rate: 1.0e-12  # Learning rate from inverse_heat.py
   batch_size: 1        # Number of samples per gradient update, not yet implemented in PhysicalTrainer
-  epochs: 1         # Number of passes over the dataset
+  epochs: 50         # Number of passes over the dataset (increased for better convergence)
   num_predict_steps: 4   
   
   train_sim: [0] # Which simulations to use for training
   learnable_parameters:
     - name: 'diffusivity'  # Must match the attribute name in the PhysicalModel
-      initial_guess: 4.0
+      initial_guess: 2.0  # Closer to true value (1.0)

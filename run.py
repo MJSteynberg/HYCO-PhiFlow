@@ -15,8 +15,6 @@ from src.data_generation.generator import run_generation
 from src.data_generation.generator_scene import run_generation_scene
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.data_generation.subsample import run_subsampling
-
-# --- NEW: Import PhysicalTrainer ---
 from src.training.physical.trainer import PhysicalTrainer
 # from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
 

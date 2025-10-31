@@ -14,7 +14,6 @@ from src.data import DataManager, HybridDataset
 
 # Import our model and loss
 from src.models.synthetic.unet import UNet
-from src.training.synthetic.losses import DictL2Loss
 
 
 class SyntheticTrainer:

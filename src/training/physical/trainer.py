@@ -197,10 +197,6 @@ class PhysicalTrainer:
             print(f"  Warning: Could not load scene metadata from {scene_path}")
         
         return data
-    
-    # Add this 'train' method to the PhysicalTrainerScene class:
-
-    # In PhysicalTrainerScene class
 
     def train(self):
         """
@@ -229,38 +225,24 @@ class PhysicalTrainer:
             for name, field in gt_data_dict.items()
             if name in initial_state_dict # Must be a predicted field
         }
-        # print(f"Loaded initial state {initial_state_dict}")
-        # print(f"Loaded ground truth rollout {gt_rollout_dict}")
-        # print(f"Loaded ground truth rollout {mean(gt_rollout_dict['temp'])}")
-        # print('upper = ', self.model.domain.upper, 'lower = ',self.model.domain.lower)
+        
         # 2. --- Define the Loss Function ---
         
-        # --- FIX 2: Re-enable JIT ---
-        # Pass dicts as non-differentiable auxiliary variables
-        # @jit_compile(auxiliary_args="initial_state_dict, gt_rollout_dict")
         def loss_function(*learnable_tensors):
             """
             Calculates L2 loss for a rollout.
-            Now properly handles batch dimensions.
+            Properly handles batch dimensions.
             """
             # 1. Update the model's parameters with the current guess
             for i, param_config in enumerate(self.learnable_params_config):
                 param_name = param_config['name']
                 setattr(self.model, param_name, learnable_tensors[i])
             
-            # Debug: check if diffusivity is nan
-            if hasattr(self.model, 'nu'):
-                diff_val = self.model.nu
-                if hasattr(diff_val, 'native'):
-                    diff_native = float(diff_val.native())
-                    print(f"Current nu value: {diff_native}")
-            
             # 2. Simulate forward
             total_loss = math.tensor(0.0)
             current_state = initial_state_dict
             
             for step in range(self.num_predict_steps):
-                print(f"After step {step}, current_state: {current_state['velocity'].batch[0].x[0].y[0].values}")
                 current_state = self.model.step(current_state)
                 
                 # 3. Calculate L2 loss for this step
@@ -283,7 +265,7 @@ class PhysicalTrainer:
                 total_loss += step_loss
             
             final_loss = total_loss / self.num_predict_steps
-            return 1e-3*final_loss
+            return final_loss
 
         # 3. --- Run Optimization ---
         print("\nStarting optimization with math.minimize (L-BFGS-B)...")
@@ -291,7 +273,6 @@ class PhysicalTrainer:
         # Initial loss
         initial_loss = loss_function(*self.initial_guesses)
 
-        # --- FIX 3: Correct print logic ---
         initial_guess_strs = [
             f"{cfg['name']}={self.initial_guesses[i]:.4f}" 
             for i, cfg in enumerate(self.learnable_params_config)
@@ -328,7 +309,6 @@ class PhysicalTrainer:
             name = param_config['name']
             true_val = self.true_pde_params.get(name, 'N/A')
             
-            # --- FIX 3: Extract Python value ---
             estimated_val = estimated_tensors[i]
             
             print(f"\nParameter: {name}")
@@ -336,7 +316,6 @@ class PhysicalTrainer:
             print(f"  Estimated value: {estimated_val}")
             
             if isinstance(true_val, (int, float)):
-                # Now this math is between floats
                 error = abs(estimated_val - true_val)
                 rel_error = (error / abs(true_val)) * 100 if abs(true_val) > 1e-6 else 0
                 print(f"  Absolute error:  {error}")
