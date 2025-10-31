@@ -1,0 +1,11 @@
+# @package _global_.evaluation_params
+test_sim: []
+num_frames: 51
+metrics: ['mse', 'mae', 'rmse']
+
+keyframe_count: 5
+animation_fps: 10
+save_animations: true
+save_plots: true
+
+output_dir: 'results/evaluation'

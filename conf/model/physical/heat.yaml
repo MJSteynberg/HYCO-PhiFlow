@@ -1,0 +1,10 @@
+name: 'HeatModel'
+domain:
+  size_x: 100
+  size_y: 100
+resolution:
+  x: 64
+  y: 64
+dt: 1.0
+pde_params:
+  diffusivity: 1.0

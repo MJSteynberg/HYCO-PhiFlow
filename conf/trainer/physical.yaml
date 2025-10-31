@@ -1,0 +1,15 @@
+# @package _global_.trainer_params
+learning_rate: 0.0001
+batch_size: 1
+epochs: 50
+num_predict_steps: 5
+
+train_sim: []
+
+# Learnable parameters for inverse problems
+learnable_parameters: []
+
+# Optimizer settings
+method: 'L-BFGS-B'
+abs_tol: 0.000001
+max_iterations: null

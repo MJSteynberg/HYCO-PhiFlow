@@ -1,0 +1,7 @@
+# @package _global_.generation_params
+num_simulations: 10
+total_steps: 50
+save_interval: 1
+
+# Optional: random seed for reproducibility
+seed: null

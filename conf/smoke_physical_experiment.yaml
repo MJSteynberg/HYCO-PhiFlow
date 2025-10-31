@@ -1,0 +1,32 @@
+# Smoke inverse problem experiment
+defaults:
+  - data: smoke_128
+  - model/physical: smoke
+  - trainer: physical
+  - generation: default
+  - _self_
+
+run_params:
+  experiment_name: 'smoke_inverse_problem_v1'
+  notes: 'Training physical model to find optimal buoyancy and nu'
+  mode: ['train']
+  model_type: 'physical'
+
+model:
+  physical:
+    model_path: 'results/models/'
+    model_save_name: 'smoke_128'
+    dt: 1.0
+
+trainer_params:
+  learning_rate: 0.0001
+  epochs: 100
+  num_predict_steps: 5
+  train_sim: [0]
+  learnable_parameters:
+    - name: 'nu'
+      initial_guess: 0.005
+    - name: 'buoyancy'
+      initial_guess: 0.5
+
+project_root: ${hydra:runtime.cwd}

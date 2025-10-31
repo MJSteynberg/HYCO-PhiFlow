@@ -1,0 +1,16 @@
+defaults:
+  - data: burgers_128
+  - model/physical: burgers
+  - model/synthetic: unet
+  - trainer: synthetic
+  - generation: default
+  - evaluation: default
+  - _self_
+
+run_params:
+  experiment_name: ???  # Must be specified
+  notes: ""
+  mode: [train]
+  model_type: synthetic
+
+project_root: ${hydra:runtime.cwd}
