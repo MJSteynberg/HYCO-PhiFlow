@@ -15,9 +15,12 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 import torch
 from phi.torch.flow import Scene, stack, batch
+
+from .validation import CacheValidator, compute_hash, get_cache_version, get_phiflow_version
 
 
 class DataManager:
@@ -37,7 +40,9 @@ class DataManager:
         self, 
         raw_data_dir: str, 
         cache_dir: str, 
-        config: Dict[str, Any]
+        config: Dict[str, Any],
+        validate_cache: bool = True,
+        auto_clear_invalid: bool = False
     ):
         """
         Initialize the DataManager.
@@ -48,10 +53,17 @@ class DataManager:
             cache_dir: Absolute path where cached tensors will be stored
                       (e.g., "data/cache")
             config: Configuration dictionary containing dataset parameters
+            validate_cache: Whether to validate cached data against current config
+            auto_clear_invalid: Whether to automatically remove invalid cache files
         """
         self.raw_data_dir = Path(raw_data_dir)
         self.cache_dir = Path(cache_dir)
         self.config = config
+        self.validate_cache = validate_cache
+        self.auto_clear_invalid = auto_clear_invalid
+        
+        # Create cache validator
+        self.validator = CacheValidator(config, strict=False)
         
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +78,12 @@ class DataManager:
         Returns:
             Path object for the cached file
         """
-        dataset_name = self.config['dset_name']
+        # Handle both flat and nested config structures
+        if 'dset_name' in self.config:
+            dataset_name = self.config['dset_name']
+        else:
+            dataset_name = self.config.get('data', {}).get('dset_name', 'default')
+        
         cache_subdir = self.cache_dir / dataset_name
         cache_subdir.mkdir(parents=True, exist_ok=True)
         return cache_subdir / f"sim_{sim_index:06d}.pt"
@@ -79,6 +96,10 @@ class DataManager:
     ) -> bool:
         """
         Check if a simulation has already been cached with matching parameters.
+        
+        This method performs comprehensive validation if validate_cache is True,
+        checking PDE parameters, resolution, domain, and more. If validation
+        fails and auto_clear_invalid is True, the invalid cache will be removed.
         
         Args:
             sim_index: Index of the simulation
@@ -94,7 +115,7 @@ class DataManager:
             return False
         
         # If no validation parameters provided, just check existence
-        if field_names is None and num_frames is None:
+        if field_names is None and num_frames is None and not self.validate_cache:
             return True
         
         # Load and validate metadata
@@ -102,23 +123,49 @@ class DataManager:
             cached_data = torch.load(cache_path, weights_only=False)
             metadata = cached_data.get('metadata', {})
             
-            # Validate field names if provided
+            # Basic validation (always performed)
             if field_names is not None:
                 cached_fields = set(cached_data['tensor_data'].keys())
                 requested_fields = set(field_names)
                 if cached_fields != requested_fields:
+                    if self.auto_clear_invalid:
+                        print(f"Cache invalid for sim_{sim_index:06d}: field mismatch. Removing...")
+                        cache_path.unlink()
                     return False
             
-            # Validate num_frames if provided
             if num_frames is not None:
                 cached_num_frames = metadata.get('num_frames', 0)
                 if cached_num_frames < num_frames:
+                    if self.auto_clear_invalid:
+                        print(f"Cache invalid for sim_{sim_index:06d}: insufficient frames. Removing...")
+                        cache_path.unlink()
+                    return False
+            
+            # Enhanced validation (if enabled)
+            if self.validate_cache and field_names is not None:
+                is_valid, reasons = self.validator.validate_cache(
+                    metadata, field_names, num_frames
+                )
+                
+                if not is_valid:
+                    if self.auto_clear_invalid:
+                        print(f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}. Removing...")
+                        cache_path.unlink()
+                    else:
+                        print(f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}")
                     return False
             
             return True
             
-        except Exception:
+        except Exception as e:
             # If we can't load/validate, treat as not cached
+            print(f"Error validating cache for sim_{sim_index:06d}: {e}")
+            if self.auto_clear_invalid:
+                print(f"Removing corrupted cache...")
+                try:
+                    cache_path.unlink()
+                except:
+                    pass
             return False
     
     def load_and_cache_simulation(
@@ -254,14 +301,49 @@ class DataManager:
                 'field_type': original_field_type  # Store original field type (before conversion to centered)
             }
         
-        # Prepare data structure to cache
+        # Prepare data structure to cache with enhanced metadata
         cache_data = {
             'tensor_data': tensor_data,
             'metadata': {
+                # Version and timestamp information
+                'version': get_cache_version(),
+                'created_at': datetime.now().isoformat(),
+                'phiflow_version': get_phiflow_version(),
+                
+                # Original metadata (preserved for backward compatibility)
                 'scene_metadata': scene_metadata,
                 'field_metadata': field_metadata,
                 'num_frames': len(frames_to_load),
-                'frame_indices': frames_to_load
+                'frame_indices': frames_to_load,
+                
+                # NEW: Generation parameters for validation
+                'generation_params': {
+                    'pde_name': self.config.get('model', {}).get('physical', {}).get('name', 'unknown'),
+                    'pde_params': self.config.get('model', {}).get('physical', {}).get('pde_params', {}),
+                    'domain': self.config.get('model', {}).get('physical', {}).get('domain', {}),
+                    'resolution': self.config.get('model', {}).get('physical', {}).get('resolution', {}),
+                    'dt': self.config.get('model', {}).get('physical', {}).get('dt', 0.0),
+                },
+                
+                # NEW: Data configuration
+                'data_config': {
+                    'fields': field_names,
+                    'fields_scheme': self.config.get('data', {}).get('fields_scheme', 'unknown'),
+                    'dset_name': self.config.get('data', {}).get('dset_name', 'unknown'),
+                },
+                
+                # NEW: Checksums for fast validation
+                'checksums': {
+                    'pde_params_hash': compute_hash(
+                        self.config.get('model', {}).get('physical', {}).get('pde_params', {})
+                    ),
+                    'resolution_hash': compute_hash(
+                        self.config.get('model', {}).get('physical', {}).get('resolution', {})
+                    ),
+                    'domain_hash': compute_hash(
+                        self.config.get('model', {}).get('physical', {}).get('domain', {})
+                    ),
+                }
             }
         }
         
