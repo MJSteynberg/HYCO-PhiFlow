@@ -12,15 +12,18 @@ from phi.math import math, Tensor
 # --- Repo Imports ---
 from src.models import ModelRegistry
 from src.data import DataManager, HybridDataset
+from src.training.base_trainer import BaseTrainer
 
 
-class PhysicalTrainer:
+class PhysicalTrainer(BaseTrainer):
     """
     Solves an inverse problem for a PhysicalModel using cached data
     from DataManager/HybridDataset.
 
     This trainer uses math.minimize for optimization and leverages
     the efficient DataLoader pipeline with field conversion.
+    
+    Inherits from BaseTrainer to get shared functionality.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -30,7 +33,9 @@ class PhysicalTrainer:
         Args:
             config (Dict[str, Any]): The experiment configuration.
         """
-        self.config = config
+        # Initialize base trainer
+        super().__init__(config)
+        
         self.project_root = config.get('project_root', '.')
 
         # --- Parse Configs ---
@@ -55,7 +60,7 @@ class PhysicalTrainer:
         self.initial_guesses = self._get_initial_guesses()
 
         # --- Setup Model ---
-        self.model = self._create_model()
+        self.model = self._setup_physical_model()
         
         print(f"PhysicalTrainer initialized. Will optimize for {len(self.initial_guesses)} parameter(s).")
     
@@ -79,8 +84,14 @@ class PhysicalTrainer:
             auto_clear_invalid=self.data_config.get('auto_clear_invalid', False)
         )
 
-
     def _create_model(self):
+        """
+        Stub for BaseTrainer abstract method.
+        Physical trainer uses _setup_physical_model() instead.
+        """
+        pass
+
+    def _setup_physical_model(self):
         """
         Instantiates the physical model from the config, setting
         learnable parameters to their initial guesses.
@@ -192,6 +203,27 @@ class PhysicalTrainer:
             print(f"  Warning: Could not load scene metadata from {scene_path}")
         
         return data
+
+    def _create_model(self):
+        """
+        Physical trainer uses model from config directly.
+        Override not needed as model is created in __init__.
+        """
+        pass
+
+    def _create_data_loader(self):
+        """
+        Physical trainer doesn't use DataLoader.
+        It loads ground truth data directly in train().
+        """
+        pass
+
+    def _train_epoch(self, epoch: int) -> float:
+        """
+        Physical trainer doesn't use epoch-based training.
+        It runs inverse optimization in train() method.
+        """
+        pass
 
     def train(self):
         """

@@ -13,24 +13,29 @@ from tqdm import tqdm
 # Import our data pipeline
 from src.data import DataManager, HybridDataset
 
+# Import base trainer
+from src.training.base_trainer import BaseTrainer
+
 # Import the model registry
 from src.models import ModelRegistry
 
 
-class SyntheticTrainer:
+class SyntheticTrainer(BaseTrainer):
     """
     Tensor-based trainer for synthetic models using DataManager pipeline.
     
     Uses HybridDataset for efficient cached data loading with no runtime
     Field conversions. All conversions happen once during caching.
+    
+    Inherits from BaseTrainer to get shared functionality.
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
         Initializes the trainer from a unified configuration dictionary.
         """
-        self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Initialize base trainer
+        super().__init__(config)
 
         # --- Derive all parameters from config ---
         self.data_config = config['data']
