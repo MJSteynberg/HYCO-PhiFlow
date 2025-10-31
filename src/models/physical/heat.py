@@ -43,7 +43,8 @@ class HeatModel(PhysicalModel):
                  resolution: Shape,
                  dt: float,
                  diffusivity: Tensor,
-                 batch_size: int = 1):  # <-- Added batch_size
+                 batch_size: int = 1,
+                 **pde_params):  # <-- Added batch_size
         """
         Initializes the Heat model.
 

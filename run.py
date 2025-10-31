@@ -11,10 +11,9 @@ PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(PROJECT_ROOT)
 
 # --- Import Task Runners ---
-from src.data_generation.generator import run_generation
-from src.data_generation.generator_scene import run_generation_scene
+from src.data.generator import run_generation
+from src.data.generator import run_generation
 from src.training.synthetic.trainer import SyntheticTrainer
-from src.data_generation.subsample import run_subsampling
 from src.training.physical.trainer import PhysicalTrainer
 # from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
 
@@ -52,7 +51,7 @@ def main():
             run_generation(config)
 
         elif task == 'generate_scene' :
-            run_generation_scene(config)
+            run_generation(config)
             
         elif task == 'train':
             model_type = run_config.get('model_type', 'synthetic')
@@ -78,9 +77,6 @@ def main():
         elif task == 'evaluate':
             raise NotImplementedError("Evaluation task not yet refactored.")
             
-        elif task == 'subsample':
-            # Note: Your original script had this as NotImplemented
-            run_subsampling(config)
             
         else:
             print(f"--- Warning: Unknown task '{task}' in config. Skipping. ---")

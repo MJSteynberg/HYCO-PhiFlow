@@ -57,7 +57,6 @@ class SmokeModel(PhysicalModel):
                  domain: Box,
                  resolution: Shape,
                  dt: float,
-                 batch_size: int = 1,
                  nu: float = 0.0,
                  buoyancy: float = 1.0,
                  inflow_center = None,
@@ -65,6 +64,7 @@ class SmokeModel(PhysicalModel):
                  inflow_rate: float = 0.1,
                  inflow_rand_x_range: list = [0.2, 0.8],
                  inflow_rand_y_range: list = [0.15, 0.25],
+                 batch_size: int = 1,
                  **pde_params): # To catch any other unused params
         """
         Initializes the smoke model.

@@ -211,11 +211,24 @@ class DataManager:
             # We want: [time, channels, x, y] where channels = vector components (or 1 for scalars)
             tensor = stacked_field.values._native
             
+            # Determine if this is a vector or scalar field from the stacked_field shape
+            # This is more reliable than checking native tensor dimensions (which can be squeezed)
+            is_vector = stacked_field.shape.channel.rank > 0
+            num_time_frames = len(frames_to_load)
+            
             # Permute dimensions to get [time, channels, x, y]
-            if len(tensor.shape) == 4:  # Vector field: [x, y, vector, time]
-                tensor = tensor.permute(3, 2, 0, 1)  # -> [time, vector, x, y]
-            elif len(tensor.shape) == 3:  # Scalar field: [x, y, time]
-                tensor = tensor.permute(2, 0, 1).unsqueeze(1)  # -> [time, 1, x, y]
+            if is_vector:
+                # Vector field
+                if len(tensor.shape) == 4:  # [x, y, vector, time] - normal case
+                    tensor = tensor.permute(3, 2, 0, 1)  # -> [time, vector, x, y]
+                elif len(tensor.shape) == 3:  # [x, y, vector] - single frame, time dimension squeezed
+                    tensor = tensor.permute(2, 0, 1).unsqueeze(0)  # -> [1, vector, x, y]
+            else:
+                # Scalar field
+                if len(tensor.shape) == 3:  # [x, y, time] - normal case
+                    tensor = tensor.permute(2, 0, 1).unsqueeze(1)  # -> [time, 1, x, y]
+                elif len(tensor.shape) == 2:  # [x, y] - single frame, time dimension squeezed
+                    tensor = tensor.unsqueeze(0).unsqueeze(0)  # -> [1, 1, x, y]
             
             # Ensure tensor is on CPU for caching (for DataLoader pin_memory compatibility)
             tensor = tensor.cpu()

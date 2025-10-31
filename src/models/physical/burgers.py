@@ -41,8 +41,8 @@ class BurgersModel(PhysicalModel):
                  domain: Box,
                  resolution: Shape,
                  dt: float,
-                 batch_size: int,
                  nu: Tensor,
+                 batch_size: int = 10,
                  **pde_params): # To catch any other unused params
         """
         Initializes the Burgers' model.
