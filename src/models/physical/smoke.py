@@ -4,6 +4,7 @@ import torch
 from phi.torch.flow import *
 from phi.math import jit_compile, batch
 from .base import PhysicalModel  # <-- Import our new base class
+from src.models.registry import ModelRegistry
 import random
 from typing import Dict, Any
 
@@ -47,6 +48,7 @@ def _smoke_physics_step(velocity, density, inflow, domain, dt, buoyancy_factor, 
 
 # --- Model Class Implementation ---
 
+@ModelRegistry.register_physical('SmokeModel')
 class SmokeModel(PhysicalModel):
     """
     Physical model for the smoke simulation.

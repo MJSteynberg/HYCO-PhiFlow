@@ -10,7 +10,7 @@ from phi.field import l2_loss
 from phi.math import math, Tensor
 
 # --- Repo Imports ---
-import src.models.physical as physical_models
+from src.models import ModelRegistry
 from src.data import DataManager, HybridDataset
 
 
@@ -80,7 +80,7 @@ class PhysicalTrainer:
         )
 
 
-    def _create_model(self) -> physical_models.PhysicalModel:
+    def _create_model(self):
         """
         Instantiates the physical model from the config, setting
         learnable parameters to their initial guesses.
@@ -102,13 +102,9 @@ class PhysicalTrainer:
         # Update the pde_params in the config copy
         model_config_copy['pde_params'] = pde_params
 
-        try:
-            ModelClass = getattr(physical_models, model_name)
-        except AttributeError:
-            raise ImportError(f"Model '{model_name}' not found in src/models/physical/__init__.py")
-        
-        # Pass the config dict directly - the base class handles parsing
-        model = ModelClass(model_config_copy)
+        # Use the model registry to create the model
+        print(f"Creating physical model: {model_name}...")
+        model = ModelRegistry.get_physical_model(model_name, model_config_copy)
         return model
     
     def _get_initial_guesses(self) -> List[Tensor]:

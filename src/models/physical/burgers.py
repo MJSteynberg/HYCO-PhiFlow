@@ -3,6 +3,7 @@ from phi.torch.flow import *
 from phi.math import jit_compile, batch
 
 from .base import PhysicalModel  # <-- Assuming this base class exists
+from src.models.registry import ModelRegistry
 from typing import Dict
 
 # --- JIT-Compiled Physics Function ---
@@ -31,6 +32,7 @@ def _burgers_physics_step(velocity: StaggeredGrid, dt: float, nu: Tensor) -> Sta
 
 # --- Model Class Implementation ---
 
+@ModelRegistry.register_physical('BurgersModel')
 class BurgersModel(PhysicalModel):
     """
     Physical model for the Burgers' equation.

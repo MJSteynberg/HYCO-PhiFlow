@@ -13,8 +13,8 @@ from tqdm import tqdm
 # Import our data pipeline
 from src.data import DataManager, HybridDataset
 
-# Import our model and loss
-from src.models.synthetic.unet import UNet
+# Import the model registry
+from src.models import ModelRegistry
 
 
 class SyntheticTrainer:
@@ -148,9 +148,11 @@ class SyntheticTrainer:
         return loader
 
     def _create_model(self):
-        """Creates the UNet model from the config."""
-        print("Creating U-Net model...")
-        model = UNet(config=self.model_config)
+        """Creates the synthetic model using the registry."""
+        model_name = self.model_config.get('name', 'UNet')
+        print(f"Creating synthetic model: {model_name}...")
+        
+        model = ModelRegistry.get_synthetic_model(model_name, config=self.model_config)
 
         try:
             model.load_state_dict(torch.load(self.checkpoint_path, map_location=self.device))

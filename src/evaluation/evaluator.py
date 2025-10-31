@@ -17,7 +17,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from src.data import DataManager, HybridDataset
-from src.models.synthetic.unet import UNet
+from src.models import ModelRegistry
 from .metrics import compute_all_metrics, compute_metrics_per_field, aggregate_metrics
 from .visualizations import (
     create_comparison_gif,
@@ -123,14 +123,11 @@ class Evaluator:
                 f"Please train the model first."
             )
         
-        # Create model architecture
+        # Create model architecture using registry
         model_name = self.model_config['name']
+        print(f"  [INFO] Creating model: {model_name}")
         
-        if model_name == 'UNet':
-            # UNet expects full config dictionary
-            model = UNet(self.model_config)
-        else:
-            raise ValueError(f"Unsupported model: {model_name}")
+        model = ModelRegistry.get_synthetic_model(model_name, config=self.model_config)
         
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=self.device)

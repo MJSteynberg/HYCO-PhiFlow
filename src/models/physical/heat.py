@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 
 # --- Repo Imports ---
 from .base import PhysicalModel  # <-- Import from your repo's base class
+from src.models.registry import ModelRegistry
 
 
 # --- JIT-Compiled Physics Step ---
@@ -33,6 +34,7 @@ def _heat_step(
 
 
 # --- Model Class Implementation ---
+@ModelRegistry.register_physical('HeatModel')
 class HeatModel(PhysicalModel):
     """
     Physical model for the heat equation (diffusion).
