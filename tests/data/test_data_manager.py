@@ -47,6 +47,23 @@ class TestDataManagerInitialization:
         assert dm.raw_data_dir == Path(raw_dir)
         assert dm.cache_dir == Path(cache_dir)
         assert dm.config == basic_config
+        assert dm.validate_cache is True  # Default value
+        assert dm.auto_clear_invalid is False  # Default value
+    
+    def test_initialization_with_validation_params(self, temp_dirs, basic_config):
+        """Test DataManager initialization with cache validation parameters."""
+        raw_dir, cache_dir = temp_dirs
+        
+        dm = DataManager(
+            raw_dir, 
+            cache_dir, 
+            basic_config,
+            validate_cache=False,
+            auto_clear_invalid=True
+        )
+        
+        assert dm.validate_cache is False
+        assert dm.auto_clear_invalid is True
     
     def test_cache_dir_creation(self, temp_dirs, basic_config):
         """Test that cache directory is created if it doesn't exist."""
@@ -183,13 +200,16 @@ class TestDataManagerCacheValidation:
         """Test cache validation with matching field names."""
         dm, _, _ = temp_setup
         
-        # Create cache with velocity field
+        # Create cache with velocity field and proper v2.0 metadata
         cache_path = dm.get_cached_path(0)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         
         fake_data = {
             'tensor_data': {'velocity': torch.randn(10, 2, 64, 64)},
-            'metadata': {}
+            'metadata': {
+                'field_metadata': {'velocity': {}},  # Required for field validation
+                'num_frames': 10
+            }
         }
         torch.save(fake_data, cache_path)
         
@@ -258,7 +278,10 @@ class TestDataManagerCacheValidation:
         
         fake_data = {
             'tensor_data': {'velocity': torch.randn(10, 2, 64, 64)},
-            'metadata': {'num_frames': 10}
+            'metadata': {
+                'field_metadata': {'velocity': {}},  # Required for field validation
+                'num_frames': 10
+            }
         }
         torch.save(fake_data, cache_path)
         

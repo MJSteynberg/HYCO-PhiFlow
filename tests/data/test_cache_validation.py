@@ -12,14 +12,29 @@ from src.data import DataManager
 
 @pytest.fixture
 def burgers_data_manager():
-    """Create a DataManager for Burgers dataset."""
+    """Create a DataManager for Burgers dataset with complete config."""
     raw_data_dir = Path(__file__).parent.parent.parent / "data" / "burgers_128"
+    
+    # Complete config with all required parameters for validation
+    config = {
+        'dset_name': 'burgers_128',
+        'fields': ['velocity'],
+        'model': {
+            'physical': {
+                'name': 'BurgersModel',
+                'resolution': {'x': 128, 'y': 128},
+                'domain': {'size_x': 100, 'size_y': 100},
+                'dt': 0.8,
+                'pde_params': {'batch_size': 1, 'nu': 0.1}
+            }
+        }
+    }
     
     with tempfile.TemporaryDirectory() as tmpdir:
         dm = DataManager(
             raw_data_dir=str(raw_data_dir),
             cache_dir=tmpdir,
-            config={'dset_name': 'burgers_128'}
+            config=config
         )
         yield dm
 
@@ -120,11 +135,26 @@ class TestCacheValidationMultiField:
         """Test validation with multiple fields."""
         raw_data_dir = Path(__file__).parent.parent.parent / "data" / "smoke_128"
         
+        # Complete config for smoke dataset
+        config = {
+            'dset_name': 'smoke_128',
+            'fields': ['velocity', 'density'],
+            'model': {
+                'physical': {
+                    'name': 'SmokeModel',
+                    'resolution': {'x': 128, 'y': 128},
+                    'domain': {'size_x': 100, 'size_y': 100},
+                    'dt': 0.8,
+                    'pde_params': {'batch_size': 1, 'buoyancy_factor': 0.1}
+                }
+            }
+        }
+        
         with tempfile.TemporaryDirectory() as tmpdir:
             dm = DataManager(
                 raw_data_dir=str(raw_data_dir),
                 cache_dir=tmpdir,
-                config={'dset_name': 'smoke_128'}
+                config=config
             )
             
             # Cache with velocity and density

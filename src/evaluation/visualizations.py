@@ -76,6 +76,10 @@ def create_comparison_gif(
     elif pred_np.ndim != 3:  # Should be [T, H, W]
         raise ValueError(f"Expected 3 or 4 dimensions, got {pred_np.ndim}")
     
+    # Transpose spatial dimensions: PhiFlow uses [x, y] but matplotlib expects [y, x] (row, col)
+    pred_np = np.transpose(pred_np, (0, 2, 1))  # [T, H, W] -> [T, W, H] (swaps last two axes)
+    gt_np = np.transpose(gt_np, (0, 2, 1))
+    
     num_frames = pred_np.shape[0]
     
     # Compute global min/max for consistent color scale
@@ -246,6 +250,10 @@ def plot_side_by_side_frame(
     elif pred_frame.ndim == 3 and pred_frame.shape[0] == 1:
         pred_frame = pred_frame[0]
         gt_frame = gt_frame[0]
+    
+    # Transpose spatial dimensions: PhiFlow uses [x, y] but matplotlib expects [y, x]
+    pred_frame = pred_frame.T
+    gt_frame = gt_frame.T
     
     # Compute color scale
     if vmin is None:
@@ -653,6 +661,10 @@ def plot_keyframe_comparison(
         raise ValueError(f"Expected 3 or 4 dimensions, got {pred_np.ndim}")
     else:
         field_label = field_name.capitalize()
+    
+    # Transpose spatial dimensions: PhiFlow uses [x, y] but matplotlib expects [y, x]
+    pred_np = np.transpose(pred_np, (0, 2, 1))  # [T, H, W] -> [T, W, H]
+    gt_np = np.transpose(gt_np, (0, 2, 1))
     
     num_frames = pred_np.shape[0]
     
