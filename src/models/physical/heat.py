@@ -5,6 +5,7 @@ from typing import Dict
 # --- PhiFlow Imports ---
 from phi.torch.flow import *
 from phi.math import Shape, Tensor, batch, math
+from matplotlib import pyplot as plt
 
 # --- Repo Imports ---
 from .base import PhysicalModel  # <-- Import from your repo's base class
@@ -28,7 +29,7 @@ def _heat_step(
     Returns:
         CenteredGrid: The temperature field at the next time step.
     """
-    return diffuse.explicit(u = temp, diffusivity=diffusivity, dt=dt)
+    return diffuse.explicit(temp, diffusivity=diffusivity, dt=dt)
 
 
 # --- Model Class Implementation ---
@@ -81,9 +82,12 @@ class HeatModel(PhysicalModel):
         """
         # Create a batch shape
         b = batch(batch=batch_size)
+
+        def initial(x):
+            return (math.sum(math.cos(2*np.pi*x/100), 'vector'))
         
         temp_0 = CenteredGrid(
-            Noise(scale=1, smoothness=5), # Noisy initial temperature
+            initial, # Noisy initial temperature
             extrapolation=extrapolation.PERIODIC, # Periodic boundaries
             x=self.resolution.get_size('x'),
             y=self.resolution.get_size('y'),
@@ -100,8 +104,6 @@ class HeatModel(PhysicalModel):
         Args:
             *current_state (Field): A tuple containing the (temp,) field.
         """
-        # Unpack the state tuple, as required by the base class
-        
         new_temp = _heat_step(
             temp=current_state["temp"],
             diffusivity=self.diffusivity, # <-- Use self.diffusivity

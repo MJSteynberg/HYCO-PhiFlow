@@ -1,4 +1,4 @@
-# In src/training/physical/trainer_scene.py
+# In src/training/physical/trainer.py
 
 import os
 import time
@@ -11,15 +11,16 @@ from phi.math import math, Tensor
 
 # --- Repo Imports ---
 import src.models.physical as physical_models
+from src.data import DataManager, HybridDataset
 
 
 class PhysicalTrainer:
     """
-    Solves an inverse problem for a PhysicalModel using data
-    from a PhiFlow Scene.
+    Solves an inverse problem for a PhysicalModel using cached data
+    from DataManager/HybridDataset.
 
-    This trainer adapts the logic from 'scripts/run_inverse_heat.py'
-    into a reusable class. It uses math.minimize for optimization.
+    This trainer uses math.minimize for optimization and leverages
+    the efficient DataLoader pipeline with field conversion.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -30,7 +31,7 @@ class PhysicalTrainer:
             config (Dict[str, Any]): The experiment configuration.
         """
         self.config = config
-        self.project_root = config.get('project_root', '.') # Get project root
+        self.project_root = config.get('project_root', '.')
 
         # --- Parse Configs ---
         self.data_config = config['data']
@@ -47,14 +48,34 @@ class PhysicalTrainer:
         # --- Get Ground Truth field names ---
         self.gt_fields: List[str] = self.data_config['fields']
         
+        # --- Setup DataManager and Dataset ---
+        self.data_manager = self._create_data_manager()
+        
         # --- Setup Learnable Parameters ---
         self.initial_guesses = self._get_initial_guesses()
 
         # --- Setup Model ---
-        # The model is initialized with the *initial guesses*
         self.model = self._create_model()
         
-        print(f"PhysicalTrainerScene initialized. Will optimize for {len(self.initial_guesses)} parameter(s).")
+        print(f"PhysicalTrainer initialized. Will optimize for {len(self.initial_guesses)} parameter(s).")
+    
+    def _create_data_manager(self) -> DataManager:
+        """Create DataManager for loading cached field data."""
+        raw_data_dir = os.path.join(
+            self.project_root,
+            self.data_config['data_dir'],
+            self.data_config['dset_name']
+        )
+        cache_dir = os.path.join(
+            self.project_root,
+            self.data_config.get('cache_dir', 'data/cache')
+        )
+        
+        return DataManager(
+            raw_data_dir=raw_data_dir,
+            cache_dir=cache_dir,
+            config={'dset_name': self.data_config['dset_name']}
+        )
 
 
     def _create_model(self) -> physical_models.PhysicalModel:
@@ -82,7 +103,7 @@ class PhysicalTrainer:
             ModelClass = getattr(physical_models, model_name)
         except AttributeError:
             raise ImportError(f"Model '{model_name}' not found in src/models/physical/__init__.py")
-
+        print(self.model_config['dt'])
         model = ModelClass(
             domain=domain,
             resolution=resolution,
@@ -110,81 +131,70 @@ class PhysicalTrainer:
         
         return guesses
     
-    # Add this method inside the PhysicalTrainerScene class:
-
     def _load_ground_truth_data(self, sim_index: int) -> Dict[str, Tensor]:
         """
-        Loads all ground truth data for one simulation from its Scene.
-        Adds a batch dimension to match the model's expected format.
+        Loads ground truth data for one simulation using HybridDataset with field conversion.
         
         Args:
             sim_index (int): The simulation index to load.
 
         Returns:
             Dict[str, Tensor]: A dict mapping field names to their
-                                full time-batched (batchᵇ=1, time, ...) tensors.
+                              full time-batched (batchᵇ=1, time, ...) tensors.
         """
-        scene_parent_dir = os.path.join(
+        print(f"Loading ground truth for sim {sim_index} from cache...")
+        
+        # Create dataset with return_fields=True for this single simulation
+        dataset = HybridDataset(
+            data_manager=self.data_manager,
+            sim_indices=[sim_index],
+            field_names=self.gt_fields,
+            num_frames=self.num_predict_steps + 1,
+            num_predict_steps=self.num_predict_steps,
+            return_fields=True
+        )
+        
+        # Get the data (initial_fields and target_fields)
+        initial_fields, target_fields = dataset[0]
+        
+        # Combine into full time sequence for each field
+        data = {}
+        for field_name in self.gt_fields:
+            # Stack: [initial_field at t=0] + [target_fields at t=1..T]
+            if field_name in target_fields:
+                all_frames = [initial_fields[field_name]] + target_fields[field_name]
+                stacked_field = stack(all_frames, batch('time'))
+                
+                # Add batch dimension for consistency with model output
+                stacked_field = math.expand(stacked_field, batch(batch=1))
+                
+                data[field_name] = stacked_field
+                print(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
+        
+        # Load true PDE params from scene metadata if available
+        scene_path = os.path.join(
             self.project_root,
             self.data_config['data_dir'],
-            self.data_config['dset_name']
+            self.data_config['dset_name'],
+            f"sim_{sim_index:06d}"
         )
-        scene_name = f"sim_{sim_index:06d}"
-        scene_path = os.path.join(scene_parent_dir, scene_name)
         
+        # Try alternative name format
         if not os.path.exists(scene_path):
-            # Try to find the scene if the name is not zero-padded
-            scene_path_alt = os.path.join(scene_parent_dir, f"sim_{sim_index}")
-            if os.path.exists(scene_path_alt):
-                 scene_path = scene_path_alt
-            else:
-                 raise FileNotFoundError(
-                     f"Scene not found at {scene_path} or {scene_path_alt}"
-                 )
+            scene_path = os.path.join(
+                self.project_root,
+                self.data_config['data_dir'],
+                self.data_config['dset_name'],
+                f"sim_{sim_index}"
+            )
         
-        print(f"Loading ground truth from: {scene_path}")
-        scene = Scene.at(scene_path)
-        
-        frames = scene.frames
-        # Limit frames based on num_predict_steps + 1 (for initial state)
-        frames_to_load = frames[:self.num_predict_steps + 1]
-        if len(frames_to_load) < self.num_predict_steps + 1:
-            print(f"Warning: Scene only has {len(frames_to_load)} frames, "
-                  f"but config requested {self.num_predict_steps + 1}.")
-            # Update num_predict_steps to match available data
-            self.num_predict_steps = len(frames_to_load) - 1
-        
-        print(f"Loading {len(frames_to_load)} frames (T=0 to T={self.num_predict_steps}).")
-        
-        data = {}
-        # Load only the fields specified in the config
-        for field_name in self.gt_fields:
-            if field_name not in scene.fieldnames:
-                print(f"Warning: Field '{field_name}' not in Scene. Skipping.")
-                continue
-                
-            field_frames = []
-            for frame in frames_to_load:
-                field_data = scene.read_field(
-                    field_name, 
-                    frame=frame, 
-                    convert_to_backend=True
-                )
-                field_frames.append(field_data)
-            
-            # Stack along the 'time' dimension
-            stacked_field = stack(field_frames, batch('time'))
-            
-            # --- ADD BATCH DIMENSION ---
-            # Add batch dimension for consistency with model output
-            stacked_field = math.expand(stacked_field, batch(batch=1))
-            
-            data[field_name] = stacked_field
-            print(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
-
-        # Store metadata for comparison
-        self.true_pde_params = scene.properties.get('PDE_Params', {})
-        print(f"  True PDE Parameters from metadata: {self.true_pde_params}")
+        if os.path.exists(scene_path):
+            scene = Scene.at(scene_path)
+            self.true_pde_params = scene.properties.get('PDE_Params', {})
+            print(f"  True PDE Parameters from metadata: {self.true_pde_params}")
+        else:
+            self.true_pde_params = {}
+            print(f"  Warning: Could not load scene metadata from {scene_path}")
         
         return data
     
@@ -205,21 +215,24 @@ class PhysicalTrainer:
                   f"Multi-sim training not yet implemented.")
                 
         gt_data_dict = self._load_ground_truth_data(sim_to_train)
-        
+        print(gt_data_dict)
         # Get the initial state (t=0) for all fields
         initial_state_dict = {
-            name: field.time[0] 
+            name: field.time[0]
             for name, field in gt_data_dict.items()
             if name in self.model.get_initial_state() # Only fields the model knows
         }
 
         # Get the ground truth *rollout* (t=1 to T)
         gt_rollout_dict = {
-            name: field.time[1:] 
+            name: field.time[1:]
             for name, field in gt_data_dict.items()
             if name in initial_state_dict # Must be a predicted field
         }
-        
+        # print(f"Loaded initial state {initial_state_dict}")
+        # print(f"Loaded ground truth rollout {gt_rollout_dict}")
+        # print(f"Loaded ground truth rollout {mean(gt_rollout_dict['temp'])}")
+        # print('upper = ', self.model.domain.upper, 'lower = ',self.model.domain.lower)
         # 2. --- Define the Loss Function ---
         
         # --- FIX 2: Re-enable JIT ---
@@ -235,11 +248,19 @@ class PhysicalTrainer:
                 param_name = param_config['name']
                 setattr(self.model, param_name, learnable_tensors[i])
             
+            # Debug: check if diffusivity is nan
+            if hasattr(self.model, 'nu'):
+                diff_val = self.model.nu
+                if hasattr(diff_val, 'native'):
+                    diff_native = float(diff_val.native())
+                    print(f"Current nu value: {diff_native}")
+            
             # 2. Simulate forward
             total_loss = math.tensor(0.0)
             current_state = initial_state_dict
             
             for step in range(self.num_predict_steps):
+                print(f"After step {step}, current_state: {current_state['velocity'].batch[0].x[0].y[0].values}")
                 current_state = self.model.step(current_state)
                 
                 # 3. Calculate L2 loss for this step
@@ -250,7 +271,9 @@ class PhysicalTrainer:
                     
                     # Both pred and target should now have matching batch dims
                     # Compute L2 loss - will reduce over spatial dims, keep batch
-                    field_loss = l2_loss(pred - target)
+                    diff = pred - target
+                    
+                    field_loss = l2_loss(diff)
                     
                     # Sum over any remaining dimensions (including batch)
                     field_loss = math.sum(field_loss)
@@ -259,7 +282,8 @@ class PhysicalTrainer:
                 
                 total_loss += step_loss
             
-            return total_loss / self.num_predict_steps
+            final_loss = total_loss / self.num_predict_steps
+            return 1e-3*final_loss
 
         # 3. --- Run Optimization ---
         print("\nStarting optimization with math.minimize (L-BFGS-B)...")
@@ -274,7 +298,7 @@ class PhysicalTrainer:
         ]
         print(f"Initial guess: {', '.join(initial_guess_strs)}")
         print(f"Initial loss: {initial_loss}")
-
+        
         solve_params = math.Solve(
             method='L-BFGS-B',
             abs_tol=1e-6,

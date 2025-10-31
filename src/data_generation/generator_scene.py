@@ -10,7 +10,7 @@ from phi.torch.flow import *
 
 # --- Our Model Imports ---
 import src.models.physical as physical_models
-
+from matplotlib import pyplot as plt
 
 def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     """
@@ -116,3 +116,30 @@ def run_generation_scene(config: dict):
                 scene.write(state_to_save, frame=frame_index)
 
     print(f"\nScene generation complete. Data saved in {output_dir}")
+    
+    # # Load and plot the first scene as an animation
+    # if gen_cfg['num_simulations'] > 0:
+    #     first_scene_path = os.path.join(output_dir, "sim_000000")
+    #     scene = Scene.at(first_scene_path)
+    #     print(f"\nLoading scene from: {first_scene_path}")
+    #     print(f"Available fields: {scene.fieldnames}")
+    #     print(f"Frames: {scene.frames}")
+        
+    #     # Load and plot each field
+    #     for field_name in data_cfg['fields']:
+    #         if field_name in scene.fieldnames:
+    #             print(f"Plotting {field_name}...")
+                
+    #             # Read all frames for this field
+    #             field_frames = []
+    #             for frame in scene.frames:
+    #                 field_data = scene.read_field(field_name, frame=frame, convert_to_backend=True)
+    #                 field_frames.append(field_data)
+                
+    #             # Stack frames along time dimension
+    #             field_sequence = stack(field_frames, batch('time'))
+                
+    #             # Plot the animation
+    #             vis.plot(field_sequence, animate='time', show_color_bar=True, title=field_name)
+        
+    #     plt.show()

@@ -138,14 +138,27 @@ class HybridDataset(Dataset):
             field_metadata[name] = FieldMetadata.from_cache_metadata(meta, domain, resolution)
         
         # Convert initial state (t=0) for all fields
-        initial_tensors = {name: data['tensor_data'][name][0:1] for name in self.field_names}
+        # Move tensors to GPU if they're on CPU
+        initial_tensors = {}
+        for name in self.field_names:
+            tensor = data['tensor_data'][name][0:1]
+            if isinstance(tensor, torch.Tensor):
+                initial_tensors[name] = tensor.cuda() if not tensor.is_cuda else tensor
+            else:
+                initial_tensors[name] = torch.from_numpy(tensor).cuda()
+        
         initial_metadata = {name: field_metadata[name] for name in self.field_names}
         initial_fields = tensors_to_fields(initial_tensors, initial_metadata, time_slice=0)
         
         # Convert rollout targets (t=1 to t=num_predict_steps) for dynamic fields
         target_fields = {}
         for field_name in self.dynamic_fields:
-            field_tensors = data['tensor_data'][field_name][1:self.num_predict_steps + 1]
+            field_tensors_raw = data['tensor_data'][field_name][1:self.num_predict_steps + 1]
+            if isinstance(field_tensors_raw, torch.Tensor):
+                field_tensors = field_tensors_raw.cuda() if not field_tensors_raw.is_cuda else field_tensors_raw
+            else:
+                field_tensors = torch.from_numpy(field_tensors_raw).cuda()
+            
             field_meta = field_metadata[field_name]
             
             # Convert each timestep to a Field
