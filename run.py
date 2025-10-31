@@ -1,119 +1,93 @@
-# run.py
+"""
+Hydra-based experiment runner.
 
-import argparse
-import yaml
+Usage:
+    python run_hydra.py experiment=burgers_experiment
+    python run_hydra.py experiment=burgers_experiment trainer_params.epochs=200
+    python run_hydra.py +experiment=smoke_experiment run_params.mode=[generate,train]
+"""
+
 import os
 import sys
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import List
 
-# Add project root to path to allow imports from 'src'
-PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
-sys.path.append(PROJECT_ROOT)
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
-# --- Import Task Runners ---
+# Add project root to path
+PROJECT_ROOT = Path(__file__).parent.absolute()
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.data.generator import run_generation
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 from src.evaluation import Evaluator
 
-def main():
-    parser = argparse.ArgumentParser(description="Unified runner for the PDE modeling project.")
-    parser.add_argument('--config', type=str, required=True, help='Path to the unified experiment YAML file.')
-    
-    # --- MODIFICATION: Removed --task argument ---
-    # The tasks to run are now defined inside the config file.
-    
-    args = parser.parse_args()
 
-    with open(args.config, 'r') as f:
-        config: Dict[str, Any] = yaml.safe_load(f)
-
-    # --- Add project root and log directory to config ---
-    config['project_root'] = PROJECT_ROOT
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: DictConfig) -> None:
+    """Main entry point with Hydra configuration."""
+    
+    # Print configuration (optional, for debugging)
+    print("=" * 60)
+    print("EXPERIMENT CONFIGURATION")
+    print("=" * 60)
+    print(OmegaConf.to_yaml(cfg))
+    print("=" * 60)
+    
+    # Convert to regular dict for compatibility with existing code
+    config = OmegaConf.to_container(cfg, resolve=True)
+    
+    # Add project root
+    config['project_root'] = str(PROJECT_ROOT)
     
     run_config = config['run_params']
-
-    print(f"--- Loaded Experiment: {run_config['experiment_name']} ---")
+    tasks = run_config['mode']
     
-    # --- MODIFICATION: Get tasks from config ---
-    tasks: List[str] = run_config['mode']
     if isinstance(tasks, str):
-        tasks = [tasks]  # Ensure 'tasks' is a list
-
-    print(f"--- Will Run Tasks: {tasks} ---")
-
-    # --- MODIFICATION: Loop over tasks from config ---
+        tasks = [tasks]
+    
+    print(f"\n--- Experiment: {run_config['experiment_name']} ---")
+    print(f"--- Tasks: {tasks} ---\n")
+    
+    # Execute tasks
     for task in tasks:
-        print(f"\n--- Running Task: {task.upper()} ---")
+        print(f"\n{'='*60}")
+        print(f"RUNNING TASK: {task.upper()}")
+        print(f"{'='*60}\n")
         
         if task == 'generate':
             run_generation(config)
-
-        elif task == 'generate_scene' :
-            run_generation(config)
-            
+        
         elif task == 'train':
             model_type = run_config.get('model_type', 'synthetic')
-            print(f"Model type specified: '{model_type}'")
-
+            
             if model_type == 'synthetic':
-                # SyntheticTrainer's __init__ takes the full config
                 trainer = SyntheticTrainer(config)
                 trainer.train()
-                
             elif model_type == 'physical':
-                # Use the new Scene-based trainer for inverse problems
-                print("Using PhysicalTrainerScene for inverse problem.")
                 trainer = PhysicalTrainer(config)
                 trainer.train()
-                
             else:
-                raise ValueError(
-                    f"Unknown model_type '{model_type}' in config. "
-                    f"Must be 'synthetic' or 'physical'."
-                )
-
+                raise ValueError(f"Unknown model_type: {model_type}")
+        
         elif task == 'evaluate':
             model_type = run_config.get('model_type', 'synthetic')
-            print(f"Model type specified: '{model_type}'")
             
             if model_type == 'synthetic':
-                print("Running evaluation for synthetic model...")
-                
-                # Check if evaluation_params exist in config
-                if 'evaluation_params' not in config:
-                    print("Warning: No 'evaluation_params' found in config. Using defaults.")
-                    config['evaluation_params'] = {
-                        'test_sim': [0],
-                        'num_frames': 51,
-                        'metrics': ['mse', 'mae', 'rmse'],
-                        'keyframe_count': 5,
-                        'animation_fps': 10,
-                        'save_animations': True,
-                        'save_plots': True
-                    }
-                
-                # Create evaluator and run evaluation
                 evaluator = Evaluator(config)
-                results = evaluator.evaluate()
-                
-                print(f"Evaluation complete! Results saved.")
-                
-            elif model_type == 'physical':
-                print("Physical model evaluation not yet implemented.")
-                print("Physical models are evaluated during training (inverse problem setup).")
-                
+                evaluator.evaluate()
             else:
-                raise ValueError(
-                    f"Unknown model_type '{model_type}' in config. "
-                    f"Must be 'synthetic' or 'physical'."
-                )
-            
-            
+                print("Physical model evaluation not yet implemented.")
+        
         else:
-            print(f"--- Warning: Unknown task '{task}' in config. Skipping. ---")
+            print(f"Warning: Unknown task '{task}'")
+    
+    print(f"\n{'='*60}")
+    print(f"EXPERIMENT COMPLETE: {run_config['experiment_name']}")
+    print(f"{'='*60}\n")
 
-    print(f"\n--- Experiment {run_config['experiment_name']} Finished ---")
 
 if __name__ == "__main__":
     main()
