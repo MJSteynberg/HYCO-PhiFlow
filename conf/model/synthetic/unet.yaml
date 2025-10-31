@@ -1,0 +1,14 @@
+name: 'UNet'
+model_path: 'results/models'
+model_save_name: ???  # Must be specified
+
+input_specs:
+  velocity: 2
+
+output_specs:
+  velocity: 2
+
+architecture:
+  levels: 4
+  filters: 64
+  batch_norm: true

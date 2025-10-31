@@ -1,0 +1,8 @@
+# @package _global_.generation_params
+# Long trajectory generation
+num_simulations: 10
+total_steps: 200
+save_interval: 2
+
+# Optional: random seed for reproducibility
+seed: null

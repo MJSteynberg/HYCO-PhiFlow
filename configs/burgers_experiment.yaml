@@ -2,7 +2,7 @@
 run_params:
   experiment_name: "burgers_unet_128_v1"
   notes: "Training a synthetic UNet model on Burgers 128x128 data."
-  mode: ['evaluate']          # Replaces the top-level 'task' field
+  mode: ['train','evaluate']          # Replaces the top-level 'task' field
   model_type: 'synthetic'  # Tells run.py to use SyntheticTrainer
   
 # --- Data Configuration (for all tasks) ---
@@ -51,8 +51,8 @@ generation_params:
 trainer_params:
   learning_rate: 1.0e-4
   batch_size: 32
-  epochs: 100
-  num_predict_steps: 3
+  epochs: 10
+  num_predict_steps: 5
   train_sim: [0,1,2,3,4,5,6,7,8] # Simulations to use for training
   use_sliding_window: true # If true, creates multiple samples per simulation using sliding windows
 

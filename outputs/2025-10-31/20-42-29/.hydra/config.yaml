@@ -1,0 +1,61 @@
+data:
+  data_dir: data/
+  dset_name: smoke_128
+  fields:
+  - density
+  - velocity
+  - inflow
+  fields_scheme: dVVi
+  cache_dir: data/cache
+  validate_cache: true
+  auto_clear_invalid: false
+model:
+  physical:
+    name: SmokeModel
+    domain:
+      size_x: 100
+      size_y: 100
+    resolution:
+      x: 128
+      'y': 128
+    dt: 1.0
+    pde_params:
+      nu: 0.0
+      buoyancy: 1.0
+      inflow_radius: 10.0
+      inflow_rate: 0.1
+      inflow_rand_x_range:
+      - 0.2
+      - 0.6
+      inflow_rand_y_range:
+      - 0.15
+      - 0.05
+    model_path: results/models/
+    model_save_name: smoke_128
+trainer_params:
+  learning_rate: 0.0001
+  batch_size: 1
+  epochs: 100
+  num_predict_steps: 5
+  train_sim:
+  - 0
+  learnable_parameters:
+  - name: nu
+    initial_guess: 0.005
+  - name: buoyancy
+    initial_guess: 0.5
+  method: L-BFGS-B
+  abs_tol: 1.0e-06
+  max_iterations: null
+generation_params:
+  num_simulations: 10
+  total_steps: 50
+  save_interval: 1
+  seed: null
+run_params:
+  experiment_name: smoke_inverse_problem_v1
+  notes: Training physical model to find optimal buoyancy and nu
+  mode:
+  - train
+  model_type: physical
+project_root: ${hydra:runtime.cwd}

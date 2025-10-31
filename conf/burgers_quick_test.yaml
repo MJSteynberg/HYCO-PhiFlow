@@ -1,0 +1,34 @@
+# Quick test experiment for Burgers - 2 epochs only
+defaults:
+  - data: burgers_128
+  - model/physical: burgers
+  - model/synthetic: unet
+  - trainer: synthetic_quick
+  - generation: default
+  - evaluation: default
+  - _self_
+
+run_params:
+  experiment_name: 'burgers_quick_test'
+  notes: 'Quick test with only 2 epochs'
+  mode: ['train', 'evaluate']
+  model_type: 'synthetic'
+
+model:
+  synthetic:
+    model_save_name: 'burgers_quick_test'
+
+trainer_params:
+  train_sim: [0, 1, 2]  # Only 3 simulations for speed
+  epochs: 2
+  batch_size: 16
+  num_predict_steps: 4
+  use_sliding_window: false  # Faster without sliding window
+
+evaluation_params:
+  test_sim: [0]  # Only test on one simulation
+  num_frames: 51
+  save_animations: false  # Skip animations for speed
+  save_plots: true
+
+project_root: ${hydra:runtime.cwd}

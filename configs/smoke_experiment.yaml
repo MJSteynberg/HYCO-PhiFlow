@@ -59,7 +59,7 @@ trainer_params:
   learning_rate: 1.0e-4
   batch_size: 16
   epochs: 1000
-  num_predict_steps: 3 # Autoregressive rollout length
+  num_predict_steps: 4 # Autoregressive rollout length
   train_sim: [0,1,2,3,4,5,6,7,8] # Simulations to use for training
   use_sliding_window: true # If true, creates multiple samples per simulation using sliding windows
 

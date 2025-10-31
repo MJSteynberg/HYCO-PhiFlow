@@ -1,0 +1,20 @@
+# @package _global_.trainer_params
+# Quick check/test trainer - only 2 epochs for fast validation
+learning_rate: 0.0001
+batch_size: 16
+epochs: 2
+num_predict_steps: 4
+
+train_sim: []
+val_sim: null
+
+use_sliding_window: false
+
+# Optimizer settings
+optimizer: 'adam'
+scheduler: 'cosine'
+weight_decay: 0.0
+
+# Checkpoint settings
+save_interval: 1
+save_best_only: false
