@@ -20,39 +20,45 @@ class TestPhysicalModelsIntegration:
     @pytest.fixture
     def burgers_model(self):
         """Create a BurgersModel instance."""
-        return BurgersModel(
-            domain=Box(x=1.0, y=1.0),
-            resolution=spatial(x=64, y=64),
-            dt=0.01,
-            batch_size=1,
-            nu=torch.tensor(0.01)
-        )
+        return BurgersModel({
+            'domain': {'size_x': 1.0, 'size_y': 1.0},
+            'resolution': {'x': 64, 'y': 64},
+            'dt': 0.01,
+            'pde_params': {
+                'batch_size': 1,
+                'nu': 0.01
+            }
+        })
     
     @pytest.fixture
     def heat_model(self):
         """Create a HeatModel instance."""
-        return HeatModel(
-            domain=Box(x=100.0, y=100.0),
-            resolution=spatial(x=64, y=64),
-            dt=0.1,
-            diffusivity=torch.tensor(1.0),
-            batch_size=1
-        )
+        return HeatModel({
+            'domain': {'size_x': 100.0, 'size_y': 100.0},
+            'resolution': {'x': 64, 'y': 64},
+            'dt': 0.1,
+            'pde_params': {
+                'diffusivity': 1.0,
+                'batch_size': 1
+            }
+        })
     
     @pytest.fixture
     def smoke_model(self):
         """Create a SmokeModel instance."""
-        return SmokeModel(
-            domain=Box(x=80.0, y=80.0),
-            resolution=spatial(x=64, y=64),
-            dt=1.0,
-            batch_size=1,
-            nu=0.0,
-            buoyancy=1.0,
-            inflow_center=(40.0, 20.0),
-            inflow_radius=5.0,
-            inflow_rate=0.2
-        )
+        return SmokeModel({
+            'domain': {'size_x': 80.0, 'size_y': 80.0},
+            'resolution': {'x': 64, 'y': 64},
+            'dt': 1.0,
+            'pde_params': {
+                'batch_size': 1,
+                'nu': 0.0,
+                'buoyancy': 1.0,
+                'inflow_center': (40.0, 20.0),
+                'inflow_radius': 5.0,
+                'inflow_rate': 0.2
+            }
+        })
     
     @pytest.fixture
     def all_models(self, burgers_model, heat_model, smoke_model):
@@ -148,32 +154,32 @@ class TestPhysicalModelsIntegration:
     
     def test_all_models_with_same_resolution(self):
         """Test all models with the same resolution."""
-        resolution = spatial(x=32, y=32)
+        resolution = {'x': 32, 'y': 32}
         
         models = [
-            BurgersModel(
-                domain=Box(x=1.0, y=1.0),
-                resolution=resolution,
-                dt=0.01,
-                batch_size=1,
-                nu=torch.tensor(0.01)
-            ),
-            HeatModel(
-                domain=Box(x=100.0, y=100.0),
-                resolution=resolution,
-                dt=0.1,
-                diffusivity=torch.tensor(1.0),
-                batch_size=1
-            ),
-            SmokeModel(
-                domain=Box(x=80.0, y=80.0),
-                resolution=resolution,
-                dt=1.0,
-                batch_size=1,
-                nu=0.0,
-                buoyancy=1.0,
-                inflow_center=(40.0, 20.0)
-            )
+            BurgersModel({
+                'domain': {'size_x': 1.0, 'size_y': 1.0},
+                'resolution': resolution,
+                'dt': 0.01,
+                'pde_params': {'batch_size': 1, 'nu': 0.01}
+            }),
+            HeatModel({
+                'domain': {'size_x': 100.0, 'size_y': 100.0},
+                'resolution': resolution,
+                'dt': 0.1,
+                'pde_params': {'diffusivity': 1.0, 'batch_size': 1}
+            }),
+            SmokeModel({
+                'domain': {'size_x': 80.0, 'size_y': 80.0},
+                'resolution': resolution,
+                'dt': 1.0,
+                'pde_params': {
+                    'batch_size': 1,
+                    'nu': 0.0,
+                    'buoyancy': 1.0,
+                    'inflow_center': (40.0, 20.0)
+                }
+            })
         ]
         
         for model in models:
@@ -188,38 +194,34 @@ class TestPhysicalModelsIntegration:
         batch_size = 4
         
         models = [
-            BurgersModel(
-                domain=Box(x=1.0, y=1.0),
-                resolution=spatial(x=32, y=32),
-                dt=0.01,
-                batch_size=batch_size,
-                nu=torch.tensor(0.01)
-            ),
-            HeatModel(
-                domain=Box(x=100.0, y=100.0),
-                resolution=spatial(x=32, y=32),
-                dt=0.1,
-                diffusivity=torch.tensor(1.0),
-                batch_size=batch_size
-            ),
-            SmokeModel(
-                domain=Box(x=80.0, y=80.0),
-                resolution=spatial(x=32, y=32),
-                dt=1.0,
-                batch_size=batch_size,
-                nu=0.0,
-                buoyancy=1.0,
-                inflow_center=(40.0, 20.0)
-            )
+            BurgersModel({
+                'domain': {'size_x': 1.0, 'size_y': 1.0},
+                'resolution': {'x': 32, 'y': 32},
+                'dt': 0.01,
+                'pde_params': {'batch_size': batch_size, 'nu': 0.01}
+            }),
+            HeatModel({
+                'domain': {'size_x': 100.0, 'size_y': 100.0},
+                'resolution': {'x': 32, 'y': 32},
+                'dt': 0.1,
+                'pde_params': {'diffusivity': 1.0, 'batch_size': batch_size}
+            }),
+            SmokeModel({
+                'domain': {'size_x': 80.0, 'size_y': 80.0},
+                'resolution': {'x': 32, 'y': 32},
+                'dt': 1.0,
+                'pde_params': {
+                    'batch_size': batch_size,
+                    'nu': 0.0,
+                    'buoyancy': 1.0,
+                    'inflow_center': (40.0, 20.0)
+                }
+            })
         ]
         
         for model in models:
-            # Note: Burgers and Smoke use model.batch_size in get_initial_state
-            # while Heat accepts batch_size as parameter
-            if isinstance(model, HeatModel):
-                state = model.get_initial_state(batch_size=batch_size)
-            else:
-                state = model.get_initial_state()
+            # All models now use self.batch_size from config
+            state = model.get_initial_state()
             
             for field_name, field_value in state.items():
                 assert field_value.shape.get_size('batch') == batch_size
@@ -259,13 +261,13 @@ class TestPhysicalModelsIntegration:
         """Test that model parameters can be updated."""
         # Test Burgers nu
         original_nu = burgers_model.nu
-        burgers_model.nu = torch.tensor(0.05)
-        assert not torch.equal(burgers_model.nu, original_nu)
+        burgers_model.nu = 0.05
+        assert burgers_model.nu != original_nu
         
         # Test Heat diffusivity
         original_diff = heat_model.diffusivity
-        heat_model.diffusivity = torch.tensor(2.0)
-        assert not torch.equal(heat_model.diffusivity, original_diff)
+        heat_model.diffusivity = 2.0
+        assert heat_model.diffusivity != original_diff
         
         # Test Smoke nu and buoyancy
         original_smoke_nu = smoke_model.nu
@@ -324,43 +326,43 @@ class TestPhysicalModelsIntegration:
     def test_different_model_configurations(self):
         """Test creating models with various configurations."""
         configs = [
-            {'resolution': spatial(x=32, y=32), 'dt': 0.01},
-            {'resolution': spatial(x=64, y=64), 'dt': 0.1},
-            {'resolution': spatial(x=128, y=128), 'dt': 0.001},
+            {'resolution': {'x': 32, 'y': 32}, 'dt': 0.01},
+            {'resolution': {'x': 64, 'y': 64}, 'dt': 0.1},
+            {'resolution': {'x': 128, 'y': 128}, 'dt': 0.001},
         ]
         
         for config in configs:
             # Test Burgers
-            burgers = BurgersModel(
-                domain=Box(x=1.0, y=1.0),
-                resolution=config['resolution'],
-                dt=config['dt'],
-                batch_size=1,
-                nu=torch.tensor(0.01)
-            )
+            burgers = BurgersModel({
+                'domain': {'size_x': 1.0, 'size_y': 1.0},
+                'resolution': config['resolution'],
+                'dt': config['dt'],
+                'pde_params': {'batch_size': 1, 'nu': 0.01}
+            })
             state = burgers.get_initial_state()
             assert 'velocity' in state
             
             # Test Heat
-            heat = HeatModel(
-                domain=Box(x=100.0, y=100.0),
-                resolution=config['resolution'],
-                dt=config['dt'],
-                diffusivity=torch.tensor(1.0),
-                batch_size=1
-            )
+            heat = HeatModel({
+                'domain': {'size_x': 100.0, 'size_y': 100.0},
+                'resolution': config['resolution'],
+                'dt': config['dt'],
+                'pde_params': {'diffusivity': 1.0, 'batch_size': 1}
+            })
             state = heat.get_initial_state()
             assert 'temp' in state
             
             # Test Smoke
-            smoke = SmokeModel(
-                domain=Box(x=80.0, y=80.0),
-                resolution=config['resolution'],
-                dt=config['dt'],
-                batch_size=1,
-                nu=0.0,
-                buoyancy=1.0,
-                inflow_center=(40.0, 20.0)
-            )
+            smoke = SmokeModel({
+                'domain': {'size_x': 80.0, 'size_y': 80.0},
+                'resolution': config['resolution'],
+                'dt': config['dt'],
+                'pde_params': {
+                    'batch_size': 1,
+                    'nu': 0.0,
+                    'buoyancy': 1.0,
+                    'inflow_center': (40.0, 20.0)
+                }
+            })
             state = smoke.get_initial_state()
             assert 'density' in state

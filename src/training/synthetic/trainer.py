@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from pathlib import Path
 from typing import Dict, Any, List
+from tqdm import tqdm
 
 # Import our data pipeline
 from src.data import DataManager, HybridDataset
@@ -65,9 +66,15 @@ class SyntheticTrainer:
         self.batch_size = self.trainer_config['batch_size']
         self.num_predict_steps = self.trainer_config['num_predict_steps']
         self.train_sim = self.trainer_config['train_sim']
+        self.use_sliding_window = self.trainer_config.get('use_sliding_window', False)
         
         # Calculate total frames needed
-        self.num_frames = self.num_predict_steps + 1  # Initial state + rollout
+        if self.use_sliding_window:
+            # Load all available frames for maximum data augmentation
+            self.num_frames = None  # None means load all available frames
+        else:
+            # Load only what's needed for one sample
+            self.num_frames = self.num_predict_steps + 1  # Initial state + rollout
 
         # --- Setup Components ---
         self.train_loader = self._create_data_loader()
@@ -121,7 +128,8 @@ class SyntheticTrainer:
             num_frames=self.num_frames,
             num_predict_steps=self.num_predict_steps,
             dynamic_fields=self.dynamic_fields,
-            static_fields=self.static_fields
+            static_fields=self.static_fields,
+            use_sliding_window=self.use_sliding_window
         )
         
         # Create PyTorch DataLoader
@@ -133,7 +141,8 @@ class SyntheticTrainer:
             pin_memory=True if torch.cuda.is_available() else False
         )
         
-        print(f"DataLoader created: {len(dataset)} samples, batch_size={self.batch_size}")
+        mode_desc = "sliding window" if self.use_sliding_window else "single starting point"
+        print(f"DataLoader created: {len(dataset)} samples ({mode_desc}), batch_size={self.batch_size}")
         return loader
 
     def _create_model(self):
@@ -227,19 +236,37 @@ class SyntheticTrainer:
         """Runs the full training loop."""
         print(f"\nStarting autoregressive training for {self.epochs} epochs...")
         best_loss = float('inf')
+        last_saved_epoch = 0
+        
+        # Create progress bar for epochs
+        pbar = tqdm(range(1, self.epochs + 1), desc="Training", unit="epoch")
 
-        for epoch in range(1, self.epochs + 1):
+        for epoch in pbar:
             start_time = time.time()
             
             train_loss = self._train_epoch()
             
             epoch_time = time.time() - start_time
-            print(f"Epoch {epoch}/{self.epochs} | Train Loss: {train_loss:.6f} | Time: {epoch_time:.2f}s")
-
+            
+            # Update progress bar with loss and time
+            postfix_dict = {
+                'loss': f'{train_loss:.6f}',
+                'time': f'{epoch_time:.2f}s'
+            }
+            
+            # Check if new best model
             if train_loss < best_loss and epoch % 10 == 0:
                 best_loss = train_loss
                 torch.save(self.model.state_dict(), self.checkpoint_path)
-                print(f"  -> New best model saved to {self.checkpoint_path}")
+                last_saved_epoch = epoch
+            
+            # Always show save status
+            if last_saved_epoch > 0:
+                postfix_dict['saved'] = f'epoch {last_saved_epoch}'
+            else:
+                postfix_dict['saved'] = 'none'
+            
+            pbar.set_postfix(postfix_dict)
 
         torch.save(self.model.state_dict(), self.checkpoint_path)
-        print("Autoregressive training complete.")
+        print("\nAutoregressive training complete.")

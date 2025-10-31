@@ -17,32 +17,34 @@ class TestSmokeModel:
     def basic_config(self):
         """Basic configuration for smoke simulation."""
         return {
-            'domain': Box(x=80.0, y=80.0),
-            'resolution': spatial(x=64, y=64),
+            'domain': {'size_x': 80.0, 'size_y': 80.0},
+            'resolution': {'x': 64, 'y': 64},
             'dt': 1.0,
-            'batch_size': 1,
-            'nu': 0.0,
-            'buoyancy': 1.0,
-            'inflow_center': (40.0, 20.0),
-            'inflow_radius': 5.0,
-            'inflow_rate': 0.2
+            'pde_params': {
+                'batch_size': 1,
+                'nu': 0.0,
+                'buoyancy': 1.0,
+                'inflow_center': (40.0, 20.0),
+                'inflow_radius': 5.0,
+                'inflow_rate': 0.2
+            }
         }
     
     @pytest.fixture
     def model(self, basic_config):
         """Create a SmokeModel instance."""
-        return SmokeModel(**basic_config)
+        return SmokeModel(basic_config)
     
     def test_initialization(self, basic_config):
         """Test that SmokeModel initializes correctly."""
-        model = SmokeModel(**basic_config)
+        model = SmokeModel(basic_config)
         
-        assert model.domain == basic_config['domain']
-        assert model.resolution == basic_config['resolution']
+        assert model.domain == Box(x=80.0, y=80.0)
+        assert model.resolution == spatial(x=64, y=64)
         assert model.dt == basic_config['dt']
-        assert model.batch_size == basic_config['batch_size']
-        assert model.nu == basic_config['nu']
-        assert model.buoyancy == basic_config['buoyancy']
+        assert model.batch_size == 1
+        assert model.nu == 0.0
+        assert model.buoyancy == 1.0
     
     def test_nu_property(self, model):
         """Test that nu property getter and setter work."""
@@ -61,9 +63,10 @@ class TestSmokeModel:
     def test_initialization_with_random_inflow(self, basic_config):
         """Test that model initializes with random inflow when not specified."""
         config = basic_config.copy()
-        config.pop('inflow_center')  # Remove inflow_center to trigger random generation
+        config['pde_params'] = config['pde_params'].copy()
+        config['pde_params'].pop('inflow_center')  # Remove inflow_center to trigger random generation
         
-        model = SmokeModel(**config)
+        model = SmokeModel(config)
         
         # Check that inflow_center was set
         assert hasattr(model, 'inflow_center')
@@ -189,8 +192,9 @@ class TestSmokeModel:
         
         for nu in viscosities:
             config = basic_config.copy()
-            config['nu'] = nu
-            model = SmokeModel(**config)
+            config['pde_params'] = config['pde_params'].copy()
+            config['pde_params']['nu'] = nu
+            model = SmokeModel(config)
             
             assert model.nu == nu
             
@@ -205,8 +209,9 @@ class TestSmokeModel:
         
         for buoy in buoyancies:
             config = basic_config.copy()
-            config['buoyancy'] = buoy
-            model = SmokeModel(**config)
+            config['pde_params'] = config['pde_params'].copy()
+            config['pde_params']['buoyancy'] = buoy
+            model = SmokeModel(config)
             
             assert model.buoyancy == buoy
             
@@ -219,36 +224,37 @@ class TestSmokeModel:
     def test_different_resolutions(self, basic_config):
         """Test model with different spatial resolutions."""
         resolutions = [
-            spatial(x=32, y=32),
-            spatial(x=64, y=64),
-            spatial(x=128, y=128)
+            {'x': 32, 'y': 32},
+            {'x': 64, 'y': 64},
+            {'x': 128, 'y': 128}
         ]
         
         for res in resolutions:
             config = basic_config.copy()
             config['resolution'] = res
-            model = SmokeModel(**config)
+            model = SmokeModel(config)
             
             state = model.get_initial_state()
-            assert state['velocity'].shape.get_size('x') == res.get_size('x')
-            assert state['velocity'].shape.get_size('y') == res.get_size('y')
-            assert state['density'].shape.get_size('x') == res.get_size('x')
-            assert state['density'].shape.get_size('y') == res.get_size('y')
+            assert state['velocity'].shape.get_size('x') == res['x']
+            assert state['velocity'].shape.get_size('y') == res['y']
+            assert state['density'].shape.get_size('x') == res['x']
+            assert state['density'].shape.get_size('y') == res['y']
     
     def test_different_domains(self, basic_config):
         """Test model with different domain sizes."""
         domains = [
-            Box(x=40.0, y=40.0),
-            Box(x=80.0, y=80.0),
-            Box(x=160.0, y=160.0)
+            {'size_x': 40.0, 'size_y': 40.0},
+            {'size_x': 80.0, 'size_y': 80.0},
+            {'size_x': 160.0, 'size_y': 160.0}
         ]
         
         for domain in domains:
             config = basic_config.copy()
             config['domain'] = domain
+            config['pde_params'] = config['pde_params'].copy()
             # Adjust inflow center to be within new domain
-            config['inflow_center'] = (domain.size[0] / 2, domain.size[1] / 4)
-            model = SmokeModel(**config)
+            config['pde_params']['inflow_center'] = (domain['size_x'] / 2, domain['size_y'] / 4)
+            model = SmokeModel(config)
             
             state = model.get_initial_state()
             assert 'velocity' in state
@@ -261,7 +267,7 @@ class TestSmokeModel:
         for dt in dt_values:
             config = basic_config.copy()
             config['dt'] = dt
-            model = SmokeModel(**config)
+            model = SmokeModel(config)
             
             state = model.get_initial_state()
             next_state = model.step(state)
@@ -270,8 +276,9 @@ class TestSmokeModel:
     def test_batch_consistency(self, basic_config):
         """Test that batched simulations maintain correct dimensions."""
         config = basic_config.copy()
-        config['batch_size'] = 4
-        model = SmokeModel(**config)
+        config['pde_params'] = config['pde_params'].copy()
+        config['pde_params']['batch_size'] = 4
+        model = SmokeModel(config)
         
         state = model.get_initial_state()
         
@@ -332,8 +339,9 @@ class TestSmokeModel:
     def test_buoyancy_effect(self, basic_config):
         """Test that buoyancy causes upward motion."""
         config = basic_config.copy()
-        config['buoyancy'] = 5.0  # Strong buoyancy
-        model = SmokeModel(**config)
+        config['pde_params'] = config['pde_params'].copy()
+        config['pde_params']['buoyancy'] = 5.0  # Strong buoyancy
+        model = SmokeModel(config)
         
         state = model.get_initial_state()
         
@@ -387,9 +395,10 @@ class TestSmokeModel:
         for radius in radii:
             for rate in rates:
                 config = basic_config.copy()
-                config['inflow_radius'] = radius
-                config['inflow_rate'] = rate
-                model = SmokeModel(**config)
+                config['pde_params'] = config['pde_params'].copy()
+                config['pde_params']['inflow_radius'] = radius
+                config['pde_params']['inflow_rate'] = rate
+                model = SmokeModel(config)
                 
                 state = model.get_initial_state()
                 # Use PhiFlow's math operations

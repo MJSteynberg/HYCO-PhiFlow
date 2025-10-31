@@ -5,7 +5,7 @@ from phi.torch.flow import *
 from phi.math import jit_compile, batch
 from .base import PhysicalModel  # <-- Import our new base class
 import random
-from typing import Dict
+from typing import Dict, Any
 
 
 # --- JIT-Compiled Physics Function ---
@@ -53,70 +53,48 @@ class SmokeModel(PhysicalModel):
     Implements the PhysicalModel interface.
     """
     
-    def __init__(self,
-                 domain: Box,
-                 resolution: Shape,
-                 dt: float,
-                 nu: float = 0.0,
-                 buoyancy: float = 1.0,
-                 inflow_center = None,
-                 inflow_radius: float = 10.0,
-                 inflow_rate: float = 0.1,
-                 inflow_rand_x_range: list = [0.2, 0.8],
-                 inflow_rand_y_range: list = [0.15, 0.25],
-                 batch_size: int = 1,
-                 **pde_params): # To catch any other unused params
+    # Declare PDE-specific parameters
+    PDE_PARAMETERS = {
+        'nu': {
+            'type': float,
+            'default': 0.0,
+        },
+        'buoyancy': {
+            'type': float,
+            'default': 1.0,
+        },
+        'inflow_radius': {
+            'type': float,
+            'default': 10.0,
+        },
+        'inflow_rate': {
+            'type': float,
+            'default': 0.1,
+        }
+    }
+    
+    def __init__(self, config: Dict[str, Any]):
         """
         Initializes the smoke model.
         
-        Args:
-            domain (Box): The simulation domain.
-            resolution (Shape): The grid resolution.
-            dt (float): Time step size.
-            nu (float): Viscosity.
-            buoyancy (float): Buoyancy factor.
-            inflow_center (tuple): (x, y) center of the inflow.
-            inflow_radius (float): Radius of the inflow.
+        Handles special inflow center logic after base initialization.
         """
-        # Call the parent's init with params it knows about
-        self._nu = nu  # Store viscosity as a private attribute
-        self._buoyancy = buoyancy  # Store buoyancy as a private attribute
-        super().__init__(
-            domain=domain,
-            resolution=resolution,
-            dt=dt,
-            batch_size=batch_size,
-            nu=nu,
-            buoyancy=buoyancy
-        )
+        # Call parent init to handle standard parameters
+        super().__init__(config)
+        
+        # Handle inflow center (special logic not in PDE_PARAMETERS)
+        pde_params = config.get('pde_params', {})
+        inflow_center = pde_params.get('inflow_center', None)
+        inflow_rand_x_range = pde_params.get('inflow_rand_x_range', [0.2, 0.8])
+        inflow_rand_y_range = pde_params.get('inflow_rand_y_range', [0.15, 0.25])
         
         if inflow_center is None:
             rand_x = self.domain.size[0] * (inflow_rand_x_range[0] + inflow_rand_x_range[1] * random.random())
             rand_y = self.domain.size[1] * (inflow_rand_y_range[0] + inflow_rand_y_range[1] * random.random())
             inflow_center = (rand_x, rand_y)
-            # This print statement will now come from the model itself
             print(f"Generated new inflow position: ({rand_x:.1f}, {rand_y:.1f})")
 
-
         self.inflow_center = math.tensor(inflow_center, channel(vector='x,y'))
-        self.inflow_radius = inflow_radius
-        self.inflow_rate = inflow_rate
-        
-
-        
-        
-    @property
-    def nu(self) -> float:
-        return self._nu
-    @nu.setter
-    def nu(self, value: float):
-        self._nu = value
-    @property
-    def buoyancy(self) -> float:
-        return self._buoyancy
-    @buoyancy.setter
-    def buoyancy(self, value: float):
-        self._buoyancy = value
 
     def get_initial_state(self) -> Dict[str, Field]:
         """

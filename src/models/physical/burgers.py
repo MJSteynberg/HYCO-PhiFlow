@@ -37,43 +37,13 @@ class BurgersModel(PhysicalModel):
     Implements the PhysicalModel interface.
     """
     
-    def __init__(self,
-                 domain: Box,
-                 resolution: Shape,
-                 dt: float,
-                 nu: Tensor,
-                 batch_size: int = 10,
-                 **pde_params): # To catch any other unused params
-        """
-        Initializes the Burgers' model.
-        
-        Args:
-            domain (Box): The simulation domain.
-            resolution (Shape): The grid resolution.
-            dt (float): Time step size.
-            batch_size (int): Number of simulations to run in parallel.
-            nu (float): Viscosity.
-        """
-        # Call the parent's init with params it knows about
-        self._nu = nu  # Store viscosity as a private attribute
-        super().__init__(
-            domain=domain,
-            resolution=resolution,
-            dt=dt,
-            batch_size=batch_size,
-            nu=nu
-        )
-        
-        # No inflow or buoyancy parameters needed
-        print(f"BurgersModel created with nu={self.nu}")
-
-    @property
-    def nu(self) -> Tensor:
-        return self._nu
-    
-    @nu.setter
-    def nu(self, value: Tensor):
-        self._nu = value
+    # Declare PDE-specific parameters
+    PDE_PARAMETERS = {
+        'nu': {
+            'type': float,
+            'default': 0.01,
+        }
+    }
 
     def get_initial_state(self) -> Dict[str, Field]:
         """

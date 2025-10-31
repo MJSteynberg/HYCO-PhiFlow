@@ -2,7 +2,7 @@
 run_params:
   experiment_name: "burgers_unet_128_v1"
   notes: "Training a synthetic UNet model on Burgers 128x128 data."
-  mode: ['train']          # Replaces the top-level 'task' field
+  mode: ['evaluate']          # Replaces the top-level 'task' field
   model_type: 'synthetic'  # Tells run.py to use SyntheticTrainer
   
 # --- Data Configuration (for all tasks) ---
@@ -43,15 +43,25 @@ model:
 # --- Task-Specific Parameters ---
 # Parameters for the 'generate' task
 generation_params:
-  num_simulations: 5
+  num_simulations: 10
   total_steps: 50
   save_interval: 1
 
 # Parameters for the 'train' task
 trainer_params:
   learning_rate: 1.0e-4
-  batch_size: 16
-  epochs: 500
-  num_predict_steps: 4
-  train_sim: [0] # Simulations to use for training
-  test_sim: [0] # Simulations to use for testing
+  batch_size: 32
+  epochs: 100
+  num_predict_steps: 3
+  train_sim: [0,1,2,3,4,5,6,7,8] # Simulations to use for training
+  use_sliding_window: true # If true, creates multiple samples per simulation using sliding windows
+
+# Parameters for the 'evaluate' task
+evaluation_params:
+  test_sim: [0, 9]           # Simulations to evaluate
+  num_frames: 51                # Number of timesteps to rollout
+  metrics: ['mse']  # Metrics to compute
+  keyframe_count: 5             # Number of keyframes in comparison plot
+  animation_fps: 10             # Frame rate for GIF animations
+  save_animations: true         # Generate comparison animations
+  save_plots: true              # Generate error plots and keyframe comparisons

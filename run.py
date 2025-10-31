@@ -12,10 +12,9 @@ sys.path.append(PROJECT_ROOT)
 
 # --- Import Task Runners ---
 from src.data.generator import run_generation
-from src.data.generator import run_generation
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
-# from src.evaluation.evaluator import run_evaluation # (Assuming this is refactored)
+from src.evaluation import Evaluator
 
 def main():
     parser = argparse.ArgumentParser(description="Unified runner for the PDE modeling project.")
@@ -75,7 +74,40 @@ def main():
                 )
 
         elif task == 'evaluate':
-            raise NotImplementedError("Evaluation task not yet refactored.")
+            model_type = run_config.get('model_type', 'synthetic')
+            print(f"Model type specified: '{model_type}'")
+            
+            if model_type == 'synthetic':
+                print("Running evaluation for synthetic model...")
+                
+                # Check if evaluation_params exist in config
+                if 'evaluation_params' not in config:
+                    print("Warning: No 'evaluation_params' found in config. Using defaults.")
+                    config['evaluation_params'] = {
+                        'test_sim': [0],
+                        'num_frames': 51,
+                        'metrics': ['mse', 'mae', 'rmse'],
+                        'keyframe_count': 5,
+                        'animation_fps': 10,
+                        'save_animations': True,
+                        'save_plots': True
+                    }
+                
+                # Create evaluator and run evaluation
+                evaluator = Evaluator(config)
+                results = evaluator.evaluate()
+                
+                print(f"Evaluation complete! Results saved.")
+                
+            elif model_type == 'physical':
+                print("Physical model evaluation not yet implemented.")
+                print("Physical models are evaluated during training (inverse problem setup).")
+                
+            else:
+                raise ValueError(
+                    f"Unknown model_type '{model_type}' in config. "
+                    f"Must be 'synthetic' or 'physical'."
+                )
             
             
         else:

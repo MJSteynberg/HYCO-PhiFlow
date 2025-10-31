@@ -84,32 +84,29 @@ class PhysicalTrainer:
         learnable parameters to their initial guesses.
         """
         model_name = self.model_config['name']
-        domain_cfg = self.model_config['domain']
-        res_cfg = self.model_config['resolution']
         
-        domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
-        resolution = spatial(x=res_cfg['x'], y=res_cfg['y'])
+        # Start with a copy of the model config
+        model_config_copy = self.model_config.copy()
         
         # Start with a copy of PDE params from config
-        pde_params = self.model_config.get('pde_params', {}).copy()
+        pde_params = model_config_copy.get('pde_params', {}).copy()
         
         # --- IMPORTANT ---
         # Overwrite/set the *initial guess* for the learnable parameters
         # on the model instance. The optimizer will update these.
         for param in self.learnable_params_config:
             pde_params[param['name']] = param['initial_guess']
+        
+        # Update the pde_params in the config copy
+        model_config_copy['pde_params'] = pde_params
 
         try:
             ModelClass = getattr(physical_models, model_name)
         except AttributeError:
             raise ImportError(f"Model '{model_name}' not found in src/models/physical/__init__.py")
-        print(self.model_config['dt'])
-        model = ModelClass(
-            domain=domain,
-            resolution=resolution,
-            dt=self.model_config['dt'],
-            **pde_params
-        )
+        
+        # Pass the config dict directly - the base class handles parsing
+        model = ModelClass(model_config_copy)
         return model
     
     def _get_initial_guesses(self) -> List[Tensor]:
@@ -269,6 +266,8 @@ class PhysicalTrainer:
 
         # 3. --- Run Optimization ---
         print("\nStarting optimization with math.minimize (L-BFGS-B)...")
+        
+        # Disable validation during optimization to allow exploration of negative values
         
         # Initial loss
         initial_loss = loss_function(*self.initial_guesses)

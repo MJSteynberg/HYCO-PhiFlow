@@ -17,34 +17,36 @@ class TestHeatModel:
     def basic_config(self):
         """Basic configuration for heat equation."""
         return {
-            'domain': Box(x=100.0, y=100.0),
-            'resolution': spatial(x=64, y=64),
+            'domain': {'size_x': 100.0, 'size_y': 100.0},
+            'resolution': {'x': 64, 'y': 64},
             'dt': 0.1,
-            'diffusivity': torch.tensor(1.0),
-            'batch_size': 1
+            'pde_params': {
+                'diffusivity': 1.0,
+                'batch_size': 1
+            }
         }
     
     @pytest.fixture
     def model(self, basic_config):
         """Create a HeatModel instance."""
-        return HeatModel(**basic_config)
+        return HeatModel(basic_config)
     
     def test_initialization(self, basic_config):
         """Test that HeatModel initializes correctly."""
-        model = HeatModel(**basic_config)
+        model = HeatModel(basic_config)
         
-        assert model.domain == basic_config['domain']
-        assert model.resolution == basic_config['resolution']
+        assert model.domain == Box(x=100.0, y=100.0)
+        assert model.resolution == spatial(x=64, y=64)
         assert model.dt == basic_config['dt']
-        assert model.batch_size == basic_config['batch_size']
-        assert torch.equal(model.diffusivity, basic_config['diffusivity'])
+        assert model.batch_size == 1
+        assert model.diffusivity == 1.0
     
     def test_diffusivity_property(self, model):
         """Test that diffusivity property getter and setter work."""
-        new_diffusivity = torch.tensor(2.0)
+        new_diffusivity = 2.0
         model.diffusivity = new_diffusivity
         
-        assert torch.equal(model.diffusivity, new_diffusivity)
+        assert model.diffusivity == new_diffusivity
     
     def test_get_initial_state_structure(self, model):
         """Test that initial state has correct structure."""
@@ -81,7 +83,14 @@ class TestHeatModel:
         batch_sizes = [1, 2, 4, 8]
         
         for bs in batch_sizes:
-            state = model.get_initial_state(batch_size=bs)
+            config = {
+                'domain': {'size_x': 100.0, 'size_y': 100.0},
+                'resolution': {'x': 64, 'y': 64},
+                'dt': 0.1,
+                'pde_params': {'diffusivity': 1.0, 'batch_size': bs}
+            }
+            test_model = HeatModel(config)
+            state = test_model.get_initial_state()
             temp = state['temp']
             
             assert temp.shape.get_size('batch') == bs
@@ -147,10 +156,11 @@ class TestHeatModel:
         
         for diff in diffusivities:
             config = basic_config.copy()
-            config['diffusivity'] = torch.tensor(diff)
-            model = HeatModel(**config)
+            config['pde_params'] = config['pde_params'].copy()
+            config['pde_params']['diffusivity'] = diff
+            model = HeatModel(config)
             
-            assert torch.equal(model.diffusivity, torch.tensor(diff))
+            assert model.diffusivity == diff
             
             # Test that model can step
             state = model.get_initial_state()
@@ -160,32 +170,32 @@ class TestHeatModel:
     def test_different_resolutions(self, basic_config):
         """Test model with different spatial resolutions."""
         resolutions = [
-            spatial(x=32, y=32),
-            spatial(x=64, y=64),
-            spatial(x=128, y=128)
+            {'x': 32, 'y': 32},
+            {'x': 64, 'y': 64},
+            {'x': 128, 'y': 128}
         ]
         
         for res in resolutions:
             config = basic_config.copy()
             config['resolution'] = res
-            model = HeatModel(**config)
+            model = HeatModel(config)
             
             state = model.get_initial_state()
-            assert state['temp'].shape.get_size('x') == res.get_size('x')
-            assert state['temp'].shape.get_size('y') == res.get_size('y')
+            assert state['temp'].shape.get_size('x') == res['x']
+            assert state['temp'].shape.get_size('y') == res['y']
     
     def test_different_domains(self, basic_config):
         """Test model with different domain sizes."""
         domains = [
-            Box(x=50.0, y=50.0),
-            Box(x=100.0, y=100.0),
-            Box(x=200.0, y=200.0)
+            {'size_x': 50.0, 'size_y': 50.0},
+            {'size_x': 100.0, 'size_y': 100.0},
+            {'size_x': 200.0, 'size_y': 200.0}
         ]
         
         for domain in domains:
             config = basic_config.copy()
             config['domain'] = domain
-            model = HeatModel(**config)
+            model = HeatModel(config)
             
             state = model.get_initial_state()
             assert 'temp' in state
@@ -197,7 +207,7 @@ class TestHeatModel:
         for dt in dt_values:
             config = basic_config.copy()
             config['dt'] = dt
-            model = HeatModel(**config)
+            model = HeatModel(config)
             
             state = model.get_initial_state()
             next_state = model.step(state)
@@ -206,10 +216,11 @@ class TestHeatModel:
     def test_batch_consistency(self, basic_config):
         """Test that batched simulations maintain correct dimensions."""
         config = basic_config.copy()
-        config['batch_size'] = 4
-        model = HeatModel(**config)
+        config['pde_params'] = config['pde_params'].copy()
+        config['pde_params']['batch_size'] = 4
+        model = HeatModel(config)
         
-        state = model.get_initial_state(batch_size=4)
+        state = model.get_initial_state()
         
         # Run a few steps
         for _ in range(3):
@@ -297,9 +308,9 @@ class TestHeatModel:
         """Test that symmetric initial conditions remain symmetric."""
         # Create a model with square domain
         config = basic_config.copy()
-        config['domain'] = Box(x=100.0, y=100.0)
-        config['resolution'] = spatial(x=64, y=64)
-        model = HeatModel(**config)
+        config['domain'] = {'size_x': 100.0, 'size_y': 100.0}
+        config['resolution'] = {'x': 64, 'y': 64}
+        model = HeatModel(config)
         
         state = model.get_initial_state()
         

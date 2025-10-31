@@ -38,51 +38,21 @@ class HeatModel(PhysicalModel):
     Physical model for the heat equation (diffusion).
     Stores diffusivity as an internal parameter.
     """
-    def __init__(self,
-                 domain: Box,
-                 resolution: Shape,
-                 dt: float,
-                 diffusivity: Tensor,
-                 batch_size: int = 1,
-                 **pde_params):  # <-- Added batch_size
-        """
-        Initializes the Heat model.
-
-        Args:
-            domain (Box): The simulation domain.
-            resolution (Shape): The grid resolution.
-            dt (float): Time step size.
-            diffusivity (Tensor): The diffusion coefficient.
-            batch_size (int): The batch size (from base class).
-        """
-        # Set private attributes
-        self._diffusivity = diffusivity
-        # Call the parent's init
-        super().__init__(
-            domain=domain,
-            resolution=resolution,
-            dt=dt,
-            batch_size=batch_size, # <-- Pass to base
-            diffusivity=diffusivity  # <-- Stored on self via **pde_params
-        )
-
-    @property
-    def diffusivity(self) -> Tensor:
-        return self._diffusivity
     
-    @diffusivity.setter
-    def diffusivity(self, value: Tensor):
-        self._diffusivity = value
+    # Declare PDE-specific parameters
+    PDE_PARAMETERS = {
+        'diffusivity': {
+            'type': float,
+            'default': 0.1,
+        }
+    }
 
-    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
+    def get_initial_state(self) -> Dict[str, Field]:
         """
         Returns a batched initial state with a "hot spot" in the middle.
-        
-        Args:
-            batch_size (int): Number of parallel states to create.
         """
         # Create a batch shape
-        b = batch(batch=batch_size)
+        b = batch(batch=self.batch_size)
 
         def initial(x):
             return (math.sum(math.cos(2*np.pi*x/100), 'vector'))

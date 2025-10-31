@@ -18,26 +18,14 @@ def get_physical_model(config: dict) -> physical_models.PhysicalModel:
     """
     phys_model_cfg = config['model']['physical']
     model_name = phys_model_cfg['name']
-    
-    domain_cfg = phys_model_cfg['domain']
-    res_cfg = phys_model_cfg['resolution']
-    
-    domain = Box(x=domain_cfg['size_x'], y=domain_cfg['size_y'])
-    resolution = spatial(x=res_cfg['x'], y=res_cfg['y'])
-    
-    pde_params = phys_model_cfg.get('pde_params', {}).copy()
 
     try:
         ModelClass = getattr(physical_models, model_name)
     except AttributeError:
         raise ImportError(f"Model '{model_name}' not found in src/models/physical/__init__.py")
 
-    model = ModelClass(
-        domain=domain,
-        resolution=resolution,
-        dt=phys_model_cfg['dt'],
-        **pde_params
-    )
+    # Pass the physical model config directly - the base class handles parsing
+    model = ModelClass(phys_model_cfg)
     return model
 
 

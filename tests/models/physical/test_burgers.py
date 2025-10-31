@@ -17,34 +17,36 @@ class TestBurgersModel:
     def basic_config(self):
         """Basic configuration for Burgers' equation."""
         return {
-            'domain': Box(x=1.0, y=1.0),
-            'resolution': spatial(x=64, y=64),
+            'domain': {'size_x': 1.0, 'size_y': 1.0},
+            'resolution': {'x': 64, 'y': 64},
             'dt': 0.01,
-            'batch_size': 1,
-            'nu': torch.tensor(0.01)
+            'pde_params': {
+                'batch_size': 1,
+                'nu': 0.01
+            }
         }
     
     @pytest.fixture
     def model(self, basic_config):
         """Create a BurgersModel instance."""
-        return BurgersModel(**basic_config)
+        return BurgersModel(basic_config)
     
     def test_initialization(self, basic_config):
         """Test that BurgersModel initializes correctly."""
-        model = BurgersModel(**basic_config)
+        model = BurgersModel(basic_config)
         
-        assert model.domain == basic_config['domain']
-        assert model.resolution == basic_config['resolution']
+        assert model.domain == Box(x=1.0, y=1.0)
+        assert model.resolution == spatial(x=64, y=64)
         assert model.dt == basic_config['dt']
-        assert model.batch_size == basic_config['batch_size']
-        assert torch.equal(model.nu, basic_config['nu'])
+        assert model.batch_size == 1
+        assert model.nu == 0.01
     
     def test_nu_property(self, model):
         """Test that nu property getter and setter work."""
-        new_nu = torch.tensor(0.05)
+        new_nu = 0.05
         model.nu = new_nu
         
-        assert torch.equal(model.nu, new_nu)
+        assert model.nu == new_nu
     
     def test_get_initial_state_structure(self, model):
         """Test that initial state has correct structure."""
@@ -144,10 +146,11 @@ class TestBurgersModel:
         
         for nu in viscosities:
             config = basic_config.copy()
-            config['nu'] = torch.tensor(nu)
-            model = BurgersModel(**config)
+            config['pde_params'] = config['pde_params'].copy()
+            config['pde_params']['nu'] = nu
+            model = BurgersModel(config)
             
-            assert torch.equal(model.nu, torch.tensor(nu))
+            assert model.nu == nu
             
             # Test that model can step
             state = model.get_initial_state()
@@ -157,32 +160,32 @@ class TestBurgersModel:
     def test_different_resolutions(self, basic_config):
         """Test model with different spatial resolutions."""
         resolutions = [
-            spatial(x=32, y=32),
-            spatial(x=64, y=64),
-            spatial(x=128, y=128)
+            {'x': 32, 'y': 32},
+            {'x': 64, 'y': 64},
+            {'x': 128, 'y': 128}
         ]
         
         for res in resolutions:
             config = basic_config.copy()
             config['resolution'] = res
-            model = BurgersModel(**config)
+            model = BurgersModel(config)
             
             state = model.get_initial_state()
-            assert state['velocity'].shape.get_size('x') == res.get_size('x')
-            assert state['velocity'].shape.get_size('y') == res.get_size('y')
+            assert state['velocity'].shape.get_size('x') == res['x']
+            assert state['velocity'].shape.get_size('y') == res['y']
     
     def test_different_domains(self, basic_config):
         """Test model with different domain sizes."""
         domains = [
-            Box(x=1.0, y=1.0),
-            Box(x=2.0, y=2.0),
-            Box(x=1.0, y=2.0)
+            {'size_x': 1.0, 'size_y': 1.0},
+            {'size_x': 2.0, 'size_y': 2.0},
+            {'size_x': 1.0, 'size_y': 2.0}
         ]
         
         for domain in domains:
             config = basic_config.copy()
             config['domain'] = domain
-            model = BurgersModel(**config)
+            model = BurgersModel(config)
             
             state = model.get_initial_state()
             assert 'velocity' in state
@@ -194,7 +197,7 @@ class TestBurgersModel:
         for dt in dt_values:
             config = basic_config.copy()
             config['dt'] = dt
-            model = BurgersModel(**config)
+            model = BurgersModel(config)
             
             state = model.get_initial_state()
             next_state = model.step(state)
@@ -203,8 +206,9 @@ class TestBurgersModel:
     def test_batch_consistency(self, basic_config):
         """Test that batched simulations maintain independence."""
         config = basic_config.copy()
-        config['batch_size'] = 4
-        model = BurgersModel(**config)
+        config['pde_params'] = config['pde_params'].copy()
+        config['pde_params']['batch_size'] = 4
+        model = BurgersModel(config)
         
         state = model.get_initial_state()
         
