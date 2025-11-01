@@ -13,21 +13,21 @@ from tqdm import tqdm
 # Import our data pipeline
 from src.data import DataManager, HybridDataset
 
-# Import base trainer
-from src.training.base_trainer import BaseTrainer
+# Import tensor trainer (new hierarchy)
+from src.training.tensor_trainer import TensorTrainer
 
 # Import the model registry
 from src.models import ModelRegistry
 
 
-class SyntheticTrainer(BaseTrainer):
+class SyntheticTrainer(TensorTrainer):
     """
     Tensor-based trainer for synthetic models using DataManager pipeline.
     
     Uses HybridDataset for efficient cached data loading with no runtime
     Field conversions. All conversions happen once during caching.
     
-    Inherits from BaseTrainer to get shared functionality.
+    Inherits from TensorTrainer to get PyTorch-specific functionality.
     """
     
     def __init__(self, config: Dict[str, Any]):

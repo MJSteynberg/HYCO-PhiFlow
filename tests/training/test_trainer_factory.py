@@ -12,7 +12,7 @@ from omegaconf import DictConfig
 from src.factories.trainer_factory import TrainerFactory
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
-from src.training.base_trainer import BaseTrainer
+from src.training.abstract_trainer import AbstractTrainer
 
 
 class TestTrainerFactoryRegistration:
@@ -36,13 +36,7 @@ class TestTrainerFactoryRegistration:
     def test_register_trainer_manually(self):
         """Test manually registering a trainer."""
         # Create a dummy trainer class
-        class CustomTrainer(BaseTrainer):
-            def _create_model(self):
-                pass
-            def _create_data_loader(self):
-                pass
-            def _train_epoch(self):
-                pass
+        class CustomTrainer(AbstractTrainer):
             def train(self):
                 pass
         
@@ -99,7 +93,7 @@ class TestTrainerFactoryCreateSynthetic:
         trainer = TrainerFactory.create_trainer(synthetic_config)
         
         assert isinstance(trainer, SyntheticTrainer)
-        assert isinstance(trainer, BaseTrainer)
+        assert isinstance(trainer, AbstractTrainer)
     
     def test_synthetic_trainer_has_config(self, synthetic_config):
         """Test that created trainer has the config."""
@@ -158,7 +152,7 @@ class TestTrainerFactoryCreatePhysical:
         trainer = TrainerFactory.create_trainer(physical_config)
         
         assert isinstance(trainer, PhysicalTrainer)
-        assert isinstance(trainer, BaseTrainer)
+        assert isinstance(trainer, AbstractTrainer)
     
     def test_physical_trainer_has_config(self, physical_config):
         """Test that created trainer has the config."""

@@ -12,10 +12,10 @@ from phi.math import math, Tensor
 # --- Repo Imports ---
 from src.models import ModelRegistry
 from src.data import DataManager, HybridDataset
-from src.training.base_trainer import BaseTrainer
+from src.training.field_trainer import FieldTrainer
 
 
-class PhysicalTrainer(BaseTrainer):
+class PhysicalTrainer(FieldTrainer):
     """
     Solves an inverse problem for a PhysicalModel using cached data
     from DataManager/HybridDataset.
@@ -23,7 +23,7 @@ class PhysicalTrainer(BaseTrainer):
     This trainer uses math.minimize for optimization and leverages
     the efficient DataLoader pipeline with field conversion.
     
-    Inherits from BaseTrainer to get shared functionality.
+    Inherits from FieldTrainer to get PhiFlow-specific functionality.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -206,24 +206,22 @@ class PhysicalTrainer(BaseTrainer):
 
     def _create_model(self):
         """
-        Physical trainer uses model from config directly.
-        Override not needed as model is created in __init__.
+        Required by FieldTrainer.
+        Returns the physical model (already created in __init__).
         """
-        pass
+        return self.model
 
-    def _create_data_loader(self):
+    def _setup_optimization(self):
         """
-        Physical trainer doesn't use DataLoader.
-        It loads ground truth data directly in train().
+        Required by FieldTrainer.
+        Setup optimization configuration for math.minimize.
         """
-        pass
-
-    def _train_epoch(self, epoch: int) -> float:
-        """
-        Physical trainer doesn't use epoch-based training.
-        It runs inverse optimization in train() method.
-        """
-        pass
+        return math.Solve(
+            method='L-BFGS-B',
+            abs_tol=1e-6,
+            x0=self.initial_guesses,
+            max_iterations=self.num_epochs,
+        )
 
     def train(self):
         """

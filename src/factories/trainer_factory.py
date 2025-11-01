@@ -1,7 +1,7 @@
 """Factory for creating trainers."""
 
 from typing import Dict, Any
-from src.training.base_trainer import BaseTrainer
+from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 
@@ -15,7 +15,7 @@ class TrainerFactory:
     }
     
     @staticmethod
-    def create_trainer(config: Dict[str, Any]) -> BaseTrainer:
+    def create_trainer(config: Dict[str, Any]) -> AbstractTrainer:
         """
         Create trainer from config.
         
@@ -23,7 +23,7 @@ class TrainerFactory:
             config: Configuration dictionary
             
         Returns:
-            Trainer instance
+            Trainer instance (AbstractTrainer subclass)
             
         Raises:
             ValueError: If model_type is unknown
