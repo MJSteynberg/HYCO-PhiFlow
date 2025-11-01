@@ -16,7 +16,7 @@ from phi.field import Field
 from phiml.math import spatial
 
 from .data_manager import DataManager
-from src.utils.field_conversion import tensors_to_fields
+from src.utils.field_conversion import FieldMetadata, FieldTensorConverter
 
 
 class HybridDataset(Dataset):
@@ -319,7 +319,15 @@ class HybridDataset(Dataset):
                 initial_tensors[name] = torch.from_numpy(tensor).cuda()
         
         initial_metadata = {name: field_metadata[name] for name in self.field_names}
-        initial_fields = tensors_to_fields(initial_tensors, initial_metadata, time_slice=0)
+        
+        # Use FieldTensorConverter for conversion
+        converter = FieldTensorConverter(initial_metadata)
+        initial_fields_dict = {name: FieldTensorConverter.tensor_to_field(
+            initial_tensors[name], 
+            initial_metadata[name], 
+            time_slice=0
+        ) for name in self.field_names}
+        initial_fields = initial_fields_dict
         
         # Convert rollout targets (start_frame+1 to start_frame+num_predict_steps) for dynamic fields
         target_fields = {}
@@ -339,11 +347,11 @@ class HybridDataset(Dataset):
             fields_list = []
             for t in range(len(field_tensors)):
                 tensor_t = field_tensors[t:t+1]
-                field_t = tensors_to_fields(
-                    {field_name: tensor_t}, 
-                    {field_name: field_meta}, 
+                field_t = FieldTensorConverter.tensor_to_field(
+                    tensor_t, 
+                    field_meta, 
                     time_slice=0
-                )[field_name]
+                )
                 fields_list.append(field_t)
             
             target_fields[field_name] = fields_list

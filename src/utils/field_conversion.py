@@ -5,10 +5,61 @@ This module provides utilities for converting between PyTorch tensors and PhiFlo
 These conversions are essential for integrating the tensor-based DataLoader pipeline
 with PhiFlow's Field-based physical models.
 
-Key conversions:
-- tensor_to_field: Convert PyTorch tensor to PhiFlow Field (CenteredGrid or StaggeredGrid)
-- field_to_tensor: Convert PhiFlow Field to PyTorch tensor (already exists in DataManager)
-- FieldMetadata: Dataclass to store Field reconstruction information
+Architecture:
+-----------
+The module is designed with two levels of abstraction:
+
+1. **FieldTensorConverter (Recommended for production use)**
+   - Stateful converter with pre-computed channel mappings
+   - Efficient for repeated conversions with the same field structure
+   - Handles channel concatenation for neural network inputs
+   - Provides validation and channel info methods
+   
+   Usage:
+       >>> # Create converter once, reuse many times
+       >>> metadata = {'velocity': vel_meta, 'density': dens_meta}
+       >>> converter = FieldTensorConverter(metadata)
+       >>> 
+       >>> # Convert multiple times efficiently
+       >>> tensor1 = converter.fields_to_tensors_batch(fields1)
+       >>> tensor2 = converter.fields_to_tensors_batch(fields2)
+
+2. **Standalone functions (Convenience wrappers)**
+   - Simple API for one-off conversions
+   - Useful for testing and prototyping
+   - Delegate to FieldTensorConverter internally
+   
+   Usage:
+       >>> # Single field conversion
+       >>> tensor = field_to_tensor(field)
+       >>> field = tensor_to_field(tensor, metadata)
+       >>> 
+       >>> # Multiple fields (no concatenation)
+       >>> tensors = fields_to_tensors(field_dict)
+       >>> fields = tensors_to_fields(tensor_dict, metadata_dict)
+
+Key Conversions:
+---------------
+- tensor_to_field: PyTorch tensor → PhiFlow Field
+- field_to_tensor: PhiFlow Field → PyTorch tensor  
+- tensors_to_fields: Dict of tensors → Dict of Fields
+- fields_to_tensors: Dict of Fields → Dict of tensors
+- FieldTensorConverter.fields_to_tensors_batch: Dict of Fields → Concatenated tensor [B, C, H, W]
+- FieldTensorConverter.tensors_to_fields_batch: Concatenated tensor → Dict of Fields
+
+When to use each:
+----------------
+- Use **FieldTensorConverter** when:
+  * Converting data for neural network input/output
+  * Need channel concatenation across multiple fields
+  * Performing repeated conversions with same structure
+  * Need validation or channel layout information
+
+- Use **standalone functions** when:
+  * Quick one-off conversions
+  * Testing or prototyping
+  * Converting single fields
+  * Don't need channel concatenation
 """
 
 from dataclasses import dataclass
@@ -121,7 +172,7 @@ class FieldMetadata:
         )
 
 
-def tensor_to_field(
+def _tensor_to_field(
     tensor: torch.Tensor,
     metadata: FieldMetadata,
     time_slice: Optional[int] = None
@@ -278,13 +329,13 @@ def tensor_to_field(
         return centered_grid
 
 
-def field_to_tensor(field: Field, ensure_cpu: bool = True) -> torch.Tensor:
+def _field_to_tensor(field: Field, ensure_cpu: bool = True) -> torch.Tensor:
     """
     Convert a PhiFlow Field to a PyTorch tensor.
     
     This extracts the underlying native tensor from a Field object.
     The tensor will have shape [channels, x, y] for a single field (DataManager format),
-    or may have additional batch/time dimensions.
+    or [batch, channels, x, y] if the field has batch dimensions.
     
     For StaggeredGrids, this function converts to centered grid first
     to ensure a uniform tensor representation.
@@ -294,12 +345,14 @@ def field_to_tensor(field: Field, ensure_cpu: bool = True) -> torch.Tensor:
         ensure_cpu: If True, moves tensor to CPU (useful for caching)
         
     Returns:
-        PyTorch tensor in DataManager format [channels, x, y]
+        PyTorch tensor in DataManager format:
+        - [channels, x, y] for single field
+        - [batch, channels, x, y] for batched field
         
     Note:
         This is compatible with the DataManager's tensor extraction approach,
         which converts staggered grids to centered grids before caching.
-        The returned tensor is permuted to match DataManager's [channels, x, y] format.
+        The returned tensor is permuted to match DataManager's format.
     """
     # Convert staggered grids to centered grids (like DataManager does)
     if field.is_staggered:
@@ -307,24 +360,33 @@ def field_to_tensor(field: Field, ensure_cpu: bool = True) -> torch.Tensor:
     
     tensor = field.values._native
     
-    # PhiFlow native tensors are in format [batch..., x, y, channels]
-    # We need to permute to DataManager format [batch..., channels, x, y]
-    # Determine number of spatial dims and channel dims
-    ndims = len(tensor.shape)
+    # Determine field properties
+    has_batch = field.shape.batch.rank > 0
+    is_vector = field.shape.channel.rank > 0
     spatial_rank = field.spatial_rank
     
-    if ndims == spatial_rank:  # [x, y] - scalar field, no change needed
+    # PhiFlow native layout depends on dimension types:
+    # - Scalar no batch: [x, y]
+    # - Scalar with batch: [batch, x, y]
+    # - Vector no batch: [x, y, vector]
+    # - Vector with batch: [batch, x, y, vector]
+    
+    # Target layout: [batch, channels, x, y] or [channels, x, y]
+    
+    if not has_batch and not is_vector:
+        # Scalar field, no batch: [x, y] -> no change needed
         pass
-    elif ndims == spatial_rank + 1:  # [x, y, channels] or [batch, x, y]
-        # Check if last dim is channels by checking if it's small
-        if field.shape.channel.volume > 0:
-            # It's [x, y, channels], permute to [channels, x, y]
-            perm = list(range(ndims))
-            perm = [ndims-1] + perm[:-1]  # Move last to first
-            tensor = tensor.permute(*perm)
-    elif ndims == spatial_rank + 2:  # [batch, x, y, channels]
-        # Permute to [batch, channels, x, y]
-        perm = [0, ndims-1] + list(range(1, ndims-1))
+    elif not has_batch and is_vector:
+        # Vector field, no batch: [x, y, vector] -> [vector, x, y]
+        tensor = tensor.permute(2, 0, 1)
+    elif has_batch and not is_vector:
+        # Scalar field with batch: [batch, x, y] -> [batch, 1, x, y]
+        # Need to add channel dimension
+        tensor = tensor.unsqueeze(1)
+    elif has_batch and is_vector:
+        # Vector field with batch: [batch, x, y, vector] -> [batch, vector, x, y]
+        # Permute: move vector (last) to position 1
+        perm = [0, len(tensor.shape)-1] + list(range(1, len(tensor.shape)-1))
         tensor = tensor.permute(*perm)
     
     if ensure_cpu and tensor.device.type != 'cpu':
@@ -341,8 +403,9 @@ def tensors_to_fields(
     """
     Convert a dictionary of tensors to a dictionary of Fields.
     
-    This is a convenience function for batch conversion, useful when
-    working with multi-field data from the DataLoader.
+    This is a convenience function that creates a temporary FieldTensorConverter
+    and delegates to it. For repeated conversions, create a FieldTensorConverter
+    instance directly for better performance.
     
     Args:
         tensor_dict: Dictionary mapping field names to tensors
@@ -354,6 +417,15 @@ def tensors_to_fields(
         
     Raises:
         ValueError: If keys don't match between dicts
+    
+    Example:
+        >>> # For single-use conversion (simple but less efficient)
+        >>> fields = tensors_to_fields(tensor_dict, metadata_dict)
+        >>> 
+        >>> # For repeated conversions (recommended)
+        >>> converter = FieldTensorConverter(metadata_dict)
+        >>> fields1 = converter.tensors_to_fields_batch(tensor1)
+        >>> fields2 = converter.tensors_to_fields_batch(tensor2)
     """
     if set(tensor_dict.keys()) != set(metadata_dict.keys()):
         raise ValueError(
@@ -364,7 +436,7 @@ def tensors_to_fields(
     field_dict = {}
     for field_name, tensor in tensor_dict.items():
         metadata = metadata_dict[field_name]
-        field_dict[field_name] = tensor_to_field(tensor, metadata, time_slice)
+        field_dict[field_name] = _tensor_to_field(tensor, metadata, time_slice)
     
     return field_dict
 
@@ -376,15 +448,27 @@ def fields_to_tensors(
     """
     Convert a dictionary of Fields to a dictionary of tensors.
     
+    This is a convenience function for simple conversions. For conversions
+    that require channel concatenation or repeated use, consider using
+    FieldTensorConverter directly.
+    
     Args:
         field_dict: Dictionary mapping field names to Fields
         ensure_cpu: If True, moves tensors to CPU
         
     Returns:
         Dictionary mapping field names to tensors
+    
+    Example:
+        >>> # For simple conversion (independent tensors)
+        >>> tensors = fields_to_tensors(field_dict)
+        >>> 
+        >>> # For concatenated tensors (e.g., UNet input)
+        >>> converter = FieldTensorConverter(metadata_dict)
+        >>> concatenated_tensor = converter.fields_to_tensors_batch(field_dict)
     """
     return {
-        name: field_to_tensor(field, ensure_cpu)
+        name: _field_to_tensor(field, ensure_cpu)
         for name, field in field_dict.items()
     }
 
@@ -435,3 +519,313 @@ def create_field_metadata_from_model(
         )
     
     return metadata_dict
+
+
+class FieldTensorConverter:
+    """
+    Bidirectional converter between PhiFlow Fields and PyTorch tensors.
+    
+    This is the bridge between physical (Field-based) and synthetic (tensor-based) models.
+    It handles batched conversion of multiple fields to/from concatenated tensors suitable
+    for neural network input/output.
+    
+    Key Features:
+    - Batch conversion: Multiple fields → Single concatenated tensor
+    - Preserves field order for reconstruction
+    - Handles both scalar and vector fields
+    - Supports time-series data with batch dimensions
+    
+    Static Methods (for single fields):
+        - field_to_tensor(): Convert a single Field to a tensor
+        - tensor_to_field(): Convert a tensor to a Field using metadata
+    
+    Instance Methods (for batches):
+        - fields_to_tensors_batch(): Concatenate multiple Fields into single tensor
+        - tensors_to_fields_batch(): Split concatenated tensor back to Fields
+    
+    Example Usage:
+        >>> # Single field conversion (static)
+        >>> tensor = FieldTensorConverter.field_to_tensor(field)
+        >>> field = FieldTensorConverter.tensor_to_field(tensor, metadata)
+        >>> 
+        >>> # Batch conversion (instance)
+        >>> converter = FieldTensorConverter(field_metadata_dict)
+        >>> 
+        >>> # Physical model output (Fields) → Synthetic model input (Tensor)
+        >>> fields = {'velocity': velocity_field, 'density': density_field}
+        >>> tensor = converter.fields_to_tensors_batch(fields)  # Shape: [B, C, H, W]
+        >>> 
+        >>> # Synthetic model output (Tensor) → Physical model input (Fields)
+        >>> pred_tensor = synthetic_model(tensor)  # Shape: [B, C, H, W]
+        >>> pred_fields = converter.tensors_to_fields_batch(pred_tensor)
+    """
+    
+    def __init__(self, field_metadata: Dict[str, FieldMetadata]):
+        """
+        Initialize converter with field metadata.
+        
+        Args:
+            field_metadata: Dictionary mapping field names to FieldMetadata objects.
+                           The order of fields in this dict determines the order of
+                           channels in concatenated tensors.
+        """
+        self.field_metadata = field_metadata
+        self.field_names = list(field_metadata.keys())
+        
+        # Pre-compute channel counts and offsets for efficient slicing
+        self.channel_counts = {}
+        self.channel_offsets = {}
+        offset = 0
+        
+        for name in self.field_names:
+            metadata = field_metadata[name]
+            # Determine number of channels for this field
+            if metadata.channel_dims:
+                # Vector field: number of channels = number of spatial dimensions
+                num_channels = len(metadata.spatial_dims)
+            else:
+                # Scalar field: 1 channel
+                num_channels = 1
+            
+            self.channel_counts[name] = num_channels
+            self.channel_offsets[name] = offset
+            offset += num_channels
+        
+        self.total_channels = offset
+    
+    @staticmethod
+    def field_to_tensor(field: CenteredGrid) -> torch.Tensor:
+        """
+        Convert a single PhiFlow Field to a PyTorch tensor (static method).
+        
+        Args:
+            field: PhiFlow CenteredGrid to convert
+            
+        Returns:
+            PyTorch tensor with shape [B,C,H,W] or [C,H,W]
+        """
+        return _field_to_tensor(field)
+    
+    @staticmethod
+    def tensor_to_field(tensor: torch.Tensor, metadata: FieldMetadata, time_slice: int = 0) -> CenteredGrid:
+        """
+        Convert a PyTorch tensor to a PhiFlow Field using metadata (static method).
+        
+        Args:
+            tensor: PyTorch tensor to convert
+            metadata: FieldMetadata containing reconstruction information
+            time_slice: Time index for batch tensors (default: 0)
+            
+        Returns:
+            Reconstructed PhiFlow CenteredGrid
+        """
+        return _tensor_to_field(tensor, metadata, time_slice)
+    
+    def fields_to_tensors_batch(
+        self,
+        fields: Dict[str, Field],
+        ensure_cpu: bool = False
+    ) -> torch.Tensor:
+        """
+        Convert dict of Fields to concatenated tensor for synthetic model.
+        
+        This method is used to convert physical model predictions (Fields) into
+        a format suitable for synthetic model training or input.
+        
+        Args:
+            fields: Dictionary mapping field names to Field objects.
+                   Each Field may have shape [B, x, y, channels] or [x, y, channels]
+            ensure_cpu: If True, ensures output tensor is on CPU
+            
+        Returns:
+            Tensor of shape [B, C, H, W] where:
+            - B: batch size (if present in fields)
+            - C: sum of channels across all fields
+            - H, W: spatial dimensions
+            
+        Raises:
+            ValueError: If field names don't match metadata or shapes are incompatible
+            
+        Example:
+            >>> fields = {
+            ...     'velocity': velocity_field,  # [B, x, y, 2] or [x, y, 2]
+            ...     'density': density_field     # [B, x, y] or [x, y]
+            ... }
+            >>> tensor = converter.fields_to_tensors_batch(fields)  # [B, 3, H, W]
+        """
+        if set(fields.keys()) != set(self.field_names):
+            raise ValueError(
+                f"Field names mismatch. Expected {self.field_names}, "
+                f"got {list(fields.keys())}"
+            )
+        
+        # Convert each field to tensor
+        tensors = []
+        for name in self.field_names:  # Maintain consistent order
+            field = fields[name]
+            tensor = _field_to_tensor(field, ensure_cpu=ensure_cpu)
+            
+            # Handle scalar fields (may need to add channel dimension)
+            # Tensor shape should be [B, C, H, W] or [C, H, W]
+            if tensor.dim() == 2:  # [H, W] - scalar without batch
+                tensor = tensor.unsqueeze(0)  # [1, H, W]
+            elif tensor.dim() == 3:  # Could be [B, H, W] or [C, H, W]
+                # If it's a scalar field (channel count = 1), it's [B, H, W]
+                if self.channel_counts[name] == 1 and tensor.shape[0] > 1:
+                    # It's likely [B, H, W], add channel dim
+                    tensor = tensor.unsqueeze(1)  # [B, 1, H, W]
+                elif tensor.shape[0] != self.channel_counts[name]:
+                    # It's [C, H, W], verify channel count matches
+                    if tensor.shape[0] == self.channel_counts[name]:
+                        pass  # Already correct
+                    else:
+                        # Must be [B, H, W] with wrong interpretation
+                        tensor = tensor.unsqueeze(1)  # [B, 1, H, W]
+            # If it's 4D [B, C, H, W], it's already in correct format
+            
+            tensors.append(tensor)
+        
+        # Concatenate along channel dimension
+        # All tensors should now be [B, C, H, W] or [C, H, W]
+        concatenated = torch.cat(tensors, dim=-3)  # Concatenate on channel dim
+        
+        return concatenated
+    
+    def tensors_to_fields_batch(
+        self,
+        tensor: torch.Tensor,
+        time_slice: Optional[int] = None
+    ) -> Dict[str, Field]:
+        """
+        Convert concatenated tensor back to dict of Fields.
+        
+        This method is used to convert synthetic model predictions (concatenated tensor)
+        back into individual Fields for physical model use or evaluation.
+        
+        Args:
+            tensor: Tensor of shape [B, C, H, W] or [C, H, W] from UNet output
+                   where C is the sum of all field channels
+            time_slice: Optional timestep to extract for temporal data
+            
+        Returns:
+            Dict mapping field names to Field objects
+            
+        Raises:
+            ValueError: If tensor channel dimension doesn't match expected total
+            
+        Example:
+            >>> pred_tensor = synthetic_model(input_tensor)  # [B, 3, 128, 128]
+            >>> pred_fields = converter.tensors_to_fields_batch(pred_tensor)
+            >>> # pred_fields = {'velocity': Field[B,x,y,2], 'density': Field[B,x,y]}
+        """
+        # Verify channel dimension
+        channel_dim = -3  # Channel dimension in [B, C, H, W]
+        if tensor.shape[channel_dim] != self.total_channels:
+            raise ValueError(
+                f"Expected {self.total_channels} channels in tensor, "
+                f"got {tensor.shape[channel_dim]}. Tensor shape: {tensor.shape}"
+            )
+        
+        fields = {}
+        for name in self.field_names:
+            # Extract channels for this field
+            start_idx = self.channel_offsets[name]
+            end_idx = start_idx + self.channel_counts[name]
+            field_tensor = tensor[:, start_idx:end_idx, :, :] if tensor.dim() == 4 else tensor[start_idx:end_idx, :, :]
+            
+            # Convert to Field
+            metadata = self.field_metadata[name]
+            field = _tensor_to_field(field_tensor, metadata, time_slice=time_slice)
+            fields[name] = field
+        
+        return fields
+    
+    def get_channel_info(self) -> Dict[str, Dict[str, int]]:
+        """
+        Get information about channel layout in concatenated tensors.
+        
+        Returns:
+            Dictionary mapping field names to {'count': int, 'offset': int}
+            
+        Example:
+            >>> info = converter.get_channel_info()
+            >>> # {'velocity': {'count': 2, 'offset': 0},
+            >>> #  'density': {'count': 1, 'offset': 2}}
+        """
+        return {
+            name: {
+                'count': self.channel_counts[name],
+                'offset': self.channel_offsets[name]
+            }
+            for name in self.field_names
+        }
+    
+    def validate_fields(self, fields: Dict[str, Field]) -> bool:
+        """
+        Validate that fields dict is compatible with this converter.
+        
+        Args:
+            fields: Dictionary of fields to validate
+            
+        Returns:
+            True if valid, raises ValueError otherwise
+            
+        Raises:
+            ValueError: If validation fails with descriptive message
+        """
+        # Check field names match
+        if set(fields.keys()) != set(self.field_names):
+            raise ValueError(
+                f"Field names mismatch. Expected {self.field_names}, "
+                f"got {list(fields.keys())}"
+            )
+        
+        # Check each field's metadata is compatible
+        for name, field in fields.items():
+            metadata = self.field_metadata[name]
+            
+            # Check spatial dimensions
+            field_spatial_dims = tuple(field.shape.spatial.names)
+            if field_spatial_dims != metadata.spatial_dims:
+                raise ValueError(
+                    f"Field '{name}' has spatial dims {field_spatial_dims}, "
+                    f"expected {metadata.spatial_dims}"
+                )
+            
+            # Check field type
+            field_type = 'staggered' if field.is_staggered else 'centered'
+            if field_type != metadata.field_type:
+                raise ValueError(
+                    f"Field '{name}' is {field_type}, expected {metadata.field_type}"
+                )
+        
+        return True
+    
+    def validate_tensor(self, tensor: torch.Tensor) -> bool:
+        """
+        Validate that tensor is compatible with this converter.
+        
+        Args:
+            tensor: Tensor to validate (should be [B, C, H, W] or [C, H, W])
+            
+        Returns:
+            True if valid, raises ValueError otherwise
+            
+        Raises:
+            ValueError: If validation fails with descriptive message
+        """
+        # Check dimensions
+        if tensor.dim() not in [3, 4]:
+            raise ValueError(
+                f"Expected tensor with 3 or 4 dimensions, got {tensor.dim()}"
+            )
+        
+        # Check channel count
+        channel_dim = -3
+        if tensor.shape[channel_dim] != self.total_channels:
+            raise ValueError(
+                f"Expected {self.total_channels} channels, "
+                f"got {tensor.shape[channel_dim]}"
+            )
+        
+        return True
