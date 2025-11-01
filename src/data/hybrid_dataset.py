@@ -16,7 +16,7 @@ from phi.field import Field
 from phiml.math import spatial
 
 from .data_manager import DataManager
-from src.utils.field_conversion import FieldMetadata, FieldTensorConverter
+from src.utils.field_conversion import FieldMetadata, FieldTensorConverter, make_converter
 
 
 class HybridDataset(Dataset):
@@ -320,13 +320,16 @@ class HybridDataset(Dataset):
         
         initial_metadata = {name: field_metadata[name] for name in self.field_names}
         
-        # Use FieldTensorConverter for conversion
-        converter = FieldTensorConverter(initial_metadata)
-        initial_fields_dict = {name: FieldTensorConverter.tensor_to_field(
-            initial_tensors[name], 
-            initial_metadata[name], 
-            time_slice=0
-        ) for name in self.field_names}
+        # Use make_converter to create individual converters for each field
+        # and convert each tensor to field separately
+        initial_fields_dict = {}
+        for name in self.field_names:
+            converter = make_converter(initial_metadata[name])
+            initial_fields_dict[name] = converter.tensor_to_field(
+                initial_tensors[name], 
+                initial_metadata[name], 
+                time_slice=0
+            )
         initial_fields = initial_fields_dict
         
         # Convert rollout targets (start_frame+1 to start_frame+num_predict_steps) for dynamic fields
@@ -343,11 +346,14 @@ class HybridDataset(Dataset):
             
             field_meta = field_metadata[field_name]
             
+            # Create converter for this field type
+            field_converter = make_converter(field_meta)
+            
             # Convert each timestep to a Field
             fields_list = []
             for t in range(len(field_tensors)):
                 tensor_t = field_tensors[t:t+1]
-                field_t = FieldTensorConverter.tensor_to_field(
+                field_t = field_converter.tensor_to_field(
                     tensor_t, 
                     field_meta, 
                     time_slice=0
