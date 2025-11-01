@@ -89,6 +89,24 @@ class SyntheticTrainer(TensorTrainer):
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=self.epochs * len(self.train_loader)
         )
+        
+        # --- Memory monitoring (optional, enabled by config) ---
+        enable_memory_monitoring = self.trainer_config.get('enable_memory_monitoring', False)
+        if enable_memory_monitoring:
+            try:
+                from src.utils.memory_monitor import EpochPerformanceMonitor
+                verbose_batches = self.trainer_config.get('memory_monitor_batches', 5)
+                self.memory_monitor = EpochPerformanceMonitor(
+                    enabled=True,
+                    verbose_batches=verbose_batches,
+                    device=0 if torch.cuda.is_available() else -1
+                )
+                print(f"Performance monitoring enabled (verbose for first {verbose_batches} batches)")
+            except ImportError:
+                print("Warning: Could not import EpochPerformanceMonitor. Monitoring disabled.")
+                self.memory_monitor = None
+        else:
+            self.memory_monitor = None
 
     def _build_channel_map(self):
         """Build channel indices for slicing concatenated tensors."""
@@ -194,8 +212,16 @@ class SyntheticTrainer(TensorTrainer):
         """
         self.model.train()
         total_loss = 0.0
+        
+        # Use memory monitor if available
+        if self.memory_monitor is not None:
+            self.memory_monitor.on_epoch_start()
 
-        for initial_state, rollout_targets in self.train_loader:
+        for batch_idx, (initial_state, rollout_targets) in enumerate(self.train_loader):
+            # Track batch start time
+            if self.memory_monitor is not None:
+                self.memory_monitor.on_batch_start(batch_idx)
+            
             initial_state = initial_state.to(self.device)  # [B, C_all, H, W] - all fields
             rollout_targets = rollout_targets.to(self.device)  # [B, T, C_dynamic, H, W] - only dynamic
             
@@ -236,7 +262,15 @@ class SyntheticTrainer(TensorTrainer):
             self.optimizer.step()
             self.scheduler.step()
             
+            # Track batch completion with memory monitor
+            if self.memory_monitor is not None:
+                self.memory_monitor.on_batch_end(batch_idx, avg_rollout_loss.item())
+            
             total_loss += avg_rollout_loss.item()
+        
+        # Track epoch completion
+        if self.memory_monitor is not None:
+            self.memory_monitor.on_epoch_end()
             
         avg_loss = total_loss / len(self.train_loader)
         return avg_loss

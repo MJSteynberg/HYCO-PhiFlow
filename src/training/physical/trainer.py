@@ -62,6 +62,23 @@ class PhysicalTrainer(FieldTrainer):
         # --- Setup Model ---
         self.model = self._setup_physical_model()
         
+        # --- Memory monitoring (optional, enabled by config) ---
+        enable_memory_monitoring = self.trainer_config.get('enable_memory_monitoring', False)
+        if enable_memory_monitoring:
+            try:
+                from src.utils.memory_monitor import PerformanceMonitor
+                self.memory_monitor = PerformanceMonitor(
+                    enabled=True,
+                    device=0 if torch.cuda.is_available() else -1
+                )
+                self.verbose_iterations = self.trainer_config.get('memory_monitor_batches', 5)
+                print(f"Performance monitoring enabled (verbose for first {self.verbose_iterations} iterations)")
+            except ImportError:
+                print("Warning: Could not import PerformanceMonitor. Monitoring disabled.")
+                self.memory_monitor = None
+        else:
+            self.memory_monitor = None
+        
         print(f"PhysicalTrainer initialized. Will optimize for {len(self.initial_guesses)} parameter(s).")
     
     def _create_data_manager(self) -> DataManager:
@@ -234,8 +251,14 @@ class PhysicalTrainer(FieldTrainer):
         if len(self.train_sims) > 1:
             print(f"Warning: Training on sim {sim_to_train}. "
                   f"Multi-sim training not yet implemented.")
-                
-        gt_data_dict = self._load_ground_truth_data(sim_to_train)
+        
+        # Track data loading performance
+        if hasattr(self, 'memory_monitor') and self.memory_monitor:
+            with self.memory_monitor.track("load_ground_truth"):
+                gt_data_dict = self._load_ground_truth_data(sim_to_train)
+        else:
+            gt_data_dict = self._load_ground_truth_data(sim_to_train)
+        
         print(gt_data_dict)
         # Get the initial state (t=0) for all fields
         initial_state_dict = {
@@ -253,11 +276,17 @@ class PhysicalTrainer(FieldTrainer):
         
         # 2. --- Define the Loss Function ---
         
+        # Track loss function calls for monitoring
+        loss_call_count = [0]  # Use list to allow modification in nested function
+        
         def loss_function(*learnable_tensors):
             """
             Calculates L2 loss for a rollout.
             Properly handles batch dimensions.
             """
+            loss_call_count[0] += 1
+            iteration_num = loss_call_count[0]
+            
             # 1. Update the model's parameters with the current guess
             for i, param_config in enumerate(self.learnable_params_config):
                 param_name = param_config['name']
@@ -290,10 +319,21 @@ class PhysicalTrainer(FieldTrainer):
                 total_loss += step_loss
             
             final_loss = total_loss / self.num_predict_steps
+            
+            # Print loss for first few iterations (if monitoring enabled)
+            if hasattr(self, 'memory_monitor') and self.memory_monitor:
+                if iteration_num <= self.verbose_iterations:
+                    print(f"  Iteration {iteration_num}: loss={final_loss}, time since start: "
+                          f"{time.perf_counter() - self._optimization_start_time:.1f}s")
+            
             return final_loss
 
         # 3. --- Run Optimization ---
         print("\nStarting optimization with math.minimize (L-BFGS-B)...")
+        
+        # Track optimization start time
+        if hasattr(self, 'memory_monitor') and self.memory_monitor:
+            self._optimization_start_time = time.perf_counter()
         
         # Disable validation during optimization to allow exploration of negative values
         
@@ -316,13 +356,23 @@ class PhysicalTrainer(FieldTrainer):
         
         try:
             # math.minimize returns a TUPLE of optimized tensors
-            estimated_tensors = math.minimize(loss_function, solve_params)
+            if hasattr(self, 'memory_monitor') and self.memory_monitor:
+                with self.memory_monitor.track("optimization"):
+                    estimated_tensors = math.minimize(loss_function, solve_params)
+            else:
+                estimated_tensors = math.minimize(loss_function, solve_params)
+            
             print(f"\nOptimization completed!")
+            print(f"Total loss function evaluations: {loss_call_count[0]}")
         except Exception as e:
             print(f"Optimization failed: {e}")
             import traceback
             traceback.print_exc()
             estimated_tensors = tuple(self.initial_guesses) # Return guess on failure
+        
+        # Print performance summary
+        if hasattr(self, 'memory_monitor') and self.memory_monitor:
+            self.memory_monitor.print_summary()
         
         final_loss = loss_function(*estimated_tensors)
         print(f"Final loss: {final_loss}")

@@ -1,0 +1,15 @@
+# @package _global_.trainer_params
+# Physical trainer with memory monitoring enabled
+learning_rate: 0.001
+epochs: 50
+num_predict_steps: 4
+
+train_sim: []
+val_sim: null
+
+# Memory monitoring settings
+enable_memory_monitoring: true  # Enable memory tracking
+memory_monitor_batches: 5       # Print detailed info for first 5 loss evaluations
+
+# Learnable parameters (specific to physical models)
+learnable_parameters: []

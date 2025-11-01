@@ -3,9 +3,13 @@ Hybrid Dataset for PyTorch DataLoader
 
 This module provides a PyTorch Dataset wrapper around DataManager
 for efficient training with cached tensor data.
+
+Features lazy loading with LRU cache to handle large datasets without
+loading all simulations into memory at once.
 """
 
 from typing import Dict, List, Tuple, Any, Union
+from functools import lru_cache
 import torch
 from torch.utils.data import Dataset
 from phi.field import Field
@@ -18,6 +22,12 @@ from src.utils.field_conversion import tensors_to_fields
 class HybridDataset(Dataset):
     """
     PyTorch Dataset that wraps DataManager for autoregressive training.
+    
+    Uses lazy loading with LRU caching for memory-efficient training with large datasets:
+    - Simulations loaded on-demand, not all at once
+    - LRU cache keeps N most recently used simulations in memory
+    - Automatic memory management
+    - Configurable cache size
     
     Supports two modes:
     1. Single starting point (use_sliding_window=False): One sample per simulation
@@ -41,6 +51,8 @@ class HybridDataset(Dataset):
         num_predict_steps: Number of rollout steps for training
         use_sliding_window: If True, create multiple samples per simulation
         return_fields: If True, return PhiFlow Fields instead of tensors
+        max_cached_sims: Maximum number of simulations to keep in memory (LRU cache size)
+        pin_memory: If True, pin tensors in memory for faster GPU transfer
     """
     
     def __init__(
@@ -53,7 +65,9 @@ class HybridDataset(Dataset):
         dynamic_fields: List[str] = None,
         static_fields: List[str] = None,
         use_sliding_window: bool = False,
-        return_fields: bool = False
+        return_fields: bool = False,
+        max_cached_sims: int = 5,
+        pin_memory: bool = True
     ):
         """
         Initialize the HybridDataset.
@@ -68,6 +82,8 @@ class HybridDataset(Dataset):
             static_fields: List of fields that are input-only (default: empty list)
             use_sliding_window: If True, create multiple samples per simulation using sliding window
             return_fields: If True, return PhiFlow Fields instead of tensors (for physical models)
+            max_cached_sims: Maximum number of simulations to keep in memory (default: 5)
+            pin_memory: If True, pin tensors for faster GPU transfer (default: True)
         """
         self.data_manager = data_manager
         self.sim_indices = sim_indices
@@ -76,6 +92,8 @@ class HybridDataset(Dataset):
         self.num_predict_steps = num_predict_steps
         self.use_sliding_window = use_sliding_window
         self.return_fields = return_fields
+        self.max_cached_sims = max_cached_sims
+        self.pin_memory = pin_memory and torch.cuda.is_available()
         
         # Handle static vs dynamic field distinction
         if dynamic_fields is None and static_fields is None:
@@ -96,13 +114,97 @@ class HybridDataset(Dataset):
                 f"num_frames ({num_frames}) must be >= num_predict_steps + 1 ({num_predict_steps + 1})"
             )
         
-        # Pre-cache all simulations
-        self._cache_all_simulations()
+        # CHANGED: Don't pre-cache all simulations
+        # Instead, verify cache exists and get metadata
+        self._validate_cache_exists()
+        
+        # CHANGED: Create LRU cache for simulation data
+        # Use a wrapper method to create the cached function
+        self._create_cached_loader()
         
         # Build sample index mapping for sliding window
         if self.use_sliding_window:
             self._build_sliding_window_index()
+    
+    def _validate_cache_exists(self):
+        """
+        Validate that cache exists for all simulations without loading data.
         
+        Only loads metadata (num_frames) from first simulation if needed.
+        Does NOT pre-load all simulation data into memory.
+        """
+        if not self.sim_indices:
+            raise ValueError("sim_indices cannot be empty")
+        
+        # Determine num_frames from first simulation if not provided
+        if self.num_frames is None:
+            first_sim_data = self.data_manager.get_or_load_simulation(
+                self.sim_indices[0],
+                field_names=self.field_names,
+                num_frames=None
+            )
+            # Extract tensor_data and get num_frames from first field
+            self.num_frames = first_sim_data['tensor_data'][self.field_names[0]].shape[0]
+            del first_sim_data  # Free memory immediately
+        
+        # Verify all simulations are cached
+        for sim_idx in self.sim_indices:
+            if not self.data_manager.is_cached(sim_idx):
+                raise ValueError(
+                    f"Simulation {sim_idx} is not cached. "
+                    f"Please run data generation first."
+                )
+    
+    def _create_cached_loader(self):
+        """
+        Create LRU-cached simulation loader.
+        
+        The loader will keep at most max_cached_sims simulations in memory,
+        automatically evicting least recently used simulations when cache is full.
+        """
+        # Create cached version of the uncached loader
+        self._cached_load_simulation = lru_cache(maxsize=self.max_cached_sims)(
+            self._load_simulation_uncached
+        )
+    
+    def _load_simulation_uncached(self, sim_idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Load a single simulation without caching (wrapped by LRU cache).
+        
+        Args:
+            sim_idx: Simulation index to load
+            
+        Returns:
+            Dictionary mapping field names to tensors with shape [T, ...]
+            This is the 'tensor_data' part of the full cached data.
+        """
+        # Load full data structure from DataManager
+        full_data = self.data_manager.get_or_load_simulation(
+            sim_idx,
+            field_names=self.field_names,
+            num_frames=self.num_frames
+        )
+        
+        # Extract just the tensor data
+        sim_data = full_data['tensor_data']
+        
+        # Optionally pin memory for faster GPU transfer
+        if self.pin_memory:
+            sim_data = {
+                field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
+                for field, tensor in sim_data.items()
+            }
+        
+        return sim_data
+    
+    def clear_cache(self):
+        """
+        Manually clear the LRU cache of simulations.
+        
+        Useful for freeing memory or forcing reload of simulations.
+        """
+        self._cached_load_simulation.cache_clear()
+    
     def _build_sliding_window_index(self):
         """
         Build index mapping for sliding window samples.
@@ -136,39 +238,6 @@ class HybridDataset(Dataset):
         print(f"  Sliding window: {self.samples_per_sim} samples per simulation")
         print(f"  Total samples: {len(self.sample_index)} (from {len(self.sim_indices)} simulations)")
         print(f"  Frame range per sample: start_frame to start_frame+{self.num_predict_steps}")
-    
-    def _cache_all_simulations(self):
-        """Pre-load and cache all simulations with validation."""
-        for sim_idx in self.sim_indices:
-            # Check if cache exists and matches our requirements
-            if not self.data_manager.is_cached(sim_idx, self.field_names, self.num_frames):
-                self.data_manager.load_and_cache_simulation(
-                    sim_idx, 
-                    self.field_names, 
-                    self.num_frames
-                )
-        
-        # If num_frames was None (load all), determine actual number of frames from cached data
-        # Also validate that all simulations have the same number of frames
-        if self.num_frames is None:
-            # Load first simulation to get actual frame count
-            first_sim = self.sim_indices[0]
-            data = self.data_manager.load_from_cache(first_sim)
-            first_field = self.field_names[0]
-            self.num_frames = data['tensor_data'][first_field].shape[0]
-            print(f"  Loaded all available frames: {self.num_frames} frames")
-            
-            # Validate all simulations have the same number of frames
-            for sim_idx in self.sim_indices[1:]:
-                data = self.data_manager.load_from_cache(sim_idx)
-                frames_in_sim = data['tensor_data'][first_field].shape[0]
-                if frames_in_sim != self.num_frames:
-                    raise ValueError(
-                        f"Simulation {sim_idx} has {frames_in_sim} frames, "
-                        f"but simulation {first_sim} has {self.num_frames} frames. "
-                        f"All simulations must have the same number of frames for sliding window. "
-                        f"Clear cache and regenerate data with consistent frame counts."
-                    )
     
     def _convert_to_fields(self, data: Dict[str, Any]) -> Tuple[Dict[str, Field], Dict[str, Field]]:
         """
@@ -313,20 +382,26 @@ class HybridDataset(Dataset):
             sim_idx = self.sim_indices[idx]
             start_frame = 0
         
-        # Load cached data
-        data = self.data_manager.load_from_cache(sim_idx)
+        # CHANGED: Load data using LRU-cached loader instead of pre-cached data
+        sim_data = self._cached_load_simulation(sim_idx)
         
         if self.return_fields:
+            # For field mode, we need the full data structure with metadata
+            # Convert sim_data back to the format expected by _convert_to_fields_with_start
+            data = {'tensor_data': sim_data}
+            # Load metadata from cache
+            cache_data = self.data_manager.load_from_cache(sim_idx)
+            data.update({k: v for k, v in cache_data.items() if k != 'tensor_data'})
             return self._convert_to_fields_with_start(data, start_frame)
         
         # Tensor-based mode: concatenate fields for efficient training
         # Initial state contains ALL fields (static + dynamic)
-        all_field_tensors = [data['tensor_data'][name] for name in self.field_names]
+        all_field_tensors = [sim_data[name] for name in self.field_names]
         all_data = torch.cat(all_field_tensors, dim=1)  # [time, total_channels, x, y]
         initial_state = all_data[start_frame]  # [C_all, H, W]
         
         # Rollout targets contain ONLY dynamic fields
-        dynamic_field_tensors = [data['tensor_data'][name] for name in self.dynamic_fields]
+        dynamic_field_tensors = [sim_data[name] for name in self.dynamic_fields]
         dynamic_data = torch.cat(dynamic_field_tensors, dim=1)  # [time, dynamic_channels, x, y]
         
         # Extract target frames starting from start_frame + 1

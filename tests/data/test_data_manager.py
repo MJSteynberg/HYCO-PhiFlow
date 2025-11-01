@@ -207,6 +207,7 @@ class TestDataManagerCacheValidation:
         fake_data = {
             'tensor_data': {'velocity': torch.randn(10, 2, 64, 64)},
             'metadata': {
+                'version': '2.0',  # Required for version validation
                 'field_metadata': {'velocity': {}},  # Required for field validation
                 'num_frames': 10
             }
@@ -279,6 +280,7 @@ class TestDataManagerCacheValidation:
         fake_data = {
             'tensor_data': {'velocity': torch.randn(10, 2, 64, 64)},
             'metadata': {
+                'version': '2.0',  # Required for version validation
                 'field_metadata': {'velocity': {}},  # Required for field validation
                 'num_frames': 10
             }
