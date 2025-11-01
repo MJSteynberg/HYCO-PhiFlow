@@ -11,7 +11,7 @@ defaults:
 run_params:
   experiment_name: 'burgers_unet_128_v1'
   notes: 'Training UNet on Burgers 128x128'
-  mode: ['train', 'evaluate']
+  mode: ['evaluate']
   model_type: 'synthetic'
 
 model:

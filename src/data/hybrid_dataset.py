@@ -147,13 +147,34 @@ class HybridDataset(Dataset):
             self.num_frames = first_sim_data['tensor_data'][self.field_names[0]].shape[0]
             del first_sim_data  # Free memory immediately
         
-        # Verify all simulations are cached
+        # Check which simulations need caching
+        uncached_sims = []
         for sim_idx in self.sim_indices:
             if not self.data_manager.is_cached(sim_idx):
-                raise ValueError(
-                    f"Simulation {sim_idx} is not cached. "
-                    f"Please run data generation first."
+                # Verify raw data exists
+                sim_dir = self.data_manager.raw_data_dir / f"sim_{sim_idx:06d}"
+                if not sim_dir.exists():
+                    raise ValueError(
+                        f"Simulation {sim_idx} does not exist at {sim_dir}. "
+                        f"Please run data generation first."
+                    )
+                uncached_sims.append(sim_idx)
+        
+        # Cache all uncached simulations upfront
+        if uncached_sims:
+            print(f"  Caching {len(uncached_sims)} simulations upfront...")
+            for i, sim_idx in enumerate(uncached_sims, 1):
+                print(f"    [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}...", end='', flush=True)
+                # Load and cache the simulation
+                _ = self.data_manager.get_or_load_simulation(
+                    sim_idx,
+                    field_names=self.field_names,
+                    num_frames=self.num_frames
                 )
+                print(" Done!")
+            print(f"  All simulations cached successfully!")
+        else:
+            print(f"  All {len(self.sim_indices)} simulations already cached.")
     
     def _create_cached_loader(self):
         """
