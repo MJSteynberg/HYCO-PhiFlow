@@ -32,19 +32,16 @@ class CacheValidator:
     
     Attributes:
         config: Configuration dictionary with current parameters
-        strict: If True, requires exact version match; if False, allows compatible versions
     """
     
-    def __init__(self, config: Dict[str, Any], strict: bool = False):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initialize the cache validator.
         
         Args:
             config: Configuration dictionary containing model, data, and generation params
-            strict: Whether to use strict version matching
         """
         self.config = config
-        self.strict = strict
     
     def validate_cache(
         self,
@@ -138,11 +135,8 @@ class CacheValidator:
             cache_major = int(cache_version.split('.')[0])
             current_major = 2  # Current cache format version
             
-            if self.strict:
-                return cache_major == current_major
-            else:
-                # Allow version 1.x and 2.x caches (backward compatible)
-                return cache_major in [1, 2]
+            # Only accept version 2.x caches
+            return cache_major == current_major
         except (ValueError, IndexError):
             # Invalid version format
             return False

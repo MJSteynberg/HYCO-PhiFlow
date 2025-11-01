@@ -65,52 +65,43 @@ class TestCacheValidatorInit:
         }
         validator = CacheValidator(config)
         assert validator.config == config
-        assert validator.strict is False
     
-    def test_init_strict_mode(self):
-        """Test initialization with strict mode."""
+    def test_init_sets_config(self):
+        """Test that initialization sets config correctly."""
         config = {'model': {'physical': {}}}
-        validator = CacheValidator(config, strict=True)
-        assert validator.strict is True
+        validator = CacheValidator(config)
+        assert validator.config == config
 
 
 class TestVersionCompatibility:
     """Tests for version compatibility checking."""
     
-    def test_version_compatible_same_major(self):
-        """Test that same major version is compatible."""
+    def test_version_compatible_v2(self):
+        """Test that v2.x is compatible."""
         config = {'model': {'physical': {}}}
-        validator = CacheValidator(config, strict=False)
+        validator = CacheValidator(config)
         
         metadata = {'version': '2.0'}
         is_valid, _ = validator.validate_cache(metadata, [], None)
         assert is_valid  # Should pass version check (other checks may fail)
     
-    def test_version_compatible_v1_non_strict(self):
-        """Test that v1.x is compatible in non-strict mode."""
+    def test_version_incompatible_v1(self):
+        """Test that v1.x is incompatible (no backward compatibility)."""
         config = {'model': {'physical': {}}}
-        validator = CacheValidator(config, strict=False)
+        validator = CacheValidator(config)
         
-        # v1.0 should be compatible in non-strict mode
-        assert validator._is_version_compatible('1.0')
-        assert validator._is_version_compatible('1.5')
-    
-    def test_version_incompatible_v1_strict(self):
-        """Test that v1.x is incompatible in strict mode."""
-        config = {'model': {'physical': {}}}
-        validator = CacheValidator(config, strict=True)
-        
-        # v1.0 should NOT be compatible in strict mode
+        # v1.0 should NOT be compatible (backward compatibility removed)
         assert not validator._is_version_compatible('1.0')
         assert not validator._is_version_compatible('1.5')
     
-    def test_version_compatible_v2_strict(self):
-        """Test that v2.x is compatible in strict mode."""
+    def test_version_compatible_v2_all_variants(self):
+        """Test that all v2.x variants are compatible."""
         config = {'model': {'physical': {}}}
-        validator = CacheValidator(config, strict=True)
+        validator = CacheValidator(config)
         
         assert validator._is_version_compatible('2.0')
         assert validator._is_version_compatible('2.1')
+        assert validator._is_version_compatible('2.9')
 
 
 class TestFieldValidation:

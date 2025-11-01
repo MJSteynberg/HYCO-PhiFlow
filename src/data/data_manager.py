@@ -63,7 +63,7 @@ class DataManager:
         self.auto_clear_invalid = auto_clear_invalid
         
         # Create cache validator
-        self.validator = CacheValidator(config, strict=False)
+        self.validator = CacheValidator(config)
         
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -310,7 +310,7 @@ class DataManager:
                 'created_at': datetime.now().isoformat(),
                 'phiflow_version': get_phiflow_version(),
                 
-                # Original metadata (preserved for backward compatibility)
+                # Scene and field metadata
                 'scene_metadata': scene_metadata,
                 'field_metadata': field_metadata,
                 'num_frames': len(frames_to_load),

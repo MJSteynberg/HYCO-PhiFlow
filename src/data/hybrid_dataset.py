@@ -224,12 +224,12 @@ class HybridDataset(Dataset):
                     # Fallback for unexpected dimensions
                     domain = Box(x=1, y=1)
             else:
-                # Fallback for old cache files without bounds_lower/upper
-                try:
-                    bounds_str = meta['bounds']
-                    domain = eval(bounds_str, {"Box": Box})
-                except:
-                    domain = Box(x=1, y=1)
+                # Error - invalid cache format
+                raise ValueError(
+                    f"Invalid cache format for field '{name}'. "
+                    f"Missing 'bounds_lower' or 'bounds_upper'. "
+                    f"Please clear cache and regenerate data."
+                )
             
             # Extract resolution from tensor shape
             tensor_shape = data['tensor_data'][name].shape  # [time, channels, x, y]
