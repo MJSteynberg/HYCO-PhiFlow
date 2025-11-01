@@ -64,16 +64,22 @@ class TestTrainerFactoryCreateSynthetic:
                 'resolution': 128,
                 'cache_validation': {
                     'enabled': True
-                }
+                },
+                'data_dir': 'data/',
+                'dset_name': 'burgers_128',
+                'fields': ['velocity']
             },
             'model': {
                 'synthetic': {
-                    'model_name': 'unet',
+                    'name': 'UNet',
                     'model_path': 'results/models',
                     'model_save_name': 'test_synthetic',
-                    'in_channels': 1,
-                    'out_channels': 1,
-                    'base_channels': 32
+                    'input_specs': {'velocity': 2},
+                    'output_specs': {'velocity': 2},
+                    'architecture': {
+                        'levels': 2,
+                        'filters': 16
+                    }
                 }
             },
             'run_params': {
@@ -81,10 +87,10 @@ class TestTrainerFactoryCreateSynthetic:
             },
             'trainer_params': {
                 'learning_rate': 0.001,
-                'batch_size': 16,
-                'epochs': 10,
-                'val_split': 0.2,
-                'num_workers': 0
+                'batch_size': 2,
+                'epochs': 1,
+                'num_predict_steps': 2,
+                'train_sim': [0]
             }
         })
     
@@ -127,13 +133,21 @@ class TestTrainerFactoryCreatePhysical:
                 'resolution': 128,
                 'cache_validation': {
                     'enabled': True
-                }
+                },
+                'data_dir': 'data',
+                'dset_name': 'heat_64',
+                'fields': ['temp'],
+                'cache_dir': 'data/cache'
             },
             'model': {
                 'physical': {
-                    'model_name': 'spectral',
+                    'name': 'HeatModel',
                     'model_path': 'results/models',
-                    'model_save_name': 'test_physical'
+                    'model_save_name': 'test_physical',
+                    'domain': {'size_x': 100.0, 'size_y': 100.0},
+                    'resolution': {'x': 64, 'y': 64},
+                    'dt': 0.1,
+                    'pde_params': {}
                 }
             },
             'run_params': {
@@ -142,8 +156,12 @@ class TestTrainerFactoryCreatePhysical:
             'trainer_params': {
                 'learning_rate': 0.001,
                 'batch_size': 16,
-                'epochs': 10,
-                'num_workers': 0
+                'epochs': 1,
+                'train_sim': [0],
+                'num_predict_steps': 5,
+                'learnable_parameters': [
+                    {'name': 'diffusivity', 'initial_guess': 0.5}
+                ]
             }
         })
     
@@ -167,10 +185,11 @@ class TestTrainerFactoryCreatePhysical:
         assert isinstance(trainer, PhysicalTrainer)
     
     def test_physical_trainer_device_set(self, physical_config):
-        """Test that physical trainer has device set."""
+        """Test that physical trainer is created successfully."""
         trainer = TrainerFactory.create_trainer(physical_config)
-        assert hasattr(trainer, 'device')
-        assert trainer.device.type in ['cuda', 'cpu']
+        # Physical trainers don't have a device attribute (they use PhiFlow)
+        assert hasattr(trainer, 'model')
+        assert trainer.model is not None
 
 
 class TestTrainerFactoryErrorHandling:
@@ -224,16 +243,22 @@ class TestTrainerFactoryIntegration:
                 'resolution': 128,
                 'cache_validation': {
                     'enabled': True
-                }
+                },
+                'data_dir': 'data/',
+                'dset_name': 'burgers_128',
+                'fields': ['velocity']
             },
             'model': {
                 'synthetic': {
-                    'model_name': 'unet',
+                    'name': 'UNet',
                     'model_path': 'results/models',
                     'model_save_name': 'test',
-                    'in_channels': 1,
-                    'out_channels': 1,
-                    'base_channels': 32
+                    'input_specs': {'velocity': 2},
+                    'output_specs': {'velocity': 2},
+                    'architecture': {
+                        'levels': 2,
+                        'filters': 16
+                    }
                 }
             },
             'run_params': {
@@ -241,10 +266,10 @@ class TestTrainerFactoryIntegration:
             },
             'trainer_params': {
                 'learning_rate': 0.001,
-                'batch_size': 16,
-                'epochs': 10,
-                'val_split': 0.2,
-                'num_workers': 0
+                'batch_size': 2,
+                'epochs': 1,
+                'num_predict_steps': 2,
+                'train_sim': [0]
             }
         })
         
@@ -267,13 +292,21 @@ class TestTrainerFactoryIntegration:
                 'resolution': 128,
                 'cache_validation': {
                     'enabled': True
-                }
+                },
+                'data_dir': 'data',
+                'dset_name': 'heat_64',
+                'fields': ['temp'],
+                'cache_dir': 'data/cache'
             },
             'model': {
                 'physical': {
-                    'model_name': 'spectral',
+                    'name': 'HeatModel',
                     'model_path': 'results/models',
-                    'model_save_name': 'test'
+                    'model_save_name': 'test',
+                    'domain': {'size_x': 100.0, 'size_y': 100.0},
+                    'resolution': {'x': 64, 'y': 64},
+                    'dt': 0.1,
+                    'pde_params': {}
                 }
             },
             'run_params': {
@@ -282,8 +315,12 @@ class TestTrainerFactoryIntegration:
             'trainer_params': {
                 'learning_rate': 0.001,
                 'batch_size': 16,
-                'epochs': 10,
-                'num_workers': 0
+                'epochs': 1,
+                'train_sim': [0],
+                'num_predict_steps': 5,
+                'learnable_parameters': [
+                    {'name': 'diffusivity', 'initial_guess': 0.5}
+                ]
             }
         })
         
@@ -304,16 +341,22 @@ class TestTrainerFactoryIntegration:
             'data': {
                 'problem': 'burgers',
                 'resolution': 128,
-                'cache_validation': {'enabled': True}
+                'cache_validation': {'enabled': True},
+                'data_dir': 'data/',
+                'dset_name': 'burgers_128',
+                'fields': ['velocity']
             },
             'model': {
                 'synthetic': {
-                    'model_name': 'unet',
+                    'name': 'UNet',
                     'model_path': 'results/models',
                     'model_save_name': 'trainer1',
-                    'in_channels': 1,
-                    'out_channels': 1,
-                    'base_channels': 32
+                    'input_specs': {'velocity': 2},
+                    'output_specs': {'velocity': 2},
+                    'architecture': {
+                        'levels': 2,
+                        'filters': 16
+                    }
                 }
             },
             'run_params': {
@@ -321,10 +364,10 @@ class TestTrainerFactoryIntegration:
             },
             'trainer_params': {
                 'learning_rate': 0.001,
-                'batch_size': 16,
-                'epochs': 10,
-                'val_split': 0.2,
-                'num_workers': 0
+                'batch_size': 2,
+                'epochs': 1,
+                'num_predict_steps': 2,
+                'train_sim': [0]
             }
         })
         
@@ -333,13 +376,21 @@ class TestTrainerFactoryIntegration:
             'data': {
                 'problem': 'smoke',
                 'resolution': 64,
-                'cache_validation': {'enabled': True}
+                'cache_validation': {'enabled': True},
+                'data_dir': 'data',
+                'dset_name': 'heat_64',
+                'fields': ['temp'],
+                'cache_dir': 'data/cache'
             },
             'model': {
                 'physical': {
-                    'model_name': 'spectral',
+                    'name': 'HeatModel',
                     'model_path': 'results/models',
-                    'model_save_name': 'trainer2'
+                    'model_save_name': 'trainer2',
+                    'domain': {'size_x': 100.0, 'size_y': 100.0},
+                    'resolution': {'x': 64, 'y': 64},
+                    'dt': 0.1,
+                    'pde_params': {}
                 }
             },
             'run_params': {
@@ -348,8 +399,12 @@ class TestTrainerFactoryIntegration:
             'trainer_params': {
                 'learning_rate': 0.002,
                 'batch_size': 32,
-                'epochs': 20,
-                'num_workers': 0
+                'epochs': 1,
+                'train_sim': [0],
+                'num_predict_steps': 5,
+                'learnable_parameters': [
+                    {'name': 'diffusivity', 'initial_guess': 0.5}
+                ]
             }
         })
         

@@ -150,8 +150,9 @@ class TensorTrainer(AbstractTrainer):
             if (epoch + 1) % self.get_print_frequency() == 0:
                 print(f"Epoch [{epoch+1}/{self.get_num_epochs()}], Loss: {epoch_loss:.6f}")
             
-            # Save checkpoint
-            if (epoch + 1) % self.get_checkpoint_frequency() == 0:
+            # Save checkpoint (if enabled)
+            checkpoint_freq = self.get_checkpoint_frequency()
+            if checkpoint_freq > 0 and (epoch + 1) % checkpoint_freq == 0:
                 self.save_checkpoint(
                     epoch=epoch,
                     loss=epoch_loss,

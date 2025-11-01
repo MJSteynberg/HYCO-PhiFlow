@@ -482,7 +482,7 @@ class TestPhysicalTrainerErrorHandling:
             }
         }
         
-        with pytest.raises(ImportError, match="Model .* not found"):
+        with pytest.raises(ValueError, match="not found in registry"):
             trainer = PhysicalTrainer(config)
 
 
