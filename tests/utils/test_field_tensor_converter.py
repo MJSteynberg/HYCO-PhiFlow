@@ -124,7 +124,7 @@ class TestScalarFieldConversion:
         )
         
         converter = FieldTensorConverter({'density': scalar_metadata})
-        tensor = converter.fields_to_tensors_batch({'density': field})
+        tensor = converter.fields_to_tensor_batch({'density': field})
         
         # Should have shape [1, H, W] since no batch dimension
         assert tensor.shape == (1, 32, 32)
@@ -141,7 +141,7 @@ class TestScalarFieldConversion:
         )
         
         converter = FieldTensorConverter({'density': scalar_metadata})
-        tensor = converter.fields_to_tensors_batch({'density': field})
+        tensor = converter.fields_to_tensor_batch({'density': field})
         
         # Should have shape [B, 1, H, W]
         assert tensor.shape == (4, 1, 32, 32)
@@ -153,7 +153,7 @@ class TestScalarFieldConversion:
         tensor = torch.ones(1, 32, 32) * 2.0
         
         converter = FieldTensorConverter({'density': scalar_metadata})
-        fields = converter.tensors_to_fields_batch(tensor)
+        fields = converter.tensor_to_fields_batch(tensor)
         
         assert 'density' in fields
         field = fields['density']
@@ -167,7 +167,7 @@ class TestScalarFieldConversion:
         tensor = torch.ones(4, 1, 32, 32) * 3.0
         
         converter = FieldTensorConverter({'density': scalar_metadata})
-        fields = converter.tensors_to_fields_batch(tensor)
+        fields = converter.tensor_to_fields_batch(tensor)
         
         assert 'density' in fields
         field = fields['density']
@@ -187,8 +187,8 @@ class TestScalarFieldConversion:
         
         # Convert to tensor and back
         converter = FieldTensorConverter({'density': scalar_metadata})
-        tensor = converter.fields_to_tensors_batch({'density': original_field})
-        reconstructed_fields = converter.tensors_to_fields_batch(tensor)
+        tensor = converter.fields_to_tensor_batch({'density': original_field})
+        reconstructed_fields = converter.tensor_to_fields_batch(tensor)
         reconstructed_field = reconstructed_fields['density']
         
         # Check values match (allowing for small numerical errors)
@@ -217,7 +217,7 @@ class TestVectorFieldConversion:
         )
         
         converter = FieldTensorConverter({'velocity': vector_metadata})
-        tensor = converter.fields_to_tensors_batch({'velocity': field})
+        tensor = converter.fields_to_tensor_batch({'velocity': field})
         
         # Should have shape [2, H, W] (2 channels for vector components)
         assert tensor.shape == (2, 32, 32)
@@ -233,7 +233,7 @@ class TestVectorFieldConversion:
         )
         
         converter = FieldTensorConverter({'velocity': vector_metadata})
-        tensor = converter.fields_to_tensors_batch({'velocity': field})
+        tensor = converter.fields_to_tensor_batch({'velocity': field})
         
         # Should have shape [B, 2, H, W]
         assert tensor.shape == (4, 2, 32, 32)
@@ -244,7 +244,7 @@ class TestVectorFieldConversion:
         tensor = torch.randn(4, 2, 32, 32)
         
         converter = FieldTensorConverter({'velocity': vector_metadata})
-        fields = converter.tensors_to_fields_batch(tensor)
+        fields = converter.tensor_to_fields_batch(tensor)
         
         assert 'velocity' in fields
         field = fields['velocity']
@@ -263,8 +263,8 @@ class TestVectorFieldConversion:
         
         # Convert to tensor and back
         converter = FieldTensorConverter({'velocity': vector_metadata})
-        tensor = converter.fields_to_tensors_batch({'velocity': original_field})
-        reconstructed_fields = converter.tensors_to_fields_batch(tensor)
+        tensor = converter.fields_to_tensor_batch({'velocity': original_field})
+        reconstructed_fields = converter.tensor_to_fields_batch(tensor)
         reconstructed_field = reconstructed_fields['velocity']
         
         # Check values match
@@ -303,7 +303,7 @@ class TestMultiFieldConversion:
             'velocity': vector_metadata
         })
         
-        tensor = converter.fields_to_tensors_batch({
+        tensor = converter.fields_to_tensor_batch({
             'density': density_field,
             'velocity': velocity_field
         })
@@ -329,7 +329,7 @@ class TestMultiFieldConversion:
             'velocity': vector_metadata
         })
         
-        fields = converter.tensors_to_fields_batch(tensor)
+        fields = converter.tensor_to_fields_batch(tensor)
         
         # Check both fields are present
         assert 'density' in fields
@@ -370,8 +370,8 @@ class TestMultiFieldConversion:
         })
         
         # Roundtrip conversion
-        tensor = converter.fields_to_tensors_batch(original_fields)
-        reconstructed_fields = converter.tensors_to_fields_batch(tensor)
+        tensor = converter.fields_to_tensor_batch(original_fields)
+        reconstructed_fields = converter.tensor_to_fields_batch(tensor)
         
         # Check both fields match using reshaped_native
         density_orig = math.reshaped_native(original_fields['density'].values, ['x', 'y'])
@@ -414,7 +414,7 @@ class TestBatchedConversion:
             'velocity': vector_metadata
         })
         
-        tensor = converter.fields_to_tensors_batch(fields)
+        tensor = converter.fields_to_tensor_batch(fields)
         
         # Should have shape [B, C, H, W]
         assert tensor.shape == (batch_size, 3, 32, 32)
@@ -447,8 +447,8 @@ class TestBatchedConversion:
         })
         
         # Roundtrip
-        tensor = converter.fields_to_tensors_batch(original_fields)
-        reconstructed_fields = converter.tensors_to_fields_batch(tensor)
+        tensor = converter.fields_to_tensor_batch(original_fields)
+        reconstructed_fields = converter.tensor_to_fields_batch(tensor)
         
         # Check values match using reshaped_native with batch dimension
         density_orig = math.reshaped_native(original_fields['density'].values, ['batch', 'x', 'y'])
@@ -579,7 +579,7 @@ class TestErrorHandling:
         }
         
         with pytest.raises(ValueError, match="Field names mismatch"):
-            converter.fields_to_tensors_batch(fields)
+            converter.fields_to_tensor_batch(fields)
     
     def test_wrong_channel_count_to_fields(self, scalar_metadata):
         """Test error when tensor has wrong number of channels."""
@@ -589,7 +589,7 @@ class TestErrorHandling:
         tensor = torch.randn(3, 32, 32)
         
         with pytest.raises(ValueError, match="Expected 1 channels"):
-            converter.tensors_to_fields_batch(tensor)
+            converter.tensor_to_fields_batch(tensor)
 
 
 if __name__ == '__main__':
