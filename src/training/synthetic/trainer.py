@@ -338,39 +338,3 @@ class SyntheticTrainer(TensorTrainer):
 
         avg_loss = total_loss / len(self.train_loader)
         return avg_loss
-
-    def train(self):
-        """Runs the full training loop."""
-        print(f"\nStarting autoregressive training for {self.epochs} epochs...")
-        best_loss = float("inf")
-        last_saved_epoch = 0
-
-        # Create progress bar for epochs
-        pbar = tqdm(range(1, self.epochs + 1), desc="Training", unit="epoch")
-
-        for epoch in pbar:
-            start_time = time.time()
-
-            train_loss = self._train_epoch()
-
-            epoch_time = time.time() - start_time
-
-            # Update progress bar with loss and time
-            postfix_dict = {"loss": f"{train_loss:.6f}", "time": f"{epoch_time:.2f}s"}
-
-            # Check if new best model
-            if train_loss < best_loss and epoch % 10 == 0:
-                best_loss = train_loss
-                torch.save(self.model.state_dict(), self.checkpoint_path)
-                last_saved_epoch = epoch
-
-            # Always show save status
-            if last_saved_epoch > 0:
-                postfix_dict["saved"] = f"epoch {last_saved_epoch}"
-            else:
-                postfix_dict["saved"] = "none"
-
-            pbar.set_postfix(postfix_dict)
-
-        torch.save(self.model.state_dict(), self.checkpoint_path)
-        print("\nAutoregressive training complete.")

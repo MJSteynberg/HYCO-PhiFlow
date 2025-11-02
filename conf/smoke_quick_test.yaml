@@ -19,7 +19,8 @@ model:
     model_save_name: 'smoke_test_training'
 
 trainer_params:
-  train_sim: [0, 1, 2]  # Only 3 simulations for speed
+  train_sim: [0, 1]  # Train on 2 simulations
+  val_sim: [2]  # Validate on 1 simulation
   epochs: 2
   batch_size: 16
   num_predict_steps: 4

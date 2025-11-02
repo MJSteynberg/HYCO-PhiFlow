@@ -54,6 +54,9 @@ class TestSyntheticTrainerInitialization:
                 "epochs": 2,
                 "num_predict_steps": 3,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -81,6 +84,9 @@ class TestSyntheticTrainerInitialization:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -112,6 +118,9 @@ class TestSyntheticTrainerInitialization:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -177,6 +186,9 @@ class TestSyntheticTrainerInitialization:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -272,6 +284,9 @@ class TestSyntheticTrainerChannelMapping:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
         return SyntheticTrainer(config)
@@ -315,6 +330,9 @@ class TestSyntheticTrainerChannelMapping:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -363,6 +381,9 @@ class TestSyntheticTrainerDataLoader:
                 "epochs": 1,
                 "num_predict_steps": 3,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
         return SyntheticTrainer(config)
@@ -446,6 +467,9 @@ class TestSyntheticTrainerTensorUnpacking:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
         return SyntheticTrainer(config)
@@ -518,6 +542,9 @@ class TestSyntheticTrainerModelIntegration:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
         return SyntheticTrainer(config)
@@ -579,6 +606,9 @@ class TestSyntheticTrainerTraining:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
         return SyntheticTrainer(config)
@@ -603,10 +633,16 @@ class TestSyntheticTrainerTraining:
     def test_training_completes(self, trainer):
         """Test that full training loop completes."""
         try:
-            trainer.train()
+            result = trainer.train()
             training_completed = True
+            # Verify result structure matches new format
+            assert isinstance(result, dict)
+            assert "train_losses" in result
+            assert "val_losses" in result
         except Exception as e:
             training_completed = False
+            import traceback
+            traceback.print_exc()
             print(f"Training failed with: {e}")
 
         assert training_completed
@@ -672,6 +708,9 @@ class TestSyntheticTrainerMultiFieldScenarios:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -707,6 +746,9 @@ class TestSyntheticTrainerMultiFieldScenarios:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -745,6 +787,9 @@ class TestSyntheticTrainerErrorHandling:
                 "epochs": 1,
                 "num_predict_steps": 2,
                 "train_sim": [0],
+                "val_sim": [],
+                "print_freq": 1,
+                "checkpoint_freq": 50,
             },
         }
 
@@ -782,6 +827,9 @@ class TestSyntheticTrainerDifferentConfigurations:
                     "epochs": 1,
                     "num_predict_steps": 2,
                     "train_sim": [0],
+                    "val_sim": [],
+                    "print_freq": 1,
+                    "checkpoint_freq": 50,
                 },
             }
 
@@ -815,6 +863,9 @@ class TestSyntheticTrainerDifferentConfigurations:
                     "epochs": 1,
                     "num_predict_steps": 2,
                     "train_sim": [0],
+                    "val_sim": [],
+                    "print_freq": 1,
+                    "checkpoint_freq": 50,
                 },
             }
 
@@ -848,6 +899,9 @@ class TestSyntheticTrainerDifferentConfigurations:
                     "epochs": 1,
                     "num_predict_steps": steps,
                     "train_sim": [0],
+                    "val_sim": [],
+                    "print_freq": 1,
+                    "checkpoint_freq": 50,
                 },
             }
 

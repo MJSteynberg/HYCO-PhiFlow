@@ -18,6 +18,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+import time
 
 from src.training.abstract_trainer import AbstractTrainer
 
@@ -201,7 +203,12 @@ class TensorTrainer(AbstractTrainer):
             print(f"Validation enabled (every {validate_every} epoch(s))")
         print(f"{'='*60}\n")
 
-        for epoch in range(self.get_num_epochs()):
+        # Create progress bar for epochs
+        pbar = tqdm(range(self.get_num_epochs()), desc="Training", unit="epoch")
+
+        for epoch in pbar:
+            start_time = time.time()
+            
             # Training
             train_loss = self._train_epoch()
             results["train_losses"].append(train_loss)
@@ -229,18 +236,21 @@ class TensorTrainer(AbstractTrainer):
                             is_best=True
                         )
 
-            # Print progress
-            if (epoch + 1) % self.get_print_frequency() == 0:
-                if val_loss is not None:
-                    print(
-                        f"Epoch [{epoch+1}/{self.get_num_epochs()}], "
-                        f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}"
-                    )
-                else:
-                    print(
-                        f"Epoch [{epoch+1}/{self.get_num_epochs()}], "
-                        f"Train Loss: {train_loss:.6f}"
-                    )
+            epoch_time = time.time() - start_time
+            
+            # Update progress bar with train/val loss and time
+            postfix_dict = {
+                "train_loss": f"{train_loss:.6f}",
+                "time": f"{epoch_time:.2f}s"
+            }
+            
+            if val_loss is not None:
+                postfix_dict["val_loss"] = f"{val_loss:.6f}"
+                
+            if self.best_epoch > 0:
+                postfix_dict["best_epoch"] = self.best_epoch
+            
+            pbar.set_postfix(postfix_dict)
 
             # Periodic checkpoint (if not using best_only)
             save_best_only = self.config["trainer_params"].get("save_best_only", True)
