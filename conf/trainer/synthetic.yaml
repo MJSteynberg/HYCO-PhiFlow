@@ -5,9 +5,20 @@ epochs: 100
 num_predict_steps: 4
 
 train_sim: []
-val_sim: null
+val_sim: []  # Empty by default, should be specified in experiment configs
 
 use_sliding_window: true
+
+# Validation settings
+validate_every: 1  # Validate every N epochs
+validate_on_train: false  # Whether to also compute train metrics during validation
+
+# Early stopping
+early_stopping:
+  enabled: false
+  patience: 10  # Stop if no improvement for N epochs
+  min_delta: 1e-6  # Minimum change to count as improvement
+  monitor: val_loss  # Metric to monitor (val_loss, train_loss)
 
 # Optimizer settings
 optimizer: 'adam'
@@ -16,7 +27,7 @@ weight_decay: 0.0
 
 # Checkpoint settings
 save_interval: 10
-save_best_only: true
+save_best_only: true  # Save only when validation improves (if val_sim specified)
 checkpoint_freq: 50
 
 # Progress reporting

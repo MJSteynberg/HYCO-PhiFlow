@@ -370,9 +370,14 @@ class PhysicalTrainer(FieldTrainer):
 
         method = self.trainer_config.get("method", "L-BFGS-B")
         abs_tol = self.trainer_config.get("abs_tol", 1e-6)
-        max_iterations = self.trainer_config.get(
-            "max_iterations", self.num_epochs
-        )  # Use epochs if not specified
+        max_iterations = self.trainer_config.get("max_iterations")
+        if max_iterations is None:
+            max_iterations = self.num_epochs  # Use epochs if not specified
+        
+        print(f"\nOptimization settings:")
+        print(f"  method: {method}")
+        print(f"  abs_tol: {abs_tol}")
+        print(f"  max_iterations: {max_iterations} (type: {type(max_iterations)})")
 
         solve_params = math.Solve(
             method=method,
@@ -391,6 +396,15 @@ class PhysicalTrainer(FieldTrainer):
 
             print(f"\nOptimization completed!")
             print(f"Total loss function evaluations: {loss_call_count[0]}")
+        except math.NotConverged as e:
+            # NotConverged is raised when iteration limit is reached
+            # This is expected for quick tests with low max_iterations
+            print(f"\nOptimization stopped: {e}")
+            print(f"Total loss function evaluations: {loss_call_count[0]}")
+            # Extract the best parameters found so far
+            estimated_tensors = tuple(self.initial_guesses)  # Fallback
+            if hasattr(e, 'result') and hasattr(e.result, 'x'):
+                estimated_tensors = e.result.x
         except Exception as e:
             print(f"Optimization failed: {e}")
             import traceback

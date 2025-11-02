@@ -1,8 +1,8 @@
 # @package _global_.trainer_params
-# Quick check/test trainer for physical models - only 2 epochs
+# Quick check/test trainer for physical models - 20 epochs for convergence
 learning_rate: 0.0001
 batch_size: 1
-epochs: 2
+epochs: 20
 num_predict_steps: 5
 
 train_sim: []
