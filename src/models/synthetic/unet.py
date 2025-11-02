@@ -48,7 +48,7 @@ class UNet(nn.Module):
         # Build channel indices for slicing
         self._build_channel_indices()
 
-        # Get architecture params
+        # Get architecture params (with defaults for backwards compatibility)
         arch_config = config.get("architecture", {})
         levels = arch_config.get("levels", 4)
         filters = arch_config.get("filters", 64)

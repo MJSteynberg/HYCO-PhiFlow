@@ -17,3 +17,10 @@ weight_decay: 0.0
 # Checkpoint settings
 save_interval: 10
 save_best_only: true
+checkpoint_freq: 50
+
+# Progress reporting
+print_freq: 10
+
+# Memory monitoring
+memory_monitor_batches: 5

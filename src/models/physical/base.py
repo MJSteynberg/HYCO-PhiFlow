@@ -45,7 +45,7 @@ class PhysicalModel(ABC):
         self.resolution = self._parse_resolution(config.get("resolution", {}))
         self.dt = float(config.get("dt", 0.1))
 
-        # Parse batch_size from pde_params if present, otherwise default to 1
+        # Parse batch_size from pde_params (default: 1)
         pde_params = config.get("pde_params", {})
         self.batch_size = int(pde_params.get("batch_size", 1))
 

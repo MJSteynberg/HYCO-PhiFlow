@@ -11,5 +11,11 @@ learnable_parameters: []
 
 # Optimizer settings
 method: 'L-BFGS-B'
-abs_tol: 0.000001
+abs_tol: 1e-6
 max_iterations: null
+
+# Progress reporting
+print_freq: 10
+
+# Checkpoint settings
+checkpoint_freq: 50

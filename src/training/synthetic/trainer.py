@@ -98,7 +98,7 @@ class SyntheticTrainer(TensorTrainer):
             try:
                 from src.utils.memory_monitor import EpochPerformanceMonitor
 
-                verbose_batches = self.trainer_config.get("memory_monitor_batches", 5)
+                verbose_batches = self.trainer_config["memory_monitor_batches"]
                 self.memory_monitor = EpochPerformanceMonitor(
                     enabled=True,
                     verbose_batches=verbose_batches,

@@ -244,11 +244,17 @@ class PhysicalTrainer(FieldTrainer):
         Required by FieldTrainer.
         Setup optimization configuration for math.minimize.
         """
+        method = self.trainer_config.get("method", "L-BFGS-B")
+        abs_tol = self.trainer_config.get("abs_tol", 1e-6)
+        max_iterations = self.trainer_config.get(
+            "max_iterations", self.num_epochs
+        )  # Use epochs if not specified
+
         return math.Solve(
-            method="L-BFGS-B",
-            abs_tol=1e-6,
+            method=method,
+            abs_tol=abs_tol,
             x0=self.initial_guesses,
-            max_iterations=self.num_epochs,
+            max_iterations=max_iterations,
         )
 
     def train(self):
@@ -362,11 +368,17 @@ class PhysicalTrainer(FieldTrainer):
         print(f"Initial guess: {', '.join(initial_guess_strs)}")
         print(f"Initial loss: {initial_loss}")
 
+        method = self.trainer_config.get("method", "L-BFGS-B")
+        abs_tol = self.trainer_config.get("abs_tol", 1e-6)
+        max_iterations = self.trainer_config.get(
+            "max_iterations", self.num_epochs
+        )  # Use epochs if not specified
+
         solve_params = math.Solve(
-            method="L-BFGS-B",
-            abs_tol=1e-6,
+            method=method,
+            abs_tol=abs_tol,
             x0=self.initial_guesses,
-            max_iterations=self.num_epochs,
+            max_iterations=max_iterations,
         )
 
         try:

@@ -246,7 +246,7 @@ class FieldTrainer(AbstractTrainer):
         initial_state = {name: field.time[0] for name, field in initial_data.items()}
 
         # Get number of prediction steps from config
-        num_steps = self.config.get("trainer_params", {}).get("num_predict_steps", 4)
+        num_steps = self.config["trainer_params"]["num_predict_steps"]
 
         # Run simulation
         predictions = {name: [initial_state[name]] for name in initial_state.keys()}

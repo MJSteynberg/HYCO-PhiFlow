@@ -171,15 +171,15 @@ class TensorTrainer(AbstractTrainer):
 
     def get_num_epochs(self) -> int:
         """Get number of training epochs from config."""
-        return self.config.get("trainer_params", {}).get("epochs", 100)
+        return self.config["trainer_params"]["epochs"]
 
     def get_print_frequency(self) -> int:
         """Get how often to print progress (in epochs)."""
-        return self.config.get("trainer_params", {}).get("print_freq", 10)
+        return self.config["trainer_params"]["print_freq"]
 
     def get_checkpoint_frequency(self) -> int:
         """Get how often to save checkpoints (in epochs)."""
-        return self.config.get("trainer_params", {}).get("checkpoint_freq", 50)
+        return self.config["trainer_params"]["checkpoint_freq"]
 
     # =========================================================================
     # PyTorch-Specific Utilities

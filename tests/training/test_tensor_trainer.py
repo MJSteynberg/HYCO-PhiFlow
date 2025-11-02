@@ -15,6 +15,18 @@ from src.training.tensor_trainer import TensorTrainer
 from src.training.abstract_trainer import AbstractTrainer
 
 
+@pytest.fixture
+def default_trainer_config():
+    """Provides default trainer configuration matching Hydra defaults."""
+    return {
+        "trainer_params": {
+            "epochs": 100,
+            "print_freq": 10,
+            "checkpoint_freq": 50,
+        }
+    }
+
+
 class SimpleConcreteTensorTrainer(TensorTrainer):
     """Minimal concrete implementation for testing."""
 
@@ -54,13 +66,13 @@ class SimpleConcreteTensorTrainer(TensorTrainer):
 class TestTensorTrainerInheritance:
     """Tests for TensorTrainer inheritance."""
 
-    def test_tensor_trainer_inherits_from_abstract_trainer(self):
+    def test_tensor_trainer_inherits_from_abstract_trainer(self, default_trainer_config):
         """Test that TensorTrainer inherits from AbstractTrainer."""
         assert issubclass(TensorTrainer, AbstractTrainer)
 
-    def test_concrete_trainer_is_tensor_trainer(self):
+    def test_concrete_trainer_is_tensor_trainer(self, default_trainer_config):
         """Test that concrete implementation is a TensorTrainer."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         assert isinstance(trainer, TensorTrainer)
         assert isinstance(trainer, AbstractTrainer)
 
@@ -68,20 +80,20 @@ class TestTensorTrainerInheritance:
 class TestTensorTrainerInitialization:
     """Tests for TensorTrainer initialization."""
 
-    def test_device_assignment(self):
+    def test_device_assignment(self, default_trainer_config):
         """Test that device is properly assigned."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
 
         assert hasattr(trainer, "device")
         assert isinstance(trainer.device, torch.device)
         assert trainer.device.type in ["cuda", "cpu"]
 
-    def test_device_is_cuda_or_cpu(self):
+    def test_device_is_cuda_or_cpu(self, default_trainer_config):
         """Test that device is either CUDA or CPU."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         assert trainer.device.type in ["cuda", "cpu"]
 
-    def test_model_initialized_as_none(self):
+    def test_model_initialized_as_none(self, default_trainer_config):
         """Test that model is initialized as None by TensorTrainer."""
         config = {}
 
@@ -103,7 +115,7 @@ class TestTensorTrainerInitialization:
         trainer = PartialTrainer(config)
         assert trainer.model is None
 
-    def test_optimizer_initialized_as_none(self):
+    def test_optimizer_initialized_as_none(self, default_trainer_config):
         """Test that optimizer is initialized as None."""
 
         class PartialTrainer(TensorTrainer):
@@ -122,7 +134,7 @@ class TestTensorTrainerInitialization:
         trainer = PartialTrainer({})
         assert trainer.optimizer is None
 
-    def test_dataloader_initialized_as_none(self):
+    def test_dataloader_initialized_as_none(self, default_trainer_config):
         """Test that dataloader is initialized as None."""
 
         class PartialTrainer(TensorTrainer):
@@ -141,9 +153,9 @@ class TestTensorTrainerInitialization:
         trainer = PartialTrainer({})
         assert trainer.dataloader is None
 
-    def test_checkpoint_path_initialized_as_none(self):
+    def test_checkpoint_path_initialized_as_none(self, default_trainer_config):
         """Test that checkpoint_path is initialized as None."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         # Subclass may set it, but base initializes to None
         assert hasattr(trainer, "checkpoint_path")
 
@@ -151,19 +163,19 @@ class TestTensorTrainerInitialization:
 class TestTensorTrainerAbstractMethods:
     """Tests for abstract method enforcement."""
 
-    def test_tensor_trainer_has_abstract_methods(self):
+    def test_tensor_trainer_has_abstract_methods(self, default_trainer_config):
         """Test that TensorTrainer defines expected abstract methods."""
         abstract_methods = TensorTrainer.__abstractmethods__
 
         expected = {"_create_model", "_create_data_loader", "_train_epoch"}
         assert expected.issubset(abstract_methods)
 
-    def test_tensor_trainer_is_abstract(self):
+    def test_tensor_trainer_is_abstract(self, default_trainer_config):
         """Test that TensorTrainer cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
             TensorTrainer({})
 
-    def test_missing_create_model_raises_error(self):
+    def test_missing_create_model_raises_error(self, default_trainer_config):
         """Test that missing _create_model() raises TypeError."""
 
         class IncompleteTrainer(TensorTrainer):
@@ -176,7 +188,7 @@ class TestTensorTrainerAbstractMethods:
         with pytest.raises(TypeError):
             IncompleteTrainer({})
 
-    def test_missing_create_data_loader_raises_error(self):
+    def test_missing_create_data_loader_raises_error(self, default_trainer_config):
         """Test that missing _create_data_loader() raises TypeError."""
 
         class IncompleteTrainer(TensorTrainer):
@@ -189,7 +201,7 @@ class TestTensorTrainerAbstractMethods:
         with pytest.raises(TypeError):
             IncompleteTrainer({})
 
-    def test_missing_train_epoch_raises_error(self):
+    def test_missing_train_epoch_raises_error(self, default_trainer_config):
         """Test that missing _train_epoch() raises TypeError."""
 
         class IncompleteTrainer(TensorTrainer):
@@ -237,7 +249,7 @@ class TestTensorTrainerDefaultTrain:
         assert len(result["losses"]) == 3  # 3 epochs
         assert len(result["epochs"]) == 3
 
-    def test_train_requires_model_and_dataloader(self):
+    def test_train_requires_model_and_dataloader(self, default_trainer_config):
         """Test that train() raises error if model or dataloader not set."""
 
         class NoModelTrainer(TensorTrainer):
@@ -266,36 +278,36 @@ class TestTensorTrainerDefaultTrain:
 class TestTensorTrainerConfigMethods:
     """Tests for configuration getter methods."""
 
-    def test_get_num_epochs_default(self):
-        """Test default number of epochs."""
-        trainer = SimpleConcreteTensorTrainer({})
+    def test_get_num_epochs_default(self, default_trainer_config):
+        """Test default number of epochs from Hydra config."""
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         assert trainer.get_num_epochs() == 100
 
-    def test_get_num_epochs_custom(self):
+    def test_get_num_epochs_custom(self, default_trainer_config):
         """Test custom number of epochs."""
-        config = {"trainer_params": {"epochs": 50}}
+        config = {"trainer_params": {"epochs": 50, "print_freq": 10, "checkpoint_freq": 50}}
         trainer = SimpleConcreteTensorTrainer(config)
         assert trainer.get_num_epochs() == 50
 
-    def test_get_print_frequency_default(self):
-        """Test default print frequency."""
-        trainer = SimpleConcreteTensorTrainer({})
+    def test_get_print_frequency_default(self, default_trainer_config):
+        """Test default print frequency from Hydra config."""
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         assert trainer.get_print_frequency() == 10
 
-    def test_get_print_frequency_custom(self):
+    def test_get_print_frequency_custom(self, default_trainer_config):
         """Test custom print frequency."""
-        config = {"trainer_params": {"print_freq": 5}}
+        config = {"trainer_params": {"epochs": 100, "print_freq": 5, "checkpoint_freq": 50}}
         trainer = SimpleConcreteTensorTrainer(config)
         assert trainer.get_print_frequency() == 5
 
-    def test_get_checkpoint_frequency_default(self):
-        """Test default checkpoint frequency."""
-        trainer = SimpleConcreteTensorTrainer({})
+    def test_get_checkpoint_frequency_default(self, default_trainer_config):
+        """Test default checkpoint frequency from Hydra config."""
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         assert trainer.get_checkpoint_frequency() == 50
 
-    def test_get_checkpoint_frequency_custom(self):
+    def test_get_checkpoint_frequency_custom(self, default_trainer_config):
         """Test custom checkpoint frequency."""
-        config = {"trainer_params": {"checkpoint_freq": 25}}
+        config = {"trainer_params": {"epochs": 100, "print_freq": 10, "checkpoint_freq": 25}}
         trainer = SimpleConcreteTensorTrainer(config)
         assert trainer.get_checkpoint_frequency() == 25
 
@@ -319,15 +331,15 @@ class TestTensorTrainerCheckpointManagement:
         trainer.save_checkpoint(epoch=1, loss=0.5)
         assert trainer.checkpoint_path.exists()
 
-    def test_save_checkpoint_without_path_raises_error(self):
+    def test_save_checkpoint_without_path_raises_error(self, default_trainer_config):
         """Test that save_checkpoint without path raises ValueError."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         trainer.checkpoint_path = None
 
         with pytest.raises(ValueError, match="checkpoint_path not set"):
             trainer.save_checkpoint(epoch=1, loss=0.5)
 
-    def test_save_checkpoint_without_model_raises_error(self):
+    def test_save_checkpoint_without_model_raises_error(self, default_trainer_config):
         """Test that save_checkpoint without model raises RuntimeError."""
         config = {}
 
@@ -417,15 +429,15 @@ class TestTensorTrainerCheckpointManagement:
 class TestTensorTrainerModelSummary:
     """Tests for model parameter counting."""
 
-    def test_get_parameter_count(self):
+    def test_get_parameter_count(self, default_trainer_config):
         """Test that get_parameter_count returns correct count."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         # Linear(10, 5) has 10*5 weights + 5 biases = 55 parameters
         assert trainer.get_parameter_count() == 55
 
-    def test_get_trainable_parameter_count(self):
+    def test_get_trainable_parameter_count(self, default_trainer_config):
         """Test counting only trainable parameters."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
 
         # Freeze some parameters
         for param in list(trainer.model.parameters())[:1]:
@@ -436,7 +448,7 @@ class TestTensorTrainerModelSummary:
 
         assert trainable_count < total_count
 
-    def test_get_parameter_count_without_model(self):
+    def test_get_parameter_count_without_model(self, default_trainer_config):
         """Test parameter count when model is None."""
 
         class NoModelTrainer(TensorTrainer):
@@ -457,12 +469,12 @@ class TestTensorTrainerModelSummary:
         assert trainer.get_parameter_count() == 0
         assert trainer.get_trainable_parameter_count() == 0
 
-    def test_print_model_summary_executes(self):
+    def test_print_model_summary_executes(self, default_trainer_config):
         """Test that print_model_summary executes without error."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         trainer.print_model_summary()  # Should not raise error
 
-    def test_print_model_summary_without_model(self):
+    def test_print_model_summary_without_model(self, default_trainer_config):
         """Test print_model_summary when model is None."""
 
         class NoModelTrainer(TensorTrainer):
@@ -486,16 +498,16 @@ class TestTensorTrainerModelSummary:
 class TestTensorTrainerDeviceManagement:
     """Tests for device management."""
 
-    def test_move_model_to_device(self):
+    def test_move_model_to_device(self, default_trainer_config):
         """Test that model can be moved to device."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         trainer.move_model_to_device()
 
         # Check that model parameters are on the right device
         for param in trainer.model.parameters():
             assert param.device.type == trainer.device.type
 
-    def test_move_model_to_device_without_model(self):
+    def test_move_model_to_device_without_model(self, default_trainer_config):
         """Test move_model_to_device when model is None."""
 
         class NoModelTrainer(TensorTrainer):
@@ -519,23 +531,23 @@ class TestTensorTrainerDeviceManagement:
 class TestTensorTrainerModeManagement:
     """Tests for training/eval mode management."""
 
-    def test_set_train_mode(self):
+    def test_set_train_mode(self, default_trainer_config):
         """Test that model can be set to training mode."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         trainer.set_train_mode()
 
         assert trainer.model.training is True
 
-    def test_set_eval_mode(self):
+    def test_set_eval_mode(self, default_trainer_config):
         """Test that model can be set to evaluation mode."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
         trainer.set_eval_mode()
 
         assert trainer.model.training is False
 
-    def test_mode_toggle(self):
+    def test_mode_toggle(self, default_trainer_config):
         """Test toggling between train and eval modes."""
-        trainer = SimpleConcreteTensorTrainer({})
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
 
         trainer.set_train_mode()
         assert trainer.model.training is True
@@ -550,9 +562,15 @@ class TestTensorTrainerModeManagement:
 class TestTensorTrainerIntegration:
     """Integration tests for TensorTrainer."""
 
-    def test_full_training_workflow(self):
+    def test_full_training_workflow(self, default_trainer_config):
         """Test complete training workflow."""
-        config = {"trainer_params": {"epochs": 2}}
+        config = {
+            "trainer_params": {
+                "epochs": 2,
+                "print_freq": 1,
+                "checkpoint_freq": 50
+            }
+        }
         trainer = SimpleConcreteTensorTrainer(config)
 
         # Train
@@ -562,7 +580,7 @@ class TestTensorTrainerIntegration:
         assert len(result["losses"]) == 2
         assert all(isinstance(loss, float) for loss in result["losses"])
 
-    def test_multiple_trainers_independent(self):
+    def test_multiple_trainers_independent(self, default_trainer_config):
         """Test that multiple trainer instances are independent."""
         trainer1 = SimpleConcreteTensorTrainer({"id": 1})
         trainer2 = SimpleConcreteTensorTrainer({"id": 2})
