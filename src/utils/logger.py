@@ -28,6 +28,12 @@ class ColoredFormatter(logging.Formatter):
     RESET = "\033[0m"
 
     def format(self, record):
+        # Shorten module name to last component
+        name_parts = record.name.split('.')
+        if len(name_parts) > 2:
+            # Keep only the last 2 parts (e.g., training.synthetic_trainer)
+            record.name = '.'.join(name_parts[-2:])
+        
         log_color = self.COLORS.get(record.levelname, self.RESET)
         record.levelname = f"{log_color}{record.levelname}{self.RESET}"
         return super().format(record)
@@ -60,6 +66,7 @@ def setup_logger(
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    logger.propagate = False  # Don't propagate to root logger (avoids Hydra duplicate)
 
     # Avoid duplicate handlers
     if logger.handlers:
@@ -69,8 +76,9 @@ def setup_logger(
     if log_to_console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
+        # Simplified format: just [module] LEVEL: message
         console_format = ColoredFormatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+            "[%(name)s] %(levelname)s: %(message)s"
         )
         console_handler.setFormatter(console_format)
         logger.addHandler(console_handler)
@@ -94,7 +102,7 @@ def setup_logger(
         file_handler.setFormatter(file_format)
         logger.addHandler(file_handler)
 
-        logger.info(f"Logging to file: {log_file}")
+        logger.debug(f"Logging to file: {log_file}")
 
     return logger
 

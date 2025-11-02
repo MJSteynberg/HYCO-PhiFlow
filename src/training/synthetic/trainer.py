@@ -19,6 +19,11 @@ from src.training.tensor_trainer import TensorTrainer
 # Import the model registry
 from src.models import ModelRegistry
 
+# Import logging
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class SyntheticTrainer(TensorTrainer):
     """
@@ -105,12 +110,12 @@ class SyntheticTrainer(TensorTrainer):
                     verbose_batches=verbose_batches,
                     device=0 if torch.cuda.is_available() else -1,
                 )
-                print(
+                logger.info(
                     f"Performance monitoring enabled (verbose for first {verbose_batches} batches)"
                 )
             except ImportError:
-                print(
-                    "Warning: Could not import EpochPerformanceMonitor. Monitoring disabled."
+                logger.warning(
+                    "Could not import EpochPerformanceMonitor. Monitoring disabled."
                 )
                 self.memory_monitor = None
         else:
@@ -140,7 +145,7 @@ class SyntheticTrainer(TensorTrainer):
 
     def _create_data_loaders(self):
         """Creates DataManager and train/validation DataLoaders."""
-        print(f"Setting up DataManager for '{self.dset_name}'...")
+        logger.debug(f"Setting up DataManager for '{self.dset_name}'")
 
         # Paths
         project_root = Path(self.config.get("project_root", "."))
@@ -180,7 +185,7 @@ class SyntheticTrainer(TensorTrainer):
         mode_desc = (
             "sliding window" if self.use_sliding_window else "single starting point"
         )
-        print(
+        logger.debug(
             f"Train DataLoader: {len(train_dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
         )
 
@@ -206,30 +211,33 @@ class SyntheticTrainer(TensorTrainer):
                 pin_memory=True if torch.cuda.is_available() else False,
             )
             
-            print(
+            logger.debug(
                 f"Val DataLoader: {len(val_dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
             )
         else:
             self.val_loader = None
-            print("No validation data specified (val_sim is empty)")
+            logger.warning("No validation data specified (val_sim is empty)")
 
     def _create_model(self):
         """Creates the synthetic model using the registry."""
         model_name = self.model_config.get("name", "UNet")
-        print(f"Creating synthetic model: {model_name}...")
+        logger.debug(f"Creating synthetic model: {model_name}")
 
         model = ModelRegistry.get_synthetic_model(model_name, config=self.model_config)
 
         try:
-            model.load_state_dict(
-                torch.load(self.checkpoint_path, map_location=self.device)
-            )
-            print(f"Loaded model weights from {self.checkpoint_path}")
+            checkpoint = torch.load(self.checkpoint_path, map_location=self.device)
+            # Handle both direct state_dict and nested checkpoint formats
+            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                model.load_state_dict(checkpoint["model_state_dict"])
+            else:
+                model.load_state_dict(checkpoint)
+            logger.debug(f"Loaded model weights from {self.checkpoint_path}")
         except FileNotFoundError:
-            print("No pre-existing model weights found. Training from scratch.")
+            logger.warning("No pre-existing model weights found. Training from scratch.")
 
         model = model.to(self.device)
-        print("Model created successfully and moved to device.")
+        logger.debug("Model created successfully and moved to device.")
         return model
 
     def _compute_batch_loss(self, batch) -> torch.Tensor:

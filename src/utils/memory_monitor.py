@@ -17,6 +17,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from collections import defaultdict
 
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class MemoryMonitor:
     """Monitor CPU and GPU memory usage during training."""
@@ -101,11 +105,11 @@ class MemoryMonitor:
         gpu_reserved = MemoryMonitor.get_gpu_memory_reserved_mb(device)
 
         if torch.cuda.is_available():
-            print(
+            logger.info(
                 f"{prefix}CPU: {cpu_mem:.1f} MB | GPU Allocated: {gpu_mem:.1f} MB | GPU Reserved: {gpu_reserved:.1f} MB"
             )
         else:
-            print(f"{prefix}CPU: {cpu_mem:.1f} MB | GPU: Not available")
+            logger.info(f"{prefix}CPU: {cpu_mem:.1f} MB | GPU: Not available")
 
     @staticmethod
     def log_memory_usage(logger, prefix: str = "", device: int = 0):
@@ -167,27 +171,27 @@ class MemoryTracker:
     def print_summary(self):
         """Print summary of all recorded memory snapshots."""
         if not self.records:
-            print("No memory records available")
+            logger.info("No memory records available")
             return
 
-        print("\n" + "=" * 80)
-        print("Memory Usage Summary")
-        print("=" * 80)
-        print(
+        logger.info("\n" + "=" * 80)
+        logger.info("Memory Usage Summary")
+        logger.info("=" * 80)
+        logger.info(
             f"{'Label':<30} {'CPU (MB)':<12} {'GPU Alloc (MB)':<15} {'GPU Reserved (MB)':<15}"
         )
-        print("-" * 80)
+        logger.info("-" * 80)
 
         for record in self.records:
             label = record["label"]
             cpu = record["cpu_memory_mb"]
             gpu_alloc = record["gpu_memory_allocated_mb"]
             gpu_reserved = record["gpu_memory_reserved_mb"]
-            print(
+            logger.info(
                 f"{label:<30} {cpu:>10.1f}   {gpu_alloc:>13.1f}   {gpu_reserved:>17.1f}"
             )
 
-        print("=" * 80 + "\n")
+        logger.info("=" * 80 + "\n")
 
     def get_peak_memory(self) -> Dict[str, float]:
         """
@@ -244,10 +248,10 @@ def track_memory(label: str = "operation", device: int = 0, print_output: bool =
         gpu_delta = end_gpu - start_gpu
 
         if print_output:
-            print(f"[Memory] {label}: CPU {cpu_delta:+.1f} MB, GPU {gpu_delta:+.1f} MB")
+            logger.info(f"[Memory] {label}: CPU {cpu_delta:+.1f} MB, GPU {gpu_delta:+.1f} MB")
             if torch.cuda.is_available():
                 peak_gpu = torch.cuda.max_memory_allocated(device) / 1024 / 1024
-                print(f"         Peak GPU: {peak_gpu:.1f} MB")
+                logger.info(f"         Peak GPU: {peak_gpu:.1f} MB")
 
 
 def monitor_memory(label: Optional[str] = None, device: int = 0, verbose: bool = True):
@@ -285,12 +289,12 @@ def monitor_memory(label: Optional[str] = None, device: int = 0, verbose: bool =
             if verbose:
                 cpu_delta = end_cpu - start_cpu
                 gpu_delta = end_gpu - start_gpu
-                print(
+                logger.info(
                     f"[Memory] {func_label}: CPU {cpu_delta:+.1f} MB, GPU {gpu_delta:+.1f} MB"
                 )
                 if torch.cuda.is_available():
                     peak_gpu = torch.cuda.max_memory_allocated(device) / 1024 / 1024
-                    print(f"         Peak GPU: {peak_gpu:.1f} MB")
+                    logger.info(f"         Peak GPU: {peak_gpu:.1f} MB")
 
             return result
 
@@ -359,7 +363,7 @@ class EpochMemoryMonitor:
         cpu_mem = MemoryMonitor.get_cpu_memory_mb()
 
         loss_str = f", loss={loss:.6f}" if loss is not None else ""
-        print(
+        logger.info(
             f"  Batch {batch_idx}: GPU {gpu_mem:.1f} MB, CPU {cpu_mem:.1f} MB{loss_str}"
         )
 
@@ -375,7 +379,7 @@ class EpochMemoryMonitor:
             current_gpu = MemoryMonitor.get_gpu_memory_mb(self.device)
             reserved_gpu = MemoryMonitor.get_gpu_memory_reserved_mb(self.device)
 
-            print(
+            logger.info(
                 f"  Epoch end: GPU {current_gpu:.1f} MB allocated, "
                 f"{reserved_gpu:.1f} MB reserved, peak {peak_gpu:.1f} MB"
             )
@@ -454,10 +458,10 @@ class BatchMemoryProfiler:
         if not self.enabled or not self.checkpoints:
             return
 
-        print(f"    Memory profile:")
+        logger.info(f"    Memory profile:")
         for cp in self.checkpoints:
             delta_str = f"{cp['gpu_delta']:+.1f}" if cp["gpu_delta"] != 0 else " 0.0"
-            print(
+            logger.info(
                 f"      {cp['from']} → {cp['label']}: "
                 f"GPU {cp['gpu_mb']:.1f} MB ({delta_str} MB)"
             )
@@ -611,38 +615,38 @@ class PerformanceMonitor:
             show_aggregate: Whether to show aggregated statistics
         """
         if not self.metrics:
-            print("No performance metrics recorded")
+            logger.info("No performance metrics recorded")
             return
 
-        print("\n" + "=" * 90)
-        print("PERFORMANCE SUMMARY")
-        print("=" * 90)
-        print(
+        logger.info("\n" + "=" * 90)
+        logger.info("PERFORMANCE SUMMARY")
+        logger.info("=" * 90)
+        logger.info(
             f"{'Operation':<30} {'Time (s)':<12} {'CPU (MB)':<15} {'GPU (MB)':<15} {'GPU Peak':<12}"
         )
-        print("-" * 90)
+        logger.info("-" * 90)
 
         for m in self.metrics:
             cpu_str = f"{m.cpu_delta_mb:+.1f}".rjust(7)
             gpu_str = f"{m.gpu_delta_mb:+.1f}".rjust(7)
-            print(
+            logger.info(
                 f"{m.operation:<30} {m.duration_seconds:>10.3f}  {cpu_str:>13}  {gpu_str:>13}  {m.gpu_peak_mb:>10.1f}"
             )
 
         # Total time
         total_time = sum(m.duration_seconds for m in self.metrics)
-        print("-" * 90)
-        print(f"{'TOTAL':<30} {total_time:>10.3f}s")
+        logger.info("-" * 90)
+        logger.info(f"{'TOTAL':<30} {total_time:>10.3f}s")
 
         # Aggregate statistics
         if show_aggregate and self.aggregate_metrics:
-            print("\n" + "=" * 90)
-            print("AGGREGATE STATISTICS (for repeated operations)")
-            print("=" * 90)
-            print(
+            logger.info("\n" + "=" * 90)
+            logger.info("AGGREGATE STATISTICS (for repeated operations)")
+            logger.info("=" * 90)
+            logger.info(
                 f"{'Operation':<30} {'Count':<8} {'Total (s)':<12} {'Mean (s)':<12} {'Min (s)':<12} {'Max (s)':<12}"
             )
-            print("-" * 90)
+            logger.info("-" * 90)
 
             for op_name, durations in self.aggregate_metrics.items():
                 count = len(durations)
@@ -651,11 +655,11 @@ class PerformanceMonitor:
                 min_dur = min(durations)
                 max_dur = max(durations)
 
-                print(
+                logger.info(
                     f"{op_name:<30} {count:<8} {total:<12.3f} {mean:<12.3f} {min_dur:<12.3f} {max_dur:<12.3f}"
                 )
 
-        print("=" * 90 + "\n")
+        logger.info("=" * 90 + "\n")
 
     def get_metrics(self) -> List[PerformanceMetrics]:
         """Get all recorded metrics."""
@@ -718,12 +722,12 @@ def track_performance(operation: str, print_result: bool = True, device: int = 0
         gpu_delta = gpu_end - gpu_start
 
         if print_result:
-            print(
+            logger.info(
                 f"[Performance] {operation}: {duration:.3f}s, CPU {cpu_delta:+.1f}MB, GPU {gpu_delta:+.1f}MB"
             )
             if torch.cuda.is_available():
                 gpu_peak = torch.cuda.max_memory_allocated(device) / 1024 / 1024
-                print(f"              GPU peak: {gpu_peak:.1f}MB")
+                logger.info(f"              GPU peak: {gpu_peak:.1f}MB")
 
 
 def monitor_performance(operation: Optional[str] = None, device: int = 0):
@@ -773,12 +777,12 @@ def monitor_performance(operation: Optional[str] = None, device: int = 0):
             cpu_delta = cpu_end - cpu_start
             gpu_delta = gpu_end - gpu_start
 
-            print(
+            logger.info(
                 f"[Performance] {op_name}: {duration:.3f}s, CPU {cpu_delta:+.1f}MB, GPU {gpu_delta:+.1f}MB"
             )
             if torch.cuda.is_available():
                 gpu_peak = torch.cuda.max_memory_allocated(device) / 1024 / 1024
-                print(f"              GPU peak: {gpu_peak:.1f}MB")
+                logger.info(f"              GPU peak: {gpu_peak:.1f}MB")
 
             return result
 
@@ -863,7 +867,7 @@ class EpochPerformanceMonitor:
             cpu_mem = MemoryMonitor.get_cpu_memory_mb()
 
             loss_str = f", loss={loss:.6f}" if loss is not None else ""
-            print(
+            logger.info(
                 f"  Batch {batch_idx}: {batch_time:.3f}s, GPU {gpu_mem:.1f}MB, CPU {cpu_mem:.1f}MB{loss_str}"
             )
 
@@ -882,19 +886,19 @@ class EpochPerformanceMonitor:
             current_gpu = MemoryMonitor.get_gpu_memory_mb(self.device)
             reserved_gpu = MemoryMonitor.get_gpu_memory_reserved_mb(self.device)
 
-            print(
+            logger.info(
                 f"  Epoch end: {epoch_time:.3f}s total, GPU {current_gpu:.1f}MB allocated, "
                 f"{reserved_gpu:.1f}MB reserved, peak {peak_gpu:.1f}MB"
             )
         else:
-            print(f"  Epoch end: {epoch_time:.3f}s total")
+            logger.info(f"  Epoch end: {epoch_time:.3f}s total")
 
         # Batch statistics
         if self._batch_times:
             avg_batch = sum(self._batch_times) / len(self._batch_times)
             min_batch = min(self._batch_times)
             max_batch = max(self._batch_times)
-            print(
+            logger.info(
                 f"  Batch timing: avg={avg_batch:.3f}s, min={min_batch:.3f}s, max={max_batch:.3f}s"
             )
 

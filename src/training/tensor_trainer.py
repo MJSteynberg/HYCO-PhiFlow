@@ -200,9 +200,9 @@ class TensorTrainer(AbstractTrainer):
         has_validation = self.val_loader is not None and len(self.val_loader) > 0
         validate_every = self.config["trainer_params"].get("validate_every", 1)
 
-        logger.info(f"Starting Training on {self.device}")
+        logger.info(f"Training on {self.device}")
         if has_validation:
-            logger.info(f"Validation enabled (every {validate_every} epoch(s))")
+            logger.debug(f"Validation every {validate_every} epoch(s)")
 
         # Create progress bar for epochs
         pbar = tqdm(range(self.get_num_epochs()), desc="Training", unit="epoch")
@@ -266,10 +266,9 @@ class TensorTrainer(AbstractTrainer):
                     ),
                 )
 
-        logger.info("Training Complete!")
-        if has_validation:
-            logger.info(f"Best Epoch: {results['best_epoch']}, Best Val Loss: {results['best_val_loss']:.6f}")
-        logger.info(f"Final Train Loss: {results['train_losses'][-1]:.6f}")
+        logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, " + 
+                   (f"Val Loss: {results['best_val_loss']:.6f}, " if has_validation else "") +
+                   f"Train Loss: {results['train_losses'][-1]:.6f}")
 
         return results
 
@@ -333,13 +332,13 @@ class TensorTrainer(AbstractTrainer):
 
         # Save regular checkpoint
         torch.save(checkpoint, self.checkpoint_path)
-        logger.info(f"Saved checkpoint to {self.checkpoint_path}")
+        logger.debug(f"Saved checkpoint to {self.checkpoint_path}")
 
         # Save best checkpoint if specified
         if is_best:
             best_path = Path(self.checkpoint_path).parent / "best.pth"
             torch.save(checkpoint, best_path)
-            logger.info(f"Saved best checkpoint to {best_path}")
+            logger.debug(f"Saved best checkpoint to {best_path}")
 
     def load_checkpoint(
         self, path: Optional[Path] = None, strict: bool = True
@@ -375,11 +374,11 @@ class TensorTrainer(AbstractTrainer):
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
 
-        logger.info(f"Loaded checkpoint from {path}")
+        logger.debug(f"Loaded checkpoint from {path}")
         if "epoch" in checkpoint:
-            logger.info(f"  Epoch: {checkpoint['epoch']}")
+            logger.debug(f"  Epoch: {checkpoint['epoch']}")
         if "loss" in checkpoint:
-            logger.info(f"  Loss: {checkpoint['loss']:.6f}")
+            logger.debug(f"  Loss: {checkpoint['loss']:.6f}")
 
         return checkpoint
 

@@ -16,7 +16,10 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 
+from src.utils.logger import get_logger
 from .metrics import compute_all_metrics, compute_metrics_per_field
+
+logger = get_logger(__name__)
 
 
 def create_comparison_gif(
@@ -155,10 +158,10 @@ def create_comparison_gif(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Saving animation to {save_path}...")
+    logger.debug(f"Saving animation to {save_path}...")
     anim.save(str(save_path), writer="pillow", fps=fps)
     plt.close(fig)
-    print(f"Animation saved successfully!")
+    logger.debug(f"Animation saved successfully!")
 
 
 def create_comparison_gif_from_specs(
@@ -199,7 +202,7 @@ def create_comparison_gif_from_specs(
     channel_idx = 0
 
     for field_name, num_channels in field_specs.items():
-        print(f"\nCreating animation for '{field_name}' ({num_channels} channels)...")
+        logger.debug(f"Creating animation for '{field_name}' ({num_channels} channels)...")
 
         # Extract field data
         pred_field = prediction[:, channel_idx : channel_idx + num_channels, :, :]
@@ -311,7 +314,7 @@ def plot_side_by_side_frame(
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-        print(f"Frame saved to {save_path}")
+        logger.debug(f"Frame saved to {save_path}")
 
     return fig
 
@@ -420,7 +423,7 @@ def plot_error_vs_time(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"Error plot saved to {save_path}")
+    logger.debug(f"Error plot saved to {save_path}")
 
     return fig
 
@@ -454,7 +457,7 @@ def plot_error_vs_time_multi_field(
     channel_idx = 0
 
     for field_name, num_channels in field_specs.items():
-        print(f"\nCreating error plot for '{field_name}'...")
+        logger.debug(f"Creating error plot for '{field_name}'...")
 
         # Extract field data
         pred_field = prediction[:, channel_idx : channel_idx + num_channels, :, :]
@@ -546,7 +549,7 @@ def plot_error_comparison(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"Comparison plot saved to {save_path}")
+    logger.debug(f"Comparison plot saved to {save_path}")
 
     return fig
 
@@ -620,7 +623,7 @@ def plot_error_heatmap(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"Heatmap saved to {save_path}")
+    logger.debug(f"Heatmap saved to {save_path}")
 
     return fig
 
@@ -820,7 +823,7 @@ def plot_keyframe_comparison(
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"Keyframe comparison saved to {save_path}")
+    logger.debug(f"Keyframe comparison saved to {save_path}")
     plt.close(fig)
 
     return fig
@@ -857,7 +860,7 @@ def plot_keyframe_comparison_multi_field(
     channel_idx = 0
 
     for field_name, num_channels in field_specs.items():
-        print(f"\nCreating keyframe comparison for '{field_name}'...")
+        logger.debug(f"Creating keyframe comparison for '{field_name}'...")
 
         # Extract field data
         pred_field = prediction[:, channel_idx : channel_idx + num_channels, :, :]
@@ -923,12 +926,12 @@ def create_evaluation_summary(
 
     saved_paths = {}
 
-    print(f"\n{'='*60}")
-    print(f"Creating evaluation summary for '{field_name}'")
-    print(f"{'='*60}")
+    logger.debug(f"\n{'='*60}")
+    logger.debug(f"Creating evaluation summary for '{field_name}'")
+    logger.debug(f"{'='*60}")
 
     # 1. Create animation
-    print("\n[1/4] Creating comparison animation...")
+    logger.debug("\n[1/4] Creating comparison animation...")
     anim_path = save_dir / f"{field_name}_animation.gif"
     create_comparison_gif(
         prediction,
@@ -941,7 +944,7 @@ def create_evaluation_summary(
     saved_paths["animation"] = anim_path
 
     # 2. Create error plot
-    print("\n[2/4] Creating error vs time plot...")
+    logger.debug("\n[2/4] Creating error vs time plot...")
     error_path = save_dir / f"{field_name}_error_vs_time.png"
     plot_error_vs_time(
         prediction, ground_truth, field_name, error_path, metrics=metrics_to_compute
@@ -949,7 +952,7 @@ def create_evaluation_summary(
     saved_paths["error_plot"] = error_path
 
     # 3. Create keyframe comparison
-    print("\n[3/4] Creating keyframe comparison...")
+    logger.debug("\n[3/4] Creating keyframe comparison...")
     keyframe_path = save_dir / f"{field_name}_keyframes.png"
     plot_keyframe_comparison(
         prediction,
@@ -964,18 +967,18 @@ def create_evaluation_summary(
 
     # 4. Create heatmap (if multi-channel)
     if prediction.shape[1] > 1:
-        print("\n[4/4] Creating error heatmap...")
+        logger.debug("\n[4/4] Creating error heatmap...")
         heatmap_path = save_dir / f"{field_name}_error_heatmap.png"
         plot_error_heatmap(prediction, ground_truth, field_name, heatmap_path)
         saved_paths["heatmap"] = heatmap_path
     else:
-        print("\n[4/4] Skipping heatmap (single channel field)")
+        logger.debug("\n[4/4] Skipping heatmap (single channel field)")
 
-    print(f"\n{'='*60}")
-    print(f"Evaluation summary complete!")
-    print(f"{'='*60}")
-    print(f"\nGenerated files:")
+    logger.debug(f"\n{'='*60}")
+    logger.debug(f"Evaluation summary complete!")
+    logger.debug(f"{'='*60}")
+    logger.debug(f"\nGenerated files:")
     for output_type, path in saved_paths.items():
-        print(f"  - {output_type}: {path}")
+        logger.debug(f"  - {output_type}: {path}")
 
     return saved_paths

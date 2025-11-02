@@ -23,6 +23,9 @@ from phi.math import Solve, Tensor, minimize
 from src.training.abstract_trainer import AbstractTrainer
 from src.data import DataManager
 from src.models.physical.base import PhysicalModel
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class FieldTrainer(AbstractTrainer):
@@ -143,9 +146,9 @@ class FieldTrainer(AbstractTrainer):
                 "Model and data manager must be initialized before training"
             )
 
-        print(f"\n{'='*60}")
-        print(f"Starting Physical Model Optimization")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Starting Physical Model Optimization")
+        logger.info(f"{'='*60}\n")
 
         # Get optimization configuration
         solve_config = self._setup_optimization()
@@ -180,7 +183,7 @@ class FieldTrainer(AbstractTrainer):
             return loss
 
         # Run optimization
-        print(f"Optimizing {len(self.learnable_params)} parameter(s)...")
+        logger.info(f"Optimizing {len(self.learnable_params)} parameter(s)...")
         optimized_params = minimize(loss_fn, solve=solve_config, *self.learnable_params)
 
         # Update model with optimized parameters
@@ -204,13 +207,13 @@ class FieldTrainer(AbstractTrainer):
         ):
             param_name = param_config["name"]
             results["optimized_parameters"][param_name] = float(param_value)
-            print(f"  {param_name}: {param_value}")
+            logger.info(f"  {param_name}: {param_value}")
 
-        print(f"\n{'='*60}")
-        print(f"Optimization Complete!")
-        print(f"Final Loss: {self.final_loss:.6f}")
-        print(f"Iterations: {len(self.optimization_history)}")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Optimization Complete!")
+        logger.info(f"Final Loss: {self.final_loss:.6f}")
+        logger.info(f"Iterations: {len(self.optimization_history)}")
+        logger.info(f"{'='*60}\n")
 
         return results
 
@@ -324,7 +327,7 @@ class FieldTrainer(AbstractTrainer):
 
         # Save as PyTorch file for consistency, but content is different
         torch.save(results, path)
-        print(f"Saved optimization results to {path}")
+        logger.info(f"Saved optimization results to {path}")
 
     def load_results(self, path: Path) -> Dict[str, Any]:
         """
@@ -347,6 +350,6 @@ class FieldTrainer(AbstractTrainer):
             for param_name, param_value in results["optimized_parameters"].items():
                 if hasattr(self.model, param_name):
                     setattr(self.model, param_name, param_value)
-                    print(f"Loaded parameter {param_name} = {param_value}")
+                    logger.info(f"Loaded parameter {param_name} = {param_value}")
 
         return results

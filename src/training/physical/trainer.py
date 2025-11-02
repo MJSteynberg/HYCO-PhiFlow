@@ -13,6 +13,9 @@ from phi.math import math, Tensor
 from src.models import ModelRegistry
 from src.data import DataManager, HybridDataset
 from src.training.field_trainer import FieldTrainer
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class PhysicalTrainer(FieldTrainer):
@@ -78,18 +81,18 @@ class PhysicalTrainer(FieldTrainer):
                 self.verbose_iterations = self.trainer_config.get(
                     "memory_monitor_batches", 5
                 )
-                print(
+                logger.info(
                     f"Performance monitoring enabled (verbose for first {self.verbose_iterations} iterations)"
                 )
             except ImportError:
-                print(
-                    "Warning: Could not import PerformanceMonitor. Monitoring disabled."
+                logger.warning(
+                    "Could not import PerformanceMonitor. Monitoring disabled."
                 )
                 self.memory_monitor = None
         else:
             self.memory_monitor = None
 
-        print(
+        logger.info(
             f"PhysicalTrainer initialized. Will optimize for {len(self.initial_guesses)} parameter(s)."
         )
 
@@ -142,7 +145,7 @@ class PhysicalTrainer(FieldTrainer):
         model_config_copy["pde_params"] = pde_params
 
         # Use the model registry to create the model
-        print(f"Creating physical model: {model_name}...")
+        logger.info(f"Creating physical model: {model_name}...")
         model = ModelRegistry.get_physical_model(model_name, model_config_copy)
         return model
 
@@ -152,11 +155,11 @@ class PhysicalTrainer(FieldTrainer):
         and wraps them as named PhiFlow Tensors.
         """
         guesses = []
-        print("Setting up learnable parameters:")
+        logger.info("Setting up learnable parameters:")
         for param in self.learnable_params_config:
             name = param["name"]
             guess_val = param["initial_guess"]
-            print(f"  - {name}: initial_guess={guess_val}")
+            logger.info(f"  - {name}: initial_guess={guess_val}")
             # Wrap the guess in a named Tensor
             guesses.append(math.tensor(guess_val))
 
@@ -176,7 +179,7 @@ class PhysicalTrainer(FieldTrainer):
             Dict[str, Tensor]: A dict mapping field names to their
                               full time-batched (batchᵇ=1, time, ...) tensors.
         """
-        print(f"Loading ground truth for sim {sim_index} from cache...")
+        logger.info(f"Loading ground truth for sim {sim_index} from cache...")
 
         # Create dataset with return_fields=True for this single simulation
         dataset = HybridDataset(
@@ -203,7 +206,7 @@ class PhysicalTrainer(FieldTrainer):
                 stacked_field = math.expand(stacked_field, batch(batch=1))
 
                 data[field_name] = stacked_field
-                print(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
+                logger.info(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
 
         # Load true PDE params from scene metadata if available
         scene_path = os.path.join(
@@ -225,10 +228,10 @@ class PhysicalTrainer(FieldTrainer):
         if os.path.exists(scene_path):
             scene = Scene.at(scene_path)
             self.true_pde_params = scene.properties.get("PDE_Params", {})
-            print(f"  True PDE Parameters from metadata: {self.true_pde_params}")
+            logger.info(f"  True PDE Parameters from metadata: {self.true_pde_params}")
         else:
             self.true_pde_params = {}
-            print(f"  Warning: Could not load scene metadata from {scene_path}")
+            logger.warning(f"  Could not load scene metadata from {scene_path}")
 
         return data
 
@@ -261,13 +264,13 @@ class PhysicalTrainer(FieldTrainer):
         """
         Runs the full inverse problem optimization.
         """
-        print(f"\n--- Starting Physical Parameter Optimization ---")
+        logger.info(f"\n--- Starting Physical Parameter Optimization ---")
 
         # 1. --- Load Ground Truth Data ---
         sim_to_train = self.train_sims[0]
         if len(self.train_sims) > 1:
-            print(
-                f"Warning: Training on sim {sim_to_train}. "
+            logger.warning(
+                f"Training on sim {sim_to_train}. "
                 f"Multi-sim training not yet implemented."
             )
 
@@ -278,7 +281,7 @@ class PhysicalTrainer(FieldTrainer):
         else:
             gt_data_dict = self._load_ground_truth_data(sim_to_train)
 
-        print(gt_data_dict)
+        logger.info(str(gt_data_dict))
         # Get the initial state (t=0) for all fields
         initial_state_dict = {
             name: field.time[0]
@@ -342,7 +345,7 @@ class PhysicalTrainer(FieldTrainer):
             # Print loss for first few iterations (if monitoring enabled)
             if hasattr(self, "memory_monitor") and self.memory_monitor:
                 if iteration_num <= self.verbose_iterations:
-                    print(
+                    logger.info(
                         f"  Iteration {iteration_num}: loss={final_loss}, time since start: "
                         f"{time.perf_counter() - self._optimization_start_time:.1f}s"
                     )
@@ -350,7 +353,7 @@ class PhysicalTrainer(FieldTrainer):
             return final_loss
 
         # 3. --- Run Optimization ---
-        print("\nStarting optimization with math.minimize (L-BFGS-B)...")
+        logger.info("\nStarting optimization with math.minimize (L-BFGS-B)...")
 
         # Track optimization start time
         if hasattr(self, "memory_monitor") and self.memory_monitor:
@@ -365,8 +368,8 @@ class PhysicalTrainer(FieldTrainer):
             f"{cfg['name']}={self.initial_guesses[i]:.4f}"
             for i, cfg in enumerate(self.learnable_params_config)
         ]
-        print(f"Initial guess: {', '.join(initial_guess_strs)}")
-        print(f"Initial loss: {initial_loss}")
+        logger.info(f"Initial guess: {', '.join(initial_guess_strs)}")
+        logger.info(f"Initial loss: {initial_loss}")
 
         method = self.trainer_config.get("method", "L-BFGS-B")
         abs_tol = self.trainer_config.get("abs_tol", 1e-6)
@@ -374,10 +377,10 @@ class PhysicalTrainer(FieldTrainer):
         if max_iterations is None:
             max_iterations = self.num_epochs  # Use epochs if not specified
         
-        print(f"\nOptimization settings:")
-        print(f"  method: {method}")
-        print(f"  abs_tol: {abs_tol}")
-        print(f"  max_iterations: {max_iterations} (type: {type(max_iterations)})")
+        logger.info(f"\nOptimization settings:")
+        logger.info(f"  method: {method}")
+        logger.info(f"  abs_tol: {abs_tol}")
+        logger.info(f"  max_iterations: {max_iterations} (type: {type(max_iterations)})")
 
         solve_params = math.Solve(
             method=method,
@@ -394,19 +397,19 @@ class PhysicalTrainer(FieldTrainer):
             else:
                 estimated_tensors = math.minimize(loss_function, solve_params)
 
-            print(f"\nOptimization completed!")
-            print(f"Total loss function evaluations: {loss_call_count[0]}")
+            logger.info(f"\nOptimization completed!")
+            logger.info(f"Total loss function evaluations: {loss_call_count[0]}")
         except math.NotConverged as e:
             # NotConverged is raised when iteration limit is reached
             # This is expected for quick tests with low max_iterations
-            print(f"\nOptimization stopped: {e}")
-            print(f"Total loss function evaluations: {loss_call_count[0]}")
+            logger.warning(f"\nOptimization stopped: {e}")
+            logger.info(f"Total loss function evaluations: {loss_call_count[0]}")
             # Extract the best parameters found so far
             estimated_tensors = tuple(self.initial_guesses)  # Fallback
             if hasattr(e, 'result') and hasattr(e.result, 'x'):
                 estimated_tensors = e.result.x
         except Exception as e:
-            print(f"Optimization failed: {e}")
+            logger.error(f"Optimization failed: {e}")
             import traceback
 
             traceback.print_exc()
@@ -417,12 +420,12 @@ class PhysicalTrainer(FieldTrainer):
             self.memory_monitor.print_summary()
 
         final_loss = loss_function(*estimated_tensors)
-        print(f"Final loss: {final_loss}")
+        logger.info(f"Final loss: {final_loss}")
 
         # 4. --- Report Results ---
-        print("\n" + "=" * 60)
-        print("RESULTS")
-        print("=" * 60)
+        logger.info("\n" + "=" * 60)
+        logger.info("RESULTS")
+        logger.info("=" * 60)
 
         for i, param_config in enumerate(self.learnable_params_config):
             name = param_config["name"]
@@ -430,14 +433,14 @@ class PhysicalTrainer(FieldTrainer):
 
             estimated_val = estimated_tensors[i]
 
-            print(f"\nParameter: {name}")
-            print(f"  True value:      {true_val}")
-            print(f"  Estimated value: {estimated_val}")
+            logger.info(f"\nParameter: {name}")
+            logger.info(f"  True value:      {true_val}")
+            logger.info(f"  Estimated value: {estimated_val}")
 
             if isinstance(true_val, (int, float)):
                 error = abs(estimated_val - true_val)
                 rel_error = (error / abs(true_val)) * 100 if abs(true_val) > 1e-6 else 0
-                print(f"  Absolute error:  {error}")
-                print(f"  Relative error:  {rel_error:.2f}%")
+                logger.info(f"  Absolute error:  {error}")
+                logger.info(f"  Relative error:  {rel_error:.2f}%")
 
-        print("=" * 60)
+        logger.info("=" * 60)

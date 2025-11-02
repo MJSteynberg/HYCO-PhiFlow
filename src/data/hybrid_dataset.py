@@ -21,6 +21,9 @@ from src.utils.field_conversion import (
     FieldTensorConverter,
     make_converter,
 )
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class HybridDataset(Dataset):
@@ -166,21 +169,19 @@ class HybridDataset(Dataset):
 
         # Cache all uncached simulations upfront
         if uncached_sims:
-            print(f"  Caching {len(uncached_sims)} simulations upfront...")
+            logger.info(f"  Caching {len(uncached_sims)} simulations upfront...")
             for i, sim_idx in enumerate(uncached_sims, 1):
-                print(
-                    f"    [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}...",
-                    end="",
-                    flush=True,
+                logger.info(
+                    f"    [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}..."
                 )
                 # Load and cache the simulation
                 _ = self.data_manager.get_or_load_simulation(
                     sim_idx, field_names=self.field_names, num_frames=self.num_frames
                 )
-                print(" Done!")
-            print(f"  All simulations cached successfully!")
+                logger.info(" Done!")
+            logger.info(f"  All simulations cached successfully!")
         else:
-            print(f"  All {len(self.sim_indices)} simulations already cached.")
+            logger.info(f"  All {len(self.sim_indices)} simulations already cached.")
 
     def _create_cached_loader(self):
         """
@@ -262,11 +263,11 @@ class HybridDataset(Dataset):
             for start_frame in range(self.samples_per_sim):
                 self.sample_index.append((sim_idx, start_frame))
 
-        print(f"  Sliding window: {self.samples_per_sim} samples per simulation")
-        print(
+        logger.info(f"  Sliding window: {self.samples_per_sim} samples per simulation")
+        logger.info(
             f"  Total samples: {len(self.sample_index)} (from {len(self.sim_indices)} simulations)"
         )
-        print(
+        logger.info(
             f"  Frame range per sample: start_frame to start_frame+{self.num_predict_steps}"
         )
 

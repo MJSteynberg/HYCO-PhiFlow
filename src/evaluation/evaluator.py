@@ -29,6 +29,9 @@ from .visualizations import (
     plot_error_heatmap,
     create_evaluation_summary,
 )
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class Evaluator:
@@ -67,10 +70,10 @@ class Evaluator:
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        print(f"\n{'='*60}")
-        print("INITIALIZING EVALUATOR")
-        print(f"{'='*60}")
-        print(f"Device: {self.device}")
+        logger.debug(f"\n{'='*60}")
+        logger.debug("INITIALIZING EVALUATOR")
+        logger.debug(f"{'='*60}")
+        logger.debug(f"Device: {self.device}")
 
         # Extract configuration
         self.data_config = config["data"]
@@ -97,10 +100,10 @@ class Evaluator:
         self.model = None
         self.data_manager = None
 
-        print(f"Test simulations: {self.test_sim}")
-        print(f"Evaluation frames: {self.num_frames}")
-        print(f"Metrics to compute: {self.metrics_to_compute}")
-        print(f"{'='*60}\n")
+        logger.debug(f"Test simulations: {self.test_sim}")
+        logger.debug(f"Evaluation frames: {self.num_frames}")
+        logger.debug(f"Metrics to compute: {self.metrics_to_compute}")
+        logger.debug(f"{'='*60}\n")
 
     def load_model(self) -> nn.Module:
         """
@@ -112,7 +115,7 @@ class Evaluator:
         Raises:
             FileNotFoundError: If model checkpoint doesn't exist
         """
-        print("Loading trained model...")
+        logger.debug("Loading trained model...")
 
         # Get checkpoint path
         model_path_dir = self.model_config["model_path"]
@@ -127,7 +130,7 @@ class Evaluator:
 
         # Create model architecture using registry
         model_name = self.model_config["name"]
-        print(f"  [INFO] Creating model: {model_name}")
+        logger.debug(f"Creating model: {model_name}")
 
         model = ModelRegistry.get_synthetic_model(model_name, config=self.model_config)
 
@@ -144,10 +147,8 @@ class Evaluator:
         model = model.to(self.device)
         model.eval()
 
-        print(f"  [OK] Model loaded from {checkpoint_path}")
-        print(f"  [OK] Model architecture: {model_name}")
-        print(f"  [OK] Input channels: {model.in_channels}")
-        print(f"  [OK] Output channels: {model.out_channels}")
+        logger.debug(f"Model loaded from {checkpoint_path}")
+        logger.debug(f"Model architecture: {model_name}, In: {model.in_channels}, Out: {model.out_channels}")
 
         self.model = model
         return model
@@ -159,7 +160,7 @@ class Evaluator:
         Returns:
             Configured DataManager instance
         """
-        print("\nSetting up data manager...")
+        logger.debug("Setting up data manager...")
 
         data_dir = self.data_config["data_dir"]
         dset_name = self.data_config["dset_name"]
@@ -175,9 +176,7 @@ class Evaluator:
             auto_clear_invalid=self.data_config.get("auto_clear_invalid", False),
         )
 
-        print(f"  [OK] Data manager ready")
-        print(f"  [OK] Dataset: {dset_name}")
-        print(f"  [OK] Fields: {self.field_names}")
+        logger.debug(f"Data manager ready: {dset_name}, Fields: {self.field_names}")
 
         return self.data_manager
 
@@ -199,7 +198,7 @@ class Evaluator:
                 - 'ground_truth': True data [T, C, H, W]
                 - 'initial_state': Initial condition [C, H, W]
         """
-        print(f"\n  Running inference on simulation {sim_index}...")
+        logger.debug(f"Running inference on simulation {sim_index}...")
 
         if num_rollout_steps is None:
             num_rollout_steps = self.num_frames - 1
@@ -247,9 +246,7 @@ class Evaluator:
         # Stack predictions
         prediction_tensor = torch.cat(predictions, dim=0)  # [T, C, H, W]
 
-        print(f"    [OK] Rollout complete: {prediction_tensor.shape[0]} frames")
-        print(f"    [OK] Prediction shape: {prediction_tensor.shape}")
-        print(f"    [OK] Ground truth shape: {gt_tensor.shape}")
+        logger.debug(f"Rollout complete: {prediction_tensor.shape[0]} frames, Shape: {prediction_tensor.shape}")
 
         return {
             "prediction": prediction_tensor.cpu(),
@@ -273,7 +270,7 @@ class Evaluator:
                 - Aggregate statistics
                 - Timestep-wise errors
         """
-        print(f"  Computing metrics...")
+        logger.debug(f"Computing metrics...")
 
         # Compute per-field metrics
         # Use input_specs to get ALL fields (including static ones)
@@ -294,7 +291,7 @@ class Evaluator:
             for metric_name, values in metrics.items():
                 aggregates[field_name][metric_name] = aggregate_metrics(values)
 
-        print(f"    [OK] Metrics computed for {len(field_specs)} fields")
+        logger.debug(f"Metrics computed for {len(field_specs)} fields")
 
         return {
             "field_metrics": field_metrics,
@@ -322,7 +319,7 @@ class Evaluator:
             Dictionary mapping visualization types to file paths
         """
         save_dir = Path(save_dir)
-        print(f"  Generating visualizations...")
+        logger.debug(f"Generating visualizations...")
 
         saved_paths = {
             "animations": {},
@@ -341,7 +338,7 @@ class Evaluator:
 
         # 1. Animations
         if self.save_animations:
-            print(f"    Creating animations...")
+            logger.debug(f"Creating animations...")
             anim_dir = save_dir / "animations"
             paths = create_comparison_gif_from_specs(
                 prediction,
@@ -355,7 +352,7 @@ class Evaluator:
 
         # 2. Error plots
         if self.save_plots:
-            print(f"    Creating error plots...")
+            logger.debug(f"Creating error plots...")
             plot_dir = save_dir / "plots"
             paths = plot_error_vs_time_multi_field(
                 prediction,
@@ -368,7 +365,7 @@ class Evaluator:
 
         # 3. Keyframe comparisons
         if self.save_plots:
-            print(f"    Creating keyframe comparisons...")
+            logger.debug(f"Creating keyframe comparisons...")
             keyframe_dir = save_dir / "plots"
             paths = plot_keyframe_comparison_multi_field(
                 prediction,
@@ -400,7 +397,7 @@ class Evaluator:
 
                 channel_idx += num_channels
 
-        print(f"    [OK] All visualizations created")
+        logger.debug(f"All visualizations created")
 
         return saved_paths
 
@@ -435,7 +432,7 @@ class Evaluator:
         with open(save_path, "w") as f:
             json.dump(json_metrics, f, indent=2)
 
-        print(f"    [OK] Metrics saved to {save_path}")
+        logger.debug(f"Metrics saved to {save_path}")
 
     def evaluate_simulation(
         self, sim_index: int, save_dir: Optional[Union[str, Path]] = None
@@ -453,9 +450,9 @@ class Evaluator:
                 - visualizations: Paths to generated visualizations
                 - inference_results: Prediction and ground truth tensors
         """
-        print(f"\n{'='*60}")
-        print(f"EVALUATING SIMULATION {sim_index}")
-        print(f"{'='*60}")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"EVALUATING SIMULATION {sim_index}")
+        logger.debug(f"{'='*60}")
 
         # Set up save directory
         if save_dir is None:
@@ -491,19 +488,23 @@ class Evaluator:
         metrics_dir.mkdir(parents=True, exist_ok=True)
         self.save_metrics_to_json(metrics, metrics_dir / "metrics_summary.json")
 
-        # 5. Print summary
-        print(f"\n{'='*60}")
-        print(f"EVALUATION COMPLETE")
-        print(f"{'='*60}")
-        print(f"Results saved to: {save_dir}")
-        print(f"\nMetric Summary:")
+        # 5. Summary - compact one-liner with key metrics
+        mse_summary = ", ".join([f"{name}: {m['mse']['mean']:.4f}" for name, m in metrics["aggregates"].items()])
+        logger.info(f"Simulation {sim_index} complete - MSE: {mse_summary}")
+        
+        # Detailed summary at DEBUG level
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"EVALUATION COMPLETE")
+        logger.debug(f"{'='*60}")
+        logger.debug(f"Results saved to: {save_dir}")
+        logger.debug(f"\nMetric Summary:")
         for field_name, field_agg in metrics["aggregates"].items():
-            print(f"\n  {field_name.upper()}:")
+            logger.debug(f"\n  {field_name.upper()}:")
             for metric_name, stats in field_agg.items():
-                print(
+                logger.debug(
                     f"    {metric_name.upper()}: mean={stats['mean']:.6f}, std={stats['std']:.6f}"
                 )
-        print(f"{'='*60}\n")
+        logger.debug(f"{'='*60}\n")
 
         return {
             "metrics": metrics,
@@ -529,14 +530,15 @@ class Evaluator:
         Returns:
             Dictionary mapping sim_index to evaluation results
         """
-        if sim_indices is None:
+        if not sim_indices:
             sim_indices = self.test_sim
 
-        print(f"\n{'='*60}")
-        print(f"STARTING EVALUATION")
-        print(f"{'='*60}")
-        print(f"Simulations to evaluate: {sim_indices}")
-        print(f"{'='*60}\n")
+        logger.info(f"Starting evaluation on {len(sim_indices)} simulation(s)")
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"STARTING EVALUATION")
+        logger.debug(f"{'='*60}")
+        logger.debug(f"Simulations to evaluate: {sim_indices}")
+        logger.debug(f"{'='*60}\n")
 
         # Load model
         if self.model is None:
@@ -562,13 +564,13 @@ class Evaluator:
         if len(sim_indices) > 1 and base_save_dir is not None:
             self._create_aggregate_summary(all_results, base_save_dir)
 
-        print(f"\n{'='*60}")
-        print(f"ALL EVALUATIONS COMPLETE")
-        print(f"{'='*60}")
-        print(f"Evaluated {len(sim_indices)} simulations")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"ALL EVALUATIONS COMPLETE")
+        logger.info(f"{'='*60}")
+        logger.info(f"Evaluated {len(sim_indices)} simulations")
         if base_save_dir is not None:
-            print(f"Results saved to: {base_save_dir}")
-        print(f"{'='*60}\n")
+            logger.info(f"Results saved to: {base_save_dir}")
+        logger.info(f"{'='*60}\n")
 
         return all_results
 
@@ -582,7 +584,7 @@ class Evaluator:
             all_results: Results from all simulations
             base_save_dir: Base directory for saving summary
         """
-        print(f"\nCreating aggregate summary...")
+        logger.info(f"\nCreating aggregate summary...")
 
         base_save_dir = Path(base_save_dir)
         summary_dir = base_save_dir / "summary"
@@ -621,11 +623,11 @@ class Evaluator:
         with open(summary_dir / "aggregate_metrics.json", "w") as f:
             json.dump(summary, f, indent=2)
 
-        print(f"  [OK] Aggregate summary saved to {summary_dir}")
-        print(f"\n  Aggregate Statistics Across {len(all_results)} Simulations:")
+        logger.info(f"  [OK] Aggregate summary saved to {summary_dir}")
+        logger.info(f"\n  Aggregate Statistics Across {len(all_results)} Simulations:")
         for field_name, field_stats in summary.items():
-            print(f"\n    {field_name.upper()}:")
+            logger.info(f"\n    {field_name.upper()}:")
             for metric_name, stats in field_stats.items():
-                print(
+                logger.info(
                     f"      {metric_name.upper()}: mean={stats['mean']:.6f} +/- {stats['std']:.6f}"
                 )

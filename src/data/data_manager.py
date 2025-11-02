@@ -26,6 +26,9 @@ from .validation import (
     get_cache_version,
     get_phiflow_version,
 )
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DataManager:
@@ -134,7 +137,7 @@ class DataManager:
                 requested_fields = set(field_names)
                 if cached_fields != requested_fields:
                     if self.auto_clear_invalid:
-                        print(
+                        logger.warning(
                             f"Cache invalid for sim_{sim_index:06d}: field mismatch. Removing..."
                         )
                         cache_path.unlink()
@@ -144,7 +147,7 @@ class DataManager:
                 cached_num_frames = metadata.get("num_frames", 0)
                 if cached_num_frames < num_frames:
                     if self.auto_clear_invalid:
-                        print(
+                        logger.warning(
                             f"Cache invalid for sim_{sim_index:06d}: insufficient frames. Removing..."
                         )
                         cache_path.unlink()
@@ -158,12 +161,12 @@ class DataManager:
 
                 if not is_valid:
                     if self.auto_clear_invalid:
-                        print(
+                        logger.warning(
                             f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}. Removing..."
                         )
                         cache_path.unlink()
                     else:
-                        print(
+                        logger.warning(
                             f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}"
                         )
                     return False
@@ -172,9 +175,9 @@ class DataManager:
 
         except Exception as e:
             # If we can't load/validate, treat as not cached
-            print(f"Error validating cache for sim_{sim_index:06d}: {e}")
+            logger.error(f"Error validating cache for sim_{sim_index:06d}: {e}")
             if self.auto_clear_invalid:
-                print(f"Removing corrupted cache...")
+                logger.info(f"Removing corrupted cache...")
                 try:
                     cache_path.unlink()
                 except:

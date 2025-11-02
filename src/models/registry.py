@@ -25,6 +25,9 @@ Usage:
 """
 
 from typing import Dict, Type, Any, Callable, List
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ModelRegistry:
@@ -62,9 +65,9 @@ class ModelRegistry:
 
         def decorator(model_class: Type) -> Type:
             if name in cls._physical_models:
-                print(f"Warning: Overwriting physical model '{name}'")
+                logger.warning(f"Overwriting physical model '{name}'")
             cls._physical_models[name] = model_class
-            print(f"Registered physical model: {name}")
+            logger.debug(f"Registered physical model: {name}")
             return model_class
 
         return decorator
@@ -88,9 +91,9 @@ class ModelRegistry:
 
         def decorator(model_class: Type) -> Type:
             if name in cls._synthetic_models:
-                print(f"Warning: Overwriting synthetic model '{name}'")
+                logger.warning(f"Overwriting synthetic model '{name}'")
             cls._synthetic_models[name] = model_class
-            print(f"Registered synthetic model: {name}")
+            logger.debug(f"Registered synthetic model: {name}")
             return model_class
 
         return decorator
@@ -122,7 +125,7 @@ class ModelRegistry:
             )
 
         model_class = cls._physical_models[name]
-        print(f"Creating physical model: {name}")
+        logger.debug(f"Creating physical model: {name}")
         return model_class(config)
 
     @classmethod
@@ -152,7 +155,7 @@ class ModelRegistry:
             )
 
         model_class = cls._synthetic_models[name]
-        print(f"Creating synthetic model: {name}")
+        logger.debug(f"Creating synthetic model: {name}")
         return model_class(config)
 
     @classmethod
@@ -218,4 +221,4 @@ class ModelRegistry:
         """
         cls._physical_models.clear()
         cls._synthetic_models.clear()
-        print("Cleared model registry")
+        logger.debug("Cleared model registry")
