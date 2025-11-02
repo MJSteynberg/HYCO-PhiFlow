@@ -152,13 +152,30 @@ class TensorTrainer(AbstractTrainer):
         Run validation for one epoch.
         
         Returns validation loss if validation data exists, None otherwise.
-        Uses the same loss computation as training (_compute_batch_loss).
+        Uses rollout-based validation if configured, otherwise batch validation.
         
         Returns:
             Average validation loss, or None if no validation data
         """
         if self.val_loader is None or len(self.val_loader) == 0:
             return None
+        
+        # Check if rollout validation is enabled
+        use_rollout = self.config.get("trainer_params", {}).get("validation_rollout", True)
+        
+        if use_rollout:
+            return self._validate_epoch_rollout()
+        else:
+            return self._validate_epoch_batch()
+    
+    def _validate_epoch_batch(self) -> float:
+        """
+        Run batch-based validation (original method).
+        
+        Returns:
+            Average validation loss across batches
+        """
+        logger.debug("Running batch-based validation")
         
         self.model.eval()
         total_loss = 0.0
@@ -172,6 +189,22 @@ class TensorTrainer(AbstractTrainer):
         
         avg_val_loss = total_loss / num_batches if num_batches > 0 else float('inf')
         return avg_val_loss
+    
+    def _validate_epoch_rollout(self) -> float:
+        """
+        Run rollout-based validation.
+        
+        Performs full autoregressive rollouts from t=0 to end of simulation
+        for each validation sample, computing loss over the entire trajectory.
+        This provides a better estimate of model performance on real rollouts.
+        
+        Returns:
+            Average validation loss across all rollout trajectories
+        """
+        raise NotImplementedError(
+            "Rollout validation must be implemented by subclass. "
+            "Override _validate_epoch_rollout() to provide rollout logic."
+        )
 
     def train(self) -> Dict[str, Any]:
         """

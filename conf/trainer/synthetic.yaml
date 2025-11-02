@@ -12,6 +12,8 @@ use_sliding_window: true
 # Validation settings
 validate_every: 1  # Validate every N epochs
 validate_on_train: false  # Whether to also compute train metrics during validation
+validation_rollout: true  # Use full simulation rollout for validation (more accurate but slower)
+validation_rollout_steps: 75  # Number of timesteps for validation rollout (null for full length)
 
 # Early stopping
 early_stopping:

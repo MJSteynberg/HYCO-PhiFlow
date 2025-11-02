@@ -191,15 +191,23 @@ class SyntheticTrainer(TensorTrainer):
 
         # Create Validation Dataset (if val_sim specified)
         if self.val_sim:
+            # Use validation_rollout_steps if specified, otherwise use num_predict_steps
+            val_predict_steps = self.trainer_config.get("validation_rollout_steps", self.num_predict_steps)
+            if val_predict_steps is None:
+                val_predict_steps = self.num_predict_steps
+            
+            # Calculate frames needed for validation (no sliding window)
+            val_num_frames = val_predict_steps + 1  # Initial state + rollout targets
+            
             val_dataset = HybridDataset(
                 data_manager=data_manager,
                 sim_indices=self.val_sim,
                 field_names=self.field_names,
-                num_frames=self.num_frames,
-                num_predict_steps=self.num_predict_steps,
+                num_frames=val_num_frames,
+                num_predict_steps=val_predict_steps,
                 dynamic_fields=self.dynamic_fields,
                 static_fields=self.static_fields,
-                use_sliding_window=self.use_sliding_window,  # Match training behavior
+                use_sliding_window=False,  # Always False for validation - use full rollouts
             )
 
             # Create Validation DataLoader
@@ -212,7 +220,7 @@ class SyntheticTrainer(TensorTrainer):
             )
             
             logger.debug(
-                f"Val DataLoader: {len(val_dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
+                f"Val DataLoader: {len(val_dataset)} samples (full rollouts, no sliding window), batch_size={self.batch_size}"
             )
         else:
             self.val_loader = None
@@ -346,3 +354,85 @@ class SyntheticTrainer(TensorTrainer):
 
         avg_loss = total_loss / len(self.train_loader)
         return avg_loss
+    
+    def _validate_epoch_rollout(self) -> float:
+        """
+        Perform rollout-based validation.
+        
+        For each validation simulation, starts from t=0 and rolls out
+        until the end, computing loss over the entire trajectory.
+        This gives a better measure of model performance on real rollouts.
+        
+        Returns:
+            Average validation loss across all validation simulations
+        """
+        if self.val_loader is None or len(self.val_loader) == 0:
+            return float('inf')
+        
+        logger.debug("Running rollout-based validation (full simulation trajectories)")
+        
+        self.model.eval()
+        total_loss = 0.0
+        num_samples = 0
+        num_batches = 0
+        
+        # Get validation rollout steps from config (None means use full available length)
+        val_rollout_steps = self.config.get("trainer_params", {}).get("validation_rollout_steps", None)
+        
+        with torch.no_grad():
+            for batch in self.val_loader:
+                initial_state, rollout_targets = batch
+                initial_state = initial_state.to(self.device)
+                rollout_targets = rollout_targets.to(self.device)
+                
+                batch_size = initial_state.shape[0]
+                max_steps = rollout_targets.shape[1]
+                
+                # Use configured rollout steps or full length
+                num_steps = min(val_rollout_steps, max_steps) if val_rollout_steps is not None else max_steps
+                
+                # Log rollout details for first batch
+                if num_batches == 0:
+                    if val_rollout_steps is not None and num_steps < val_rollout_steps:
+                        logger.debug(f"  Rollout settings: {num_steps} timesteps per trajectory (limited by available data, requested {val_rollout_steps}), batch_size={batch_size}")
+                    elif val_rollout_steps is not None:
+                        logger.debug(f"  Rollout settings: {num_steps} timesteps per trajectory (configured), batch_size={batch_size}")
+                    else:
+                        logger.debug(f"  Rollout settings: {num_steps} timesteps per trajectory (full length), batch_size={batch_size}")
+                
+                # Perform full autoregressive rollout for each sample
+                current_state = initial_state  # [B, C_all, H, W]
+                batch_loss = 0.0
+                
+                for t in range(num_steps):
+                    # Predict next state (model returns all fields)
+                    prediction = self.model(current_state)  # [B, C_all, H, W]
+                    
+                    # Extract dynamic fields from prediction for loss computation
+                    pred_dynamic_tensors = []
+                    for field_name in self.field_names:
+                        if field_name in self.dynamic_fields:
+                            start, end = self.channel_map[field_name]
+                            pred_dynamic_tensors.append(prediction[:, start:end, :, :])
+                    
+                    pred_dynamic = torch.cat(pred_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
+                    
+                    # Get ground truth for this timestep
+                    target = rollout_targets[:, t, :, :, :]  # [B, C_dynamic, H, W]
+                    
+                    # Compute step loss
+                    step_loss = self.loss_fn(pred_dynamic, target)
+                    batch_loss += step_loss.item()
+                    
+                    # Use full prediction (all fields) as input for next timestep
+                    current_state = prediction
+                
+                # Average loss over timesteps for this batch
+                avg_batch_loss = batch_loss / num_steps
+                total_loss += avg_batch_loss * batch_size
+                num_samples += batch_size
+                num_batches += 1
+        
+        logger.debug(f"  Completed {num_batches} validation rollouts ({num_samples} total trajectories)")
+        avg_val_loss = total_loss / num_samples if num_samples > 0 else float('inf')
+        return avg_val_loss

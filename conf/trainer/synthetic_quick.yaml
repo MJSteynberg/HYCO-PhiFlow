@@ -13,6 +13,8 @@ use_sliding_window: false
 # Validation settings
 validate_every: 1
 validate_on_train: false
+validation_rollout: true  # Use full simulation rollout for validation
+validation_rollout_steps: 10  # Short rollout for quick testing
 
 # Early stopping (disabled for quick tests)
 early_stopping:
