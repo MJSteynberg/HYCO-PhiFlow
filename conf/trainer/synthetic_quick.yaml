@@ -6,9 +6,20 @@ epochs: 2
 num_predict_steps: 4
 
 train_sim: []
-val_sim: null
+val_sim: []
 
 use_sliding_window: false
+
+# Validation settings
+validate_every: 1
+validate_on_train: false
+
+# Early stopping (disabled for quick tests)
+early_stopping:
+  enabled: false
+  patience: 10
+  min_delta: 1e-6
+  monitor: val_loss
 
 # Optimizer settings
 optimizer: 'adam'

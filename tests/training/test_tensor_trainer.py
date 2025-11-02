@@ -33,24 +33,40 @@ class SimpleConcreteTensorTrainer(TensorTrainer):
     def __init__(self, config):
         super().__init__(config)
         self.model = self._create_model()
-        self.dataloader = self._create_data_loader()
+        self.train_loader, self.val_loader = self._create_data_loaders()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
 
     def _create_model(self):
         """Create a simple linear model."""
         return nn.Linear(10, 5)
 
-    def _create_data_loader(self):
-        """Create a simple dataloader."""
-        X = torch.randn(100, 10)
-        y = torch.randn(100, 5)
-        dataset = TensorDataset(X, y)
-        return DataLoader(dataset, batch_size=10)
+    def _create_data_loaders(self):
+        """Create simple train and validation dataloaders."""
+        # Train data
+        X_train = torch.randn(100, 10)
+        y_train = torch.randn(100, 5)
+        train_dataset = TensorDataset(X_train, y_train)
+        train_loader = DataLoader(train_dataset, batch_size=10)
+        
+        # Val data (smaller)
+        X_val = torch.randn(20, 10)
+        y_val = torch.randn(20, 5)
+        val_dataset = TensorDataset(X_val, y_val)
+        val_loader = DataLoader(val_dataset, batch_size=10)
+        
+        return train_loader, val_loader
+
+    def _compute_batch_loss(self, batch):
+        """Compute loss for a batch."""
+        X, y = batch
+        pred = self.model(X)
+        return nn.MSELoss()(pred, y)
 
     def _train_epoch(self):
         """Simple training epoch."""
         total_loss = 0.0
-        for X, y in self.dataloader:
+        for batch in self.train_loader:
+            X, y = batch
             pred = self.model(X)
             loss = nn.MSELoss()(pred, y)
 
@@ -60,7 +76,7 @@ class SimpleConcreteTensorTrainer(TensorTrainer):
 
             total_loss += loss.item()
 
-        return total_loss / len(self.dataloader)
+        return total_loss / len(self.train_loader)
 
 
 class TestTensorTrainerInheritance:
@@ -106,8 +122,11 @@ class TestTensorTrainerInitialization:
             def _create_model(self):
                 pass
 
-            def _create_data_loader(self):
-                pass
+            def _create_data_loaders(self):
+                return None, None
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 pass
@@ -125,8 +144,11 @@ class TestTensorTrainerInitialization:
             def _create_model(self):
                 pass
 
-            def _create_data_loader(self):
-                pass
+            def _create_data_loaders(self):
+                return None, None
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 pass
@@ -144,14 +166,18 @@ class TestTensorTrainerInitialization:
             def _create_model(self):
                 pass
 
-            def _create_data_loader(self):
-                pass
+            def _create_data_loaders(self):
+                return None, None
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 pass
 
         trainer = PartialTrainer({})
-        assert trainer.dataloader is None
+        assert trainer.train_loader is None
+        assert trainer.val_loader is None
 
     def test_checkpoint_path_initialized_as_none(self, default_trainer_config):
         """Test that checkpoint_path is initialized as None."""
@@ -167,7 +193,7 @@ class TestTensorTrainerAbstractMethods:
         """Test that TensorTrainer defines expected abstract methods."""
         abstract_methods = TensorTrainer.__abstractmethods__
 
-        expected = {"_create_model", "_create_data_loader", "_train_epoch"}
+        expected = {"_create_model", "_create_data_loaders", "_compute_batch_loss", "_train_epoch"}
         assert expected.issubset(abstract_methods)
 
     def test_tensor_trainer_is_abstract(self, default_trainer_config):
@@ -179,8 +205,12 @@ class TestTensorTrainerAbstractMethods:
         """Test that missing _create_model() raises TypeError."""
 
         class IncompleteTrainer(TensorTrainer):
-            def _create_data_loader(self):
-                pass
+            def _create_data_loaders(self):
+                return None, None
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 pass
@@ -208,8 +238,13 @@ class TestTensorTrainerAbstractMethods:
             def _create_model(self):
                 pass
 
-            def _create_data_loader(self):
-                pass
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
         with pytest.raises(TypeError):
             IncompleteTrainer({})
@@ -236,7 +271,7 @@ class TestTensorTrainerDefaultTrain:
         result = trainer.train()
 
         assert isinstance(result, dict)
-        assert "losses" in result
+        assert "train_losses" in result
         assert "epochs" in result
 
     def test_train_returns_results(self, trainer_with_config):
@@ -244,9 +279,10 @@ class TestTensorTrainerDefaultTrain:
         result = trainer_with_config.train()
 
         assert isinstance(result, dict)
-        assert "losses" in result
+        assert "train_losses" in result
+        assert "val_losses" in result
         assert "epochs" in result
-        assert len(result["losses"]) == 3  # 3 epochs
+        assert len(result["train_losses"]) == 3  # 3 epochs
         assert len(result["epochs"]) == 3
 
     def test_train_requires_model_and_dataloader(self, default_trainer_config):
@@ -261,8 +297,13 @@ class TestTensorTrainerDefaultTrain:
             def _create_model(self):
                 return None
 
-            def _create_data_loader(self):
-                return None
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 return 0.0
@@ -270,7 +311,7 @@ class TestTensorTrainerDefaultTrain:
         trainer = NoModelTrainer({})
 
         with pytest.raises(
-            RuntimeError, match="Model and dataloader must be initialized"
+            RuntimeError, match="Model and train_loader must be initialized"
         ):
             trainer.train()
 
@@ -352,8 +393,13 @@ class TestTensorTrainerCheckpointManagement:
             def _create_model(self):
                 return None
 
-            def _create_data_loader(self):
-                return None
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 return 0.0
@@ -459,8 +505,13 @@ class TestTensorTrainerModelSummary:
             def _create_model(self):
                 return None
 
-            def _create_data_loader(self):
-                return None
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 return 0.0
@@ -485,8 +536,13 @@ class TestTensorTrainerModelSummary:
             def _create_model(self):
                 return None
 
-            def _create_data_loader(self):
-                return None
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 return 0.0
@@ -518,8 +574,13 @@ class TestTensorTrainerDeviceManagement:
             def _create_model(self):
                 return None
 
-            def _create_data_loader(self):
-                return None
+            def _create_data_loaders(self):
+                return None, None
+
+
+
+            def _compute_batch_loss(self, batch):
+                return torch.tensor(0.0)
 
             def _train_epoch(self):
                 return 0.0
@@ -577,8 +638,8 @@ class TestTensorTrainerIntegration:
         result = trainer.train()
 
         # Verify results
-        assert len(result["losses"]) == 2
-        assert all(isinstance(loss, float) for loss in result["losses"])
+        assert len(result["train_losses"]) == 2
+        assert all(isinstance(loss, float) for loss in result["train_losses"])
 
     def test_multiple_trainers_independent(self, default_trainer_config):
         """Test that multiple trainer instances are independent."""

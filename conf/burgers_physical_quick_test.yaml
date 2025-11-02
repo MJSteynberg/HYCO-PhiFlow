@@ -20,7 +20,7 @@ model:
 
 trainer_params:
   learning_rate: 0.0001
-  epochs: 2
+  epochs: 20
   num_predict_steps: 5
   train_sim: [0]
   learnable_parameters:

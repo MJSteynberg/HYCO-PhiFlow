@@ -71,6 +71,7 @@ class SyntheticTrainer(TensorTrainer):
         self.batch_size = self.trainer_config["batch_size"]
         self.num_predict_steps = self.trainer_config["num_predict_steps"]
         self.train_sim = self.trainer_config["train_sim"]
+        self.val_sim = self.trainer_config.get("val_sim", [])
         self.use_sliding_window = self.trainer_config.get("use_sliding_window", False)
 
         # Calculate total frames needed
@@ -82,7 +83,7 @@ class SyntheticTrainer(TensorTrainer):
             self.num_frames = self.num_predict_steps + 1  # Initial state + rollout
 
         # --- Setup Components ---
-        self.train_loader = self._create_data_loader()
+        self._create_data_loaders()  # Creates both train_loader and val_loader
         self.model = self._create_model()
         self.loss_fn = nn.MSELoss()  # Simple MSE for tensor-based training
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
@@ -137,8 +138,8 @@ class SyntheticTrainer(TensorTrainer):
 
         self.total_channels = channel_offset
 
-    def _create_data_loader(self):
-        """Creates DataManager and HybridDataset with PyTorch DataLoader."""
+    def _create_data_loaders(self):
+        """Creates DataManager and train/validation DataLoaders."""
         print(f"Setting up DataManager for '{self.dset_name}'...")
 
         # Paths
@@ -155,8 +156,8 @@ class SyntheticTrainer(TensorTrainer):
             auto_clear_invalid=self.data_config.get("auto_clear_invalid", False),
         )
 
-        # Create HybridDataset
-        dataset = HybridDataset(
+        # Create Training Dataset
+        train_dataset = HybridDataset(
             data_manager=data_manager,
             sim_indices=self.train_sim,
             field_names=self.field_names,
@@ -167,12 +168,12 @@ class SyntheticTrainer(TensorTrainer):
             use_sliding_window=self.use_sliding_window,
         )
 
-        # Create PyTorch DataLoader
-        loader = DataLoader(
-            dataset,
+        # Create Training DataLoader
+        self.train_loader = DataLoader(
+            train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=0,  # Keep simple for now
+            shuffle=True,  # Shuffle training data
+            num_workers=0,
             pin_memory=True if torch.cuda.is_available() else False,
         )
 
@@ -180,9 +181,37 @@ class SyntheticTrainer(TensorTrainer):
             "sliding window" if self.use_sliding_window else "single starting point"
         )
         print(
-            f"DataLoader created: {len(dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
+            f"Train DataLoader: {len(train_dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
         )
-        return loader
+
+        # Create Validation Dataset (if val_sim specified)
+        if self.val_sim:
+            val_dataset = HybridDataset(
+                data_manager=data_manager,
+                sim_indices=self.val_sim,
+                field_names=self.field_names,
+                num_frames=self.num_frames,
+                num_predict_steps=self.num_predict_steps,
+                dynamic_fields=self.dynamic_fields,
+                static_fields=self.static_fields,
+                use_sliding_window=self.use_sliding_window,  # Match training behavior
+            )
+
+            # Create Validation DataLoader
+            self.val_loader = DataLoader(
+                val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,  # Don't shuffle validation data
+                num_workers=0,
+                pin_memory=True if torch.cuda.is_available() else False,
+            )
+            
+            print(
+                f"Val DataLoader: {len(val_dataset)} samples ({mode_desc}), batch_size={self.batch_size}"
+            )
+        else:
+            self.val_loader = None
+            print("No validation data specified (val_sim is empty)")
 
     def _create_model(self):
         """Creates the synthetic model using the registry."""
@@ -202,6 +231,56 @@ class SyntheticTrainer(TensorTrainer):
         model = model.to(self.device)
         print("Model created successfully and moved to device.")
         return model
+
+    def _compute_batch_loss(self, batch) -> torch.Tensor:
+        """
+        Compute loss for a single batch.
+        
+        Used by both training and validation through parent class.
+        
+        Args:
+            batch: Tuple of (initial_state, rollout_targets) from HybridDataset
+            
+        Returns:
+            Loss tensor for the batch
+        """
+        initial_state, rollout_targets = batch
+        initial_state = initial_state.to(self.device)
+        rollout_targets = rollout_targets.to(self.device)
+        
+        # Autoregressive rollout
+        batch_size = initial_state.shape[0]
+        num_steps = rollout_targets.shape[1]
+        
+        current_state = initial_state  # [B, C_all, H, W] - all fields
+        total_step_loss = 0.0
+        
+        for t in range(num_steps):
+            # Predict next state (model returns all fields)
+            prediction = self.model(current_state)  # [B, C_all, H, W]
+            
+            # Extract only dynamic fields from prediction for loss computation
+            pred_dynamic_tensors = []
+            for field_name in self.field_names:
+                if field_name in self.dynamic_fields:
+                    start, end = self.channel_map[field_name]
+                    pred_dynamic_tensors.append(prediction[:, start:end, :, :])
+            
+            pred_dynamic = torch.cat(pred_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
+            
+            # Get ground truth for this timestep (already only dynamic fields)
+            target = rollout_targets[:, t, :, :, :]  # [B, C_dynamic, H, W]
+            
+            # Compute loss on dynamic fields only
+            step_loss = self.loss_fn(pred_dynamic, target)
+            total_step_loss += step_loss
+            
+            # Use full prediction (all fields) as input for next timestep
+            current_state = prediction
+        
+        # Average loss over timesteps
+        avg_rollout_loss = total_step_loss / num_steps
+        return avg_rollout_loss
 
     def _unpack_tensor_to_dict(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
@@ -233,56 +312,15 @@ class SyntheticTrainer(TensorTrainer):
         if self.memory_monitor is not None:
             self.memory_monitor.on_epoch_start()
 
-        for batch_idx, (initial_state, rollout_targets) in enumerate(self.train_loader):
+        for batch_idx, batch in enumerate(self.train_loader):
             # Track batch start time
             if self.memory_monitor is not None:
                 self.memory_monitor.on_batch_start(batch_idx)
 
-            initial_state = initial_state.to(
-                self.device
-            )  # [B, C_all, H, W] - all fields
-            rollout_targets = rollout_targets.to(
-                self.device
-            )  # [B, T, C_dynamic, H, W] - only dynamic
-
-            # Start with initial state containing all fields
-            current_state = initial_state  # [B, C_all, H, W]
-
-            batch_rollout_loss = 0.0
             self.optimizer.zero_grad()
 
-            for t_step in range(self.num_predict_steps):
-                # Forward pass - model handles static field preservation internally
-                prediction = self.model(
-                    current_state
-                )  # [B, C_all, H, W] - returns all fields
-
-                # Extract only dynamic fields from prediction for loss computation
-                pred_dynamic_tensors = []
-                channel_offset = 0
-                for field_name in self.field_names:
-                    if field_name in self.dynamic_fields:
-                        start, end = self.channel_map[field_name]
-                        pred_dynamic_tensors.append(prediction[:, start:end, :, :])
-
-                pred_dynamic = torch.cat(
-                    pred_dynamic_tensors, dim=1
-                )  # [B, C_dynamic, H, W]
-
-                # Get ground truth for this timestep (already only dynamic fields)
-                gt_this_step = rollout_targets[
-                    :, t_step, :, :, :
-                ]  # [B, C_dynamic, H, W]
-
-                # Compute loss on dynamic fields only
-                step_loss = self.loss_fn(pred_dynamic, gt_this_step)
-                batch_rollout_loss += step_loss
-
-                # Update current state with full prediction (includes static + dynamic)
-                current_state = prediction
-
-            # Average loss over rollout steps
-            avg_rollout_loss = batch_rollout_loss / self.num_predict_steps
+            # Compute loss using shared method
+            avg_rollout_loss = self._compute_batch_loss(batch)
             avg_rollout_loss.backward()
 
             self.optimizer.step()

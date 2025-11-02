@@ -31,22 +31,27 @@ class TensorTrainer(AbstractTrainer):
     - Model checkpoint saving/loading
     - Model parameter counting and summary
     - Common epoch-based training loop structure
+    - Validation support (optional)
 
     Subclasses must implement:
     - _create_model(): Create and initialize the PyTorch model
-    - _create_data_loader(): Create the PyTorch DataLoader
+    - _create_data_loaders(): Create train and validation DataLoaders
     - _train_epoch(): Train for one epoch and return loss
+    - _compute_batch_loss(): Compute loss for a single batch (used for validation)
 
     The train() method can be overridden if needed, but a default
-    implementation is provided for standard epoch-based training.
+    implementation is provided for standard epoch-based training with
+    optional validation.
 
     Attributes:
         config: Full configuration dictionary
         device: PyTorch device (CPU or CUDA)
         model: The PyTorch neural network model
         optimizer: PyTorch optimizer
-        dataloader: PyTorch DataLoader
+        train_loader: PyTorch DataLoader for training
+        val_loader: PyTorch DataLoader for validation (optional)
         checkpoint_path: Path to model checkpoint file
+        best_val_loss: Best validation loss seen so far
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -64,8 +69,13 @@ class TensorTrainer(AbstractTrainer):
         # To be set by subclasses
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
-        self.dataloader: Optional[DataLoader] = None
+        self.train_loader: Optional[DataLoader] = None
+        self.val_loader: Optional[DataLoader] = None
         self.checkpoint_path: Optional[Path] = None
+
+        # Validation state tracking
+        self.best_val_loss = float("inf")
+        self.best_epoch = 0
 
     @abstractmethod
     def _create_model(self) -> nn.Module:
@@ -85,19 +95,33 @@ class TensorTrainer(AbstractTrainer):
         pass
 
     @abstractmethod
-    def _create_data_loader(self) -> DataLoader:
+    def _create_data_loaders(self):
         """
-        Create and return the PyTorch DataLoader.
+        Create and return train and validation DataLoaders.
 
         This method should:
         1. Get data specifications from self.config
-        2. Create or get dataset instance
-        3. Create DataLoader with appropriate settings
-        4. Set self.dataloader
-        5. Return the DataLoader
+        2. Create training dataset and DataLoader
+        3. Create validation dataset and DataLoader (if val_sim specified)
+        4. Set self.train_loader and self.val_loader
+        
+        Note: val_loader can be None if no validation data specified.
+        """
+        pass
 
+    @abstractmethod
+    def _compute_batch_loss(self, batch) -> torch.Tensor:
+        """
+        Compute loss for a single batch.
+        
+        Used by both training and validation to ensure same loss computation.
+        Subclasses define the batch structure and how to compute loss.
+        
+        Args:
+            batch: A batch from the DataLoader (structure defined by subclass)
+            
         Returns:
-            PyTorch DataLoader instance
+            Loss tensor for the batch
         """
         pass
 
@@ -118,45 +142,114 @@ class TensorTrainer(AbstractTrainer):
         """
         pass
 
+    def _validate_epoch(self) -> Optional[float]:
+        """
+        Run validation for one epoch.
+        
+        Returns validation loss if validation data exists, None otherwise.
+        Uses the same loss computation as training (_compute_batch_loss).
+        
+        Returns:
+            Average validation loss, or None if no validation data
+        """
+        if self.val_loader is None or len(self.val_loader) == 0:
+            return None
+        
+        self.model.eval()
+        total_loss = 0.0
+        num_batches = 0
+        
+        with torch.no_grad():
+            for batch in self.val_loader:
+                loss = self._compute_batch_loss(batch)
+                total_loss += loss.item()
+                num_batches += 1
+        
+        avg_val_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+        return avg_val_loss
+
     def train(self) -> Dict[str, Any]:
         """
-        Execute epoch-based training loop.
+        Execute epoch-based training loop with optional validation.
 
         Default implementation of standard epoch-based training.
+        If val_loader exists, runs validation and tracks best model.
         Subclasses can override for custom training logic.
 
         Returns:
             Dictionary with training results including losses and metrics
         """
-        if self.model is None or self.dataloader is None:
+        if self.model is None or self.train_loader is None:
             raise RuntimeError(
-                "Model and dataloader must be initialized before training"
+                "Model and train_loader must be initialized before training"
             )
 
-        results = {"losses": [], "epochs": []}
+        results = {
+            "train_losses": [],
+            "val_losses": [],
+            "epochs": [],
+            "best_epoch": 0,
+            "best_val_loss": float('inf')
+        }
+        
+        has_validation = self.val_loader is not None and len(self.val_loader) > 0
+        validate_every = self.config["trainer_params"].get("validate_every", 1)
 
         print(f"\n{'='*60}")
         print(f"Starting Training on {self.device}")
+        if has_validation:
+            print(f"Validation enabled (every {validate_every} epoch(s))")
         print(f"{'='*60}\n")
 
         for epoch in range(self.get_num_epochs()):
-            epoch_loss = self._train_epoch()
+            # Training
+            train_loss = self._train_epoch()
+            results["train_losses"].append(train_loss)
+            results["epochs"].append(epoch + 1)
 
-            results["losses"].append(epoch_loss)
-            results["epochs"].append(epoch)
+            # Validation (if enabled and at right frequency)
+            val_loss = None
+            if has_validation and (epoch + 1) % validate_every == 0:
+                val_loss = self._validate_epoch()
+                results["val_losses"].append(val_loss)
+                
+                # Track best model based on validation loss
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.best_epoch = epoch + 1
+                    results["best_epoch"] = self.best_epoch
+                    results["best_val_loss"] = self.best_val_loss
+                    
+                    # Save best model (only if checkpoint_path is set)
+                    if self.checkpoint_path is not None:
+                        self.save_checkpoint(
+                            epoch=epoch,
+                            loss=val_loss,
+                            optimizer_state=self.optimizer.state_dict() if self.optimizer else None,
+                            is_best=True
+                        )
 
             # Print progress
             if (epoch + 1) % self.get_print_frequency() == 0:
-                print(
-                    f"Epoch [{epoch+1}/{self.get_num_epochs()}], Loss: {epoch_loss:.6f}"
-                )
+                if val_loss is not None:
+                    print(
+                        f"Epoch [{epoch+1}/{self.get_num_epochs()}], "
+                        f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}"
+                    )
+                else:
+                    print(
+                        f"Epoch [{epoch+1}/{self.get_num_epochs()}], "
+                        f"Train Loss: {train_loss:.6f}"
+                    )
 
-            # Save checkpoint (if enabled)
+            # Periodic checkpoint (if not using best_only)
+            save_best_only = self.config["trainer_params"].get("save_best_only", True)
             checkpoint_freq = self.get_checkpoint_frequency()
-            if checkpoint_freq > 0 and (epoch + 1) % checkpoint_freq == 0:
+            
+            if not save_best_only and checkpoint_freq > 0 and (epoch + 1) % checkpoint_freq == 0:
                 self.save_checkpoint(
                     epoch=epoch,
-                    loss=epoch_loss,
+                    loss=train_loss,
                     optimizer_state=(
                         self.optimizer.state_dict() if self.optimizer else None
                     ),
@@ -164,8 +257,12 @@ class TensorTrainer(AbstractTrainer):
 
         print(f"\n{'='*60}")
         print(f"Training Complete!")
-        print(f"Final Loss: {results['losses'][-1]:.6f}")
+        if has_validation:
+            print(f"Best Epoch: {results['best_epoch']}, Best Val Loss: {results['best_val_loss']:.6f}")
+        print(f"Final Train Loss: {results['train_losses'][-1]:.6f}")
         print(f"{'='*60}\n")
+
+        return results
 
         return results
 
