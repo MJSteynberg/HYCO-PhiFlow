@@ -1,0 +1,32 @@
+# Logging configuration for HYCO-PhiFlow
+
+logging:
+  # Root logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  root_level: INFO
+  
+  # Log directory (relative to project root)
+  log_dir: logs
+  
+  # Whether to log to file
+  log_to_file: true
+  
+  # Whether to log to console
+  log_to_console: true
+  
+  # Module-specific log levels
+  # Override the root level for specific modules
+  module_levels:
+    src.training: INFO
+    src.data: INFO
+    src.models: INFO
+    src.evaluation: INFO
+    src.utils: WARNING
+    src.factories: INFO
+  
+  # Performance monitoring
+  log_memory_usage: false
+  log_gpu_stats: false
+  
+  # Log rotation settings
+  max_file_size_mb: 100
+  backup_count: 5

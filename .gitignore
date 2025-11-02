@@ -2,6 +2,7 @@
 /data/*
 /results/*
 /outputs/*
+/logs/*
 
 # Python cache files
 __pycache__/

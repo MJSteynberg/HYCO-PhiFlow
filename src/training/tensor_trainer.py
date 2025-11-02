@@ -22,6 +22,9 @@ from tqdm import tqdm
 import time
 
 from src.training.abstract_trainer import AbstractTrainer
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TensorTrainer(AbstractTrainer):
@@ -197,11 +200,9 @@ class TensorTrainer(AbstractTrainer):
         has_validation = self.val_loader is not None and len(self.val_loader) > 0
         validate_every = self.config["trainer_params"].get("validate_every", 1)
 
-        print(f"\n{'='*60}")
-        print(f"Starting Training on {self.device}")
+        logger.info(f"Starting Training on {self.device}")
         if has_validation:
-            print(f"Validation enabled (every {validate_every} epoch(s))")
-        print(f"{'='*60}\n")
+            logger.info(f"Validation enabled (every {validate_every} epoch(s))")
 
         # Create progress bar for epochs
         pbar = tqdm(range(self.get_num_epochs()), desc="Training", unit="epoch")
@@ -265,14 +266,10 @@ class TensorTrainer(AbstractTrainer):
                     ),
                 )
 
-        print(f"\n{'='*60}")
-        print(f"Training Complete!")
+        logger.info("Training Complete!")
         if has_validation:
-            print(f"Best Epoch: {results['best_epoch']}, Best Val Loss: {results['best_val_loss']:.6f}")
-        print(f"Final Train Loss: {results['train_losses'][-1]:.6f}")
-        print(f"{'='*60}\n")
-
-        return results
+            logger.info(f"Best Epoch: {results['best_epoch']}, Best Val Loss: {results['best_val_loss']:.6f}")
+        logger.info(f"Final Train Loss: {results['train_losses'][-1]:.6f}")
 
         return results
 
@@ -336,13 +333,13 @@ class TensorTrainer(AbstractTrainer):
 
         # Save regular checkpoint
         torch.save(checkpoint, self.checkpoint_path)
-        print(f"Saved checkpoint to {self.checkpoint_path}")
+        logger.info(f"Saved checkpoint to {self.checkpoint_path}")
 
         # Save best checkpoint if specified
         if is_best:
             best_path = Path(self.checkpoint_path).parent / "best.pth"
             torch.save(checkpoint, best_path)
-            print(f"Saved best checkpoint to {best_path}")
+            logger.info(f"Saved best checkpoint to {best_path}")
 
     def load_checkpoint(
         self, path: Optional[Path] = None, strict: bool = True
@@ -378,11 +375,11 @@ class TensorTrainer(AbstractTrainer):
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
 
-        print(f"Loaded checkpoint from {path}")
+        logger.info(f"Loaded checkpoint from {path}")
         if "epoch" in checkpoint:
-            print(f"  Epoch: {checkpoint['epoch']}")
+            logger.info(f"  Epoch: {checkpoint['epoch']}")
         if "loss" in checkpoint:
-            print(f"  Loss: {checkpoint['loss']:.6f}")
+            logger.info(f"  Loss: {checkpoint['loss']:.6f}")
 
         return checkpoint
 
@@ -420,27 +417,27 @@ class TensorTrainer(AbstractTrainer):
         - Device (CPU/CUDA)
         """
         if self.model is None:
-            print("Model not initialized")
+            logger.warning("Model not initialized")
             return
 
         total_params = self.get_parameter_count()
         trainable_params = self.get_trainable_parameter_count()
 
-        print("\n" + "=" * 60)
-        print("MODEL SUMMARY")
-        print("=" * 60)
-        print(f"Model type: {self.model.__class__.__name__}")
-        print(f"Total parameters: {total_params:,}")
-        print(f"Trainable parameters: {trainable_params:,}")
-        print(f"Non-trainable parameters: {total_params - trainable_params:,}")
-        print(f"Device: {self.device}")
-        print("=" * 60 + "\n")
+        logger.info("=" * 60)
+        logger.info("MODEL SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Model type: {self.model.__class__.__name__}")
+        logger.info(f"Total parameters: {total_params:,}")
+        logger.info(f"Trainable parameters: {trainable_params:,}")
+        logger.info(f"Non-trainable parameters: {total_params - trainable_params:,}")
+        logger.info(f"Device: {self.device}")
+        logger.info("=" * 60)
 
     def move_model_to_device(self):
         """Move model to the configured device (CPU or CUDA)."""
         if self.model is not None:
             self.model = self.model.to(self.device)
-            print(f"Model moved to {self.device}")
+            logger.info(f"Model moved to {self.device}")
 
     def set_train_mode(self):
         """Set model to training mode."""

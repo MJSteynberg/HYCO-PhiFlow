@@ -5,6 +5,7 @@ defaults:
   - trainer: synthetic
   - generation: default
   - evaluation: default
+  - logging: default
   - optional experiment: ???  # Specify with experiment=name
   - _self_
 
