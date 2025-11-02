@@ -14,11 +14,7 @@ from src.models.registry import ModelRegistry
 
 # --- JIT-Compiled Physics Step ---
 @jit_compile
-def _heat_step(
-    temp: CenteredGrid, 
-    diffusivity: Tensor, 
-    dt: float
-) -> CenteredGrid:
+def _heat_step(temp: CenteredGrid, diffusivity: Tensor, dt: float) -> CenteredGrid:
     """
     Performs one step of the heat equation (diffusion).
 
@@ -34,18 +30,18 @@ def _heat_step(
 
 
 # --- Model Class Implementation ---
-@ModelRegistry.register_physical('HeatModel')
+@ModelRegistry.register_physical("HeatModel")
 class HeatModel(PhysicalModel):
     """
     Physical model for the heat equation (diffusion).
     Stores diffusivity as an internal parameter.
     """
-    
+
     # Declare PDE-specific parameters
     PDE_PARAMETERS = {
-        'diffusivity': {
-            'type': float,
-            'default': 0.1,
+        "diffusivity": {
+            "type": float,
+            "default": 0.1,
         }
     }
 
@@ -57,16 +53,16 @@ class HeatModel(PhysicalModel):
         b = batch(batch=self.batch_size)
 
         def initial(x):
-            return (math.sum(math.cos(2*np.pi*x/100), 'vector'))
-        
+            return math.sum(math.cos(2 * np.pi * x / 100), "vector")
+
         temp_0 = CenteredGrid(
-            initial, # Noisy initial temperature
-            extrapolation=extrapolation.PERIODIC, # Periodic boundaries
-            x=self.resolution.get_size('x'),
-            y=self.resolution.get_size('y'),
-            bounds=self.domain
+            initial,  # Noisy initial temperature
+            extrapolation=extrapolation.PERIODIC,  # Periodic boundaries
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
         )
-        temp_0 = math.expand(temp_0, b) # Expand to batch size
+        temp_0 = math.expand(temp_0, b)  # Expand to batch size
         return {"temp": temp_0}
 
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
@@ -79,7 +75,7 @@ class HeatModel(PhysicalModel):
         """
         new_temp = _heat_step(
             temp=current_state["temp"],
-            diffusivity=self.diffusivity, # <-- Use self.diffusivity
-            dt=self.dt
+            diffusivity=self.diffusivity,  # <-- Use self.diffusivity
+            dt=self.dt,
         )
         return {"temp": new_temp}

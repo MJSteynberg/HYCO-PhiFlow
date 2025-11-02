@@ -17,7 +17,7 @@ from src.training.tensor_trainer import TensorTrainer
 from src.training.field_trainer import FieldTrainer
 
 __all__ = [
-    'AbstractTrainer',
-    'TensorTrainer',
-    'FieldTrainer',
+    "AbstractTrainer",
+    "TensorTrainer",
+    "FieldTrainer",
 ]

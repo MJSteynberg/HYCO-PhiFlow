@@ -17,4 +17,4 @@ from . import physical
 from . import synthetic
 
 # Export the registry and model classes
-__all__ = ['ModelRegistry', 'physical', 'synthetic']
+__all__ = ["ModelRegistry", "physical", "synthetic"]

@@ -8,6 +8,8 @@ from phi.field import Field, StaggeredGrid, CenteredGrid, stack, native_call
 from phi.math import math, channel
 from phi import field as phi_field
 from phi.field import native_call
+
+
 class SyntheticModel(nn.Module, ABC):
     """
     Abstract base class for all synthetic models (neural networks).
@@ -35,8 +37,8 @@ class SyntheticModel(nn.Module, ABC):
         self.config = config
 
         # Get specs from config, default to empty dict if not provided
-        self.INPUT_SPECS: Dict[str, int] = config.get('input_specs', {})
-        self.OUTPUT_SPECS: Dict[str, int] = config.get('output_specs', {})
+        self.INPUT_SPECS: Dict[str, int] = config.get("input_specs", {})
+        self.OUTPUT_SPECS: Dict[str, int] = config.get("output_specs", {})
 
         # Derive the field lists directly from the specs
         self.INPUT_FIELDS: List[str] = list(self.INPUT_SPECS.keys())
@@ -44,6 +46,5 @@ class SyntheticModel(nn.Module, ABC):
 
     @abstractmethod
     def forward(self, state: Dict[str, Field], dt: float = 0.0) -> Dict[str, Field]:
-        """Forward pass through the model. """
+        """Forward pass through the model."""
         raise NotImplementedError("Subclasses must implement the forward method.")
-    

@@ -24,6 +24,7 @@ from src.factories.trainer_factory import TrainerFactory
 from src.evaluation import Evaluator
 
 import numpy as np
+
 print(np.__version__)
 
 
@@ -31,28 +32,29 @@ print(np.__version__)
 def main(cfg: DictConfig) -> None:
     """Main entry point with Hydra configuration."""
     config = OmegaConf.to_container(cfg, resolve=True)
-    config['project_root'] = str(PROJECT_ROOT)
-    tasks = config['run_params']['mode']
-    
+    config["project_root"] = str(PROJECT_ROOT)
+    tasks = config["run_params"]["mode"]
+
     if isinstance(tasks, str):
         tasks = [tasks]
-    
+
     # Execute tasks
     for task in tasks:
-        if task == 'generate':
+        if task == "generate":
             run_generation(config)
-        
-        elif task == 'train':
+
+        elif task == "train":
             # Use factory to create trainer
             trainer = TrainerFactory.create_trainer(config)
             trainer.train()
-        
-        elif task == 'evaluate':
+
+        elif task == "evaluate":
             evaluator = Evaluator(config)
             evaluator.evaluate()
-        
+
         else:
             print(f"Warning: Unknown task '{task}'")
+
 
 if __name__ == "__main__":
     main()

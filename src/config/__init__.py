@@ -8,12 +8,12 @@ from .evaluation_config import EvaluationConfig
 from .experiment_config import ExperimentConfig
 
 __all__ = [
-    'DataConfig',
-    'PhysicalModelConfig',
-    'SyntheticModelConfig',
-    'SyntheticTrainerConfig',
-    'PhysicalTrainerConfig',
-    'GenerationConfig',
-    'EvaluationConfig',
-    'ExperimentConfig',
+    "DataConfig",
+    "PhysicalModelConfig",
+    "SyntheticModelConfig",
+    "SyntheticTrainerConfig",
+    "PhysicalTrainerConfig",
+    "GenerationConfig",
+    "EvaluationConfig",
+    "ExperimentConfig",
 ]
