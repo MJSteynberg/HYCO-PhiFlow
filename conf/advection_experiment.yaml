@@ -1,0 +1,44 @@
+# Full experiment for Advection - Synthetic model training
+defaults:
+  - data: advection_128
+  - model/physical: advection
+  - model/synthetic: unet_advection
+  - trainer: synthetic
+  - generation: default
+  - evaluation: default
+  - _self_
+
+run_params:
+  experiment_name: 'advection_synthetic_experiment'
+  notes: 'Training synthetic UNet model to predict pure advection dynamics'
+  mode: ['generate', 'train', 'evaluate']
+  model_type: 'synthetic'
+
+model:
+  synthetic:
+    model_save_name: 'advection_128_synthetic'
+
+generation_params:
+  num_simulations: 1
+
+trainer_params:
+  train_sim: [0]  # Train on 8 simulations
+  val_sim: [0]  # Validate on 2 simulations
+  epochs: 1
+  batch_size: 16
+  num_predict_steps: 4
+  use_sliding_window: true
+  learning_rate: 0.0001
+  optimizer: 'adam'
+  scheduler: 'cosine'
+  weight_decay: 0.0
+  save_interval: 10
+  save_best_only: true
+
+evaluation_params:
+  test_sim: [0]  # Test on 3 unseen simulations
+  num_frames: 51
+  save_animations: true
+  save_plots: true
+
+project_root: ${hydra:runtime.cwd}

@@ -1,0 +1,15 @@
+name: 'UNet'
+model_path: 'results/models'
+model_save_name: ???  # Must be specified
+
+input_specs:
+  density: 1  # Density is a scalar field
+  velocity: 2  # Velocity is a 2D vector field
+
+output_specs:
+  density: 1  # Density is a scalar field
+
+architecture:
+  levels: 4
+  filters: 64
+  batch_norm: true

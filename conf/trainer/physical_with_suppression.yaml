@@ -1,0 +1,20 @@
+# Physical Model Configuration with Convergence Error Suppression
+# Suitable for hybrid training where fast iterations are needed
+
+epochs: 50
+num_predict_steps: 10
+train_sim: [0, 1, 2]
+
+learnable_parameters:
+  - name: nu
+    initial_guess: 0.01
+    bounds: [0.001, 0.1]
+
+# Optimizer settings optimized for hybrid training
+method: 'L-BFGS-B'
+abs_tol: 1e-6
+max_iterations: 5  # Low for fast iterations
+suppress_convergence_errors: true  # Don't raise errors on non-convergence
+
+# Memory monitoring (optional)
+enable_memory_monitoring: false

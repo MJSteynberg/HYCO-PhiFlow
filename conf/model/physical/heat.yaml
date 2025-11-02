@@ -5,6 +5,6 @@ domain:
 resolution:
   x: 64
   y: 64
-dt: 1.0
+dt: 1.
 pde_params:
-  diffusivity: 1.0
+  diffusivity: 5.

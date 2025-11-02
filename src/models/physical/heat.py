@@ -13,7 +13,7 @@ from src.models.registry import ModelRegistry
 
 
 # --- JIT-Compiled Physics Step ---
-@jit_compile
+# @jit_compile
 def _heat_step(temp: CenteredGrid, diffusivity: Tensor, dt: float) -> CenteredGrid:
     """
     Performs one step of the heat equation (diffusion).
@@ -26,7 +26,7 @@ def _heat_step(temp: CenteredGrid, diffusivity: Tensor, dt: float) -> CenteredGr
     Returns:
         CenteredGrid: The temperature field at the next time step.
     """
-    return diffuse.explicit(temp, diffusivity=diffusivity, dt=dt)
+    return diffuse.fourier(temp, diffusivity=diffusivity, dt=dt)
 
 
 # --- Model Class Implementation ---

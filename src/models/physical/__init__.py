@@ -12,3 +12,5 @@ from .smoke import SmokeModel
 from .burgers import BurgersModel
 
 from .heat import HeatModel
+
+from .advection import AdvectionModel

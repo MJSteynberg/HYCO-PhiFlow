@@ -1,0 +1,7 @@
+data_dir: 'data/'
+dset_name: 'advection_128'
+fields: ['density', 'velocity']
+fields_scheme: 'dVV'
+cache_dir: 'data/cache'
+validate_cache: true
+auto_clear_invalid: true

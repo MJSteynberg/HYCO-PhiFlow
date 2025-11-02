@@ -1,0 +1,14 @@
+name: 'UNet'
+model_path: 'results/models'
+model_save_name: ???  # Must be specified
+
+input_specs:
+  temp: 1  # Temperature is a scalar field
+
+output_specs:
+  temp: 1  # Temperature is a scalar field
+
+architecture:
+  levels: 4
+  filters: 64
+  batch_norm: true

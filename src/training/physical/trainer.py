@@ -206,7 +206,9 @@ class PhysicalTrainer(FieldTrainer):
                 stacked_field = math.expand(stacked_field, batch(batch=1))
 
                 data[field_name] = stacked_field
-                logger.info(f"  Loaded '{field_name}' with shape {data[field_name].shape}")
+                # Convert shape to string without Unicode characters
+                shape_str = str(data[field_name].shape).encode('ascii', 'replace').decode('ascii')
+                logger.info(f"  Loaded '{field_name}' with shape {shape_str}")
 
         # Load true PDE params from scene metadata if available
         scene_path = os.path.join(
@@ -249,15 +251,29 @@ class PhysicalTrainer(FieldTrainer):
         """
         method = self.trainer_config.get("method", "L-BFGS-B")
         abs_tol = self.trainer_config.get("abs_tol", 1e-6)
-        max_iterations = self.trainer_config.get(
-            "max_iterations", self.num_epochs
-        )  # Use epochs if not specified
+        max_iterations = self.trainer_config.get("max_iterations")
+        if max_iterations is None:
+            max_iterations = self.num_epochs  # Use epochs if not specified
+        
+        # Configure error suppression for hybrid training
+        suppress_convergence = self.trainer_config.get("suppress_convergence_errors", False)
+        suppress_list = []
+        if suppress_convergence:
+            suppress_list.append(math.NotConverged)
+            logger.info("Convergence errors will be suppressed (suitable for hybrid training)")
+        
+        logger.info(f"\nOptimization settings:")
+        logger.info(f"  method: {method}")
+        logger.info(f"  abs_tol: {abs_tol}")
+        logger.info(f"  max_iterations: {max_iterations}")
+        logger.info(f"  suppress_convergence: {suppress_convergence}")
 
         return math.Solve(
             method=method,
             abs_tol=abs_tol,
             x0=self.initial_guesses,
             max_iterations=max_iterations,
+            suppress=tuple(suppress_list),
         )
 
     def train(self):
@@ -281,7 +297,9 @@ class PhysicalTrainer(FieldTrainer):
         else:
             gt_data_dict = self._load_ground_truth_data(sim_to_train)
 
-        logger.info(str(gt_data_dict))
+        # Log field names without Unicode shape representations
+        field_info = {name: f"Field[{field.shape.volume}]" for name, field in gt_data_dict.items()}
+        logger.info(f"Loaded ground truth fields: {field_info}")
         # Get the initial state (t=0) for all fields
         initial_state_dict = {
             name: field.time[0]
@@ -369,25 +387,13 @@ class PhysicalTrainer(FieldTrainer):
             for i, cfg in enumerate(self.learnable_params_config)
         ]
         logger.info(f"Initial guess: {', '.join(initial_guess_strs)}")
-        logger.info(f"Initial loss: {initial_loss}")
+        # Convert to native Python float to avoid Unicode in tensor representation
+        initial_loss_val = float(initial_loss.numpy()) if hasattr(initial_loss, 'numpy') else float(initial_loss)
+        logger.info(f"Initial loss: {initial_loss_val:.6f}")
 
-        method = self.trainer_config.get("method", "L-BFGS-B")
-        abs_tol = self.trainer_config.get("abs_tol", 1e-6)
-        max_iterations = self.trainer_config.get("max_iterations")
-        if max_iterations is None:
-            max_iterations = self.num_epochs  # Use epochs if not specified
-        
-        logger.info(f"\nOptimization settings:")
-        logger.info(f"  method: {method}")
-        logger.info(f"  abs_tol: {abs_tol}")
-        logger.info(f"  max_iterations: {max_iterations} (type: {type(max_iterations)})")
+        # Use the _setup_optimization method to get Solve configuration
+        solve_params = self._setup_optimization()
 
-        solve_params = math.Solve(
-            method=method,
-            abs_tol=abs_tol,
-            x0=self.initial_guesses,
-            max_iterations=max_iterations,
-        )
 
         try:
             # math.minimize returns a TUPLE of optimized tensors
@@ -399,28 +405,23 @@ class PhysicalTrainer(FieldTrainer):
 
             logger.info(f"\nOptimization completed!")
             logger.info(f"Total loss function evaluations: {loss_call_count[0]}")
-        except math.NotConverged as e:
-            # NotConverged is raised when iteration limit is reached
-            # This is expected for quick tests with low max_iterations
-            logger.warning(f"\nOptimization stopped: {e}")
-            logger.info(f"Total loss function evaluations: {loss_call_count[0]}")
-            # Extract the best parameters found so far
-            estimated_tensors = tuple(self.initial_guesses)  # Fallback
-            if hasattr(e, 'result') and hasattr(e.result, 'x'):
-                estimated_tensors = e.result.x
+            
         except Exception as e:
-            logger.error(f"Optimization failed: {e}")
+            # Only catch unexpected errors (NotConverged should be suppressed via Solve)
+            logger.error(f"Unexpected optimization error: {e}")
             import traceback
 
             traceback.print_exc()
-            estimated_tensors = tuple(self.initial_guesses)  # Return guess on failure
+            estimated_tensors = tuple(self.initial_guesses)  # Use initial guesses as last resort
 
         # Print performance summary
         if hasattr(self, "memory_monitor") and self.memory_monitor:
             self.memory_monitor.print_summary()
 
         final_loss = loss_function(*estimated_tensors)
-        logger.info(f"Final loss: {final_loss}")
+        # Convert to native Python float to avoid Unicode in tensor representation
+        final_loss_val = float(final_loss.numpy()) if hasattr(final_loss, 'numpy') else float(final_loss)
+        logger.info(f"Final loss: {final_loss_val:.6f}")
 
         # 4. --- Report Results ---
         logger.info("\n" + "=" * 60)

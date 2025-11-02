@@ -49,3 +49,6 @@ class PhysicalTrainerConfig:
     method: str = "L-BFGS-B"
     abs_tol: float = 1e-6
     max_iterations: Optional[int] = None
+    
+    # Convergence handling for hybrid training
+    suppress_convergence_errors: bool = False

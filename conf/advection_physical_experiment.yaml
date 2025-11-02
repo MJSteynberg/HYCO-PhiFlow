@@ -1,0 +1,29 @@
+# Advection inverse problem quick test
+defaults:
+  - data: advection_128
+  - model/physical: advection
+  - trainer: physical_quick
+  - generation: default
+  - _self_
+
+run_params:
+  experiment_name: 'advection_inverse_quick_test'
+  notes: 'Quick inverse problem test to infer rotation strength'
+  mode: ['train']
+  model_type: 'physical'
+
+model:
+  physical:
+    model_path: 'results/models/'
+    model_save_name: 'advection_128'
+    dt: 0.5
+
+trainer_params:
+  epochs: 100
+  num_predict_steps: 4
+  train_sim: [0]
+  learnable_parameters:
+    - name: 'advection_coeff'
+      initial_guess: 0.3
+
+project_root: ${hydra:runtime.cwd}

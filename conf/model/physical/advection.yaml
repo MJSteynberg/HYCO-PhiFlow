@@ -1,0 +1,10 @@
+name: 'AdvectionModel'
+domain:
+  size_x: 100
+  size_y: 100
+resolution:
+  x: 128
+  y: 128
+dt: 0.5
+pde_params:
+  advection_coeff: 1.0
