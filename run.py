@@ -23,6 +23,9 @@ from src.data.generator import run_generation
 from src.factories.trainer_factory import TrainerFactory
 from src.evaluation import Evaluator
 
+import numpy as np
+print(np.__version__)
+
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:
