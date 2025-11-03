@@ -64,6 +64,10 @@ class PhysicalTrainer(FieldTrainer):
         # Configure error suppression for hybrid training
         self.suppress_convergence = self.trainer_config.get("suppress_convergence_errors", False)
         
+        # --- Store parameter names for logging ---
+        learnable_params_config = self.trainer_config.get("learnable_parameters", [])
+        self.param_names = [p["name"] for p in learnable_params_config]
+        
         # --- Memory monitoring (optional, enabled by config) ---
         enable_memory_monitoring = self.trainer_config.get(
             "enable_memory_monitoring", False
@@ -190,26 +194,26 @@ class PhysicalTrainer(FieldTrainer):
         # Compute final loss and return as float
         final_loss = loss_function(*estimated_tensors)
         
-        # Log optimization results
-        logger.info(f"\n{'='*60}")
-        logger.info(f"OPTIMIZATION RESULTS")
-        logger.info(f"{'='*60}")
+        # Log optimization results at DEBUG level
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"OPTIMIZATION RESULTS")
+        logger.debug(f"{'='*60}")
         for i, param_name in enumerate(param_names):
             initial_val = self.learnable_params[i]
             final_val = estimated_tensors[i]
-            logger.info(f"Parameter: {param_name}")
-            logger.info(f"  Initial guess: {initial_val}")
-            logger.info(f"  Optimized value: {final_val}")
+            logger.debug(f"Parameter: {param_name}")
+            logger.debug(f"  Initial guess: {initial_val}")
+            logger.debug(f"  Optimized value: {final_val}")
             
             # Try to get true value from model if available
             if hasattr(self.model, f"_true_{param_name}"):
                 true_val = getattr(self.model, f"_true_{param_name}")
                 error = abs(float(final_val) - float(true_val))
                 rel_error = (error / abs(float(true_val))) * 100 if abs(float(true_val)) > 1e-10 else 0
-                logger.info(f"  True value: {true_val}")
-                logger.info(f"  Absolute error: {error:.6f}")
-                logger.info(f"  Relative error: {rel_error:.2f}%")
-        logger.info(f"{'='*60}\n")
+                logger.debug(f"  True value: {true_val}")
+                logger.debug(f"  Absolute error: {error:.6f}")
+                logger.debug(f"  Relative error: {rel_error:.2f}%")
+        logger.debug(f"{'='*60}\n")
         
         # Update learnable_params with optimized values for next sample
         self.learnable_params = list(estimated_tensors)

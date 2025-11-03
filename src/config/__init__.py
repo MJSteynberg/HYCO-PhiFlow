@@ -6,6 +6,12 @@ from .trainer_config import SyntheticTrainerConfig, PhysicalTrainerConfig
 from .generation_config import GenerationConfig
 from .evaluation_config import EvaluationConfig
 from .experiment_config import ExperimentConfig
+from .augmentation_config import (
+    AugmentationConfig,
+    validate_cache_config,
+    create_cache_path,
+    get_augmentation_summary,
+)
 
 __all__ = [
     "DataConfig",
@@ -16,4 +22,8 @@ __all__ = [
     "GenerationConfig",
     "EvaluationConfig",
     "ExperimentConfig",
+    "AugmentationConfig",
+    "validate_cache_config",
+    "create_cache_path",
+    "get_augmentation_summary",
 ]

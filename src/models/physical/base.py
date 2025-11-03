@@ -52,9 +52,16 @@ class PhysicalModel(ABC):
         # Parse and validate PDE-specific parameters
         self._parse_pde_parameters(pde_params)
 
-        print(
-            f"Initialized {self.__class__.__name__} with resolution={self.resolution}, dt={self.dt}"
+        # Use logger instead of print to avoid Unicode issues on Windows
+        from src.utils.logger import get_logger
+        logger = get_logger(__name__)
+        # Simple string representation to avoid Unicode superscript issues
+        logger.info(
+            f"Initialized {self.__class__.__name__} with resolution={tuple(self.resolution.sizes)}, dt={self.dt}"
         )
+
+
+
 
     def _parse_domain(self, domain_config: Dict[str, Any]) -> Box:
         """Parse domain configuration into a Box object."""

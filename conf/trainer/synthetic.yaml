@@ -37,3 +37,19 @@ print_freq: 10
 
 # Memory monitoring
 memory_monitor_batches: 5
+
+# Data augmentation configuration (optional for synthetic trainer)
+augmentation:
+  enabled: false  # Disabled by default for pure synthetic training
+  alpha: 0.1
+  strategy: "cached"
+  cache:
+    experiment_name: "${data.dset_name}"
+    format: "dict"
+    max_memory_samples: 1000
+    reuse_existing: true
+  on_the_fly:
+    generate_every: 1
+    batch_size: 32
+    rollout_steps: 10
+  device: "cuda"

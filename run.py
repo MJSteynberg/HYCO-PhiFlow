@@ -96,8 +96,11 @@ def main(cfg: DictConfig) -> None:
                 trainer.train(data_source=dataset, num_epochs=num_epochs)
                 
             elif model_type == "hybrid":
-                # TODO: Phase 3 - Hybrid training with data augmentation
-                raise NotImplementedError("Hybrid training not yet implemented (Phase 3)")
+                # Phase 3: Hybrid training with data augmentation
+                # HybridTrainer manages data creation internally
+                # Just call train() with no arguments
+                logger.info("Starting hybrid training...")
+                trainer.train()
             
             else:
                 raise ValueError(f"Unknown model_type: {model_type}")

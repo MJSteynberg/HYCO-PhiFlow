@@ -17,4 +17,15 @@ run_params:
   mode: [train]
   model_type: synthetic
 
+# Cache configuration for augmented data
+cache:
+  root: "data/cache"
+  auto_create: true
+  validation:
+    check_on_load: true
+    expected_count: null  # Auto-detect from cache
+  cleanup:
+    on_start: false  # Clear cache before training
+    on_error: false  # Clear cache if validation fails
+
 project_root: ${hydra:runtime.cwd}

@@ -3,4 +3,15 @@
 from .data_manager import DataManager
 from .hybrid_dataset import HybridDataset
 
-__all__ = ["DataManager", "HybridDataset"]
+# Augmentation module
+from .augmentation import (
+    AugmentedTensorDataset,
+    AugmentedFieldDataset,
+)
+
+__all__ = [
+    "DataManager",
+    "HybridDataset",
+    "AugmentedTensorDataset",
+    "AugmentedFieldDataset",
+]

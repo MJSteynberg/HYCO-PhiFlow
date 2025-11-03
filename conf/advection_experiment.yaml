@@ -11,7 +11,7 @@ defaults:
 run_params:
   experiment_name: 'advection_synthetic_experiment'
   notes: 'Training synthetic UNet model to predict pure advection dynamics'
-  mode: ['generate', 'train', 'evaluate']
+  mode: ['evaluate']
   model_type: 'synthetic'
 
 model:
