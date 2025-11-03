@@ -39,37 +39,21 @@ class SimpleMockDataManager:
 
 
 class SimpleConcreteFieldTrainer(FieldTrainer):
-    """Minimal concrete implementation for testing."""
+    """Minimal concrete implementation for testing (Phase 1)."""
 
     def __init__(self, config):
-        super().__init__(config)
-        self.data_manager = self._create_data_manager()
-        self.model = self._create_model()
-        self.learnable_params = [math.tensor(1.0)]
+        # Phase 1: Pass model and learnable_params to parent
+        model = SimplePhysicalModel()
+        learnable_params = [torch.nn.Parameter(torch.tensor(1.0))]
+        super().__init__(config, model, learnable_params)
+        
+        # Store additional test attributes
         self.learnable_params_config = [{"name": "test_param"}]
 
-    def _create_data_manager(self):
-        """Create mock data manager."""
-        return SimpleMockDataManager()
-
-    def _create_model(self):
-        """Create simple physical model."""
-        return SimplePhysicalModel()
-
-    def _setup_optimization(self):
-        """Setup simple optimization."""
-        return math.Solve(
-            method="L-BFGS-B", abs_tol=1e-6, x0=self.learnable_params, max_iterations=5
-        )
-
-    def _load_ground_truth(self):
-        """Load mock ground truth."""
-        # Create simple test field
-        field = CenteredGrid(1.0, x=10, y=10)
-        # Add time dimension
-        fields = [field] * 3
-        stacked = math.stack(fields, batch("time"))
-        return {"test_field": stacked}
+    def _train_sample(self, initial_fields, target_fields):
+        """Train on a single sample (Phase 1 abstract method)."""
+        # Simple mock training: just return a loss value
+        return 0.5
 
 
 class TestFieldTrainerInheritance:
@@ -90,80 +74,68 @@ class TestFieldTrainerInitialization:
     """Tests for FieldTrainer initialization."""
 
     def test_data_manager_initialized_as_none(self):
-        """Test that data_manager is initialized as None by FieldTrainer."""
-
+        """Test that data_manager attribute doesn't exist in Phase 1."""
+        
         class PartialTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
+                model = SimplePhysicalModel()
+                learnable_params = [torch.nn.Parameter(torch.tensor(1.0))]
+                super().__init__(config, model, learnable_params)
 
-            def _create_data_manager(self):
-                pass
-
-            def _create_model(self):
-                pass
-
-            def _setup_optimization(self):
-                pass
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
         trainer = PartialTrainer({})
-        assert trainer.data_manager is None
+        # Phase 1: No data_manager attribute
+        assert not hasattr(trainer, "data_manager")
 
     def test_model_initialized_as_none(self):
-        """Test that model is initialized as None."""
+        """Test that model is provided in __init__."""
 
         class PartialTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
+                model = SimplePhysicalModel()
+                learnable_params = [torch.nn.Parameter(torch.tensor(1.0))]
+                super().__init__(config, model, learnable_params)
 
-            def _create_data_manager(self):
-                pass
-
-            def _create_model(self):
-                pass
-
-            def _setup_optimization(self):
-                pass
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
         trainer = PartialTrainer({})
-        assert trainer.model is None
+        # Phase 1: Model is passed in and stored
+        assert trainer.model is not None
 
     def test_learnable_params_initialized_as_empty_list(self):
-        """Test that learnable_params is initialized as empty list."""
+        """Test that learnable_params is provided in __init__."""
 
         class PartialTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
+                model = SimplePhysicalModel()
+                learnable_params = []  # Empty list
+                super().__init__(config, model, learnable_params)
 
-            def _create_data_manager(self):
-                pass
-
-            def _create_model(self):
-                pass
-
-            def _setup_optimization(self):
-                pass
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
         trainer = PartialTrainer({})
+        # Phase 1: Learnable params are passed in
         assert trainer.learnable_params == []
 
     def test_learnable_params_config_initialized_as_empty_list(self):
-        """Test that learnable_params_config is initialized as empty list."""
+        """Test that learnable_params_config doesn't exist by default."""
 
         class PartialTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
+                model = SimplePhysicalModel()
+                learnable_params = []
+                super().__init__(config, model, learnable_params)
 
-            def _create_data_manager(self):
-                pass
-
-            def _create_model(self):
-                pass
-
-            def _setup_optimization(self):
-                pass
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
         trainer = PartialTrainer({})
-        assert trainer.learnable_params_config == []
+        # Phase 1: learnable_params_config is not set by FieldTrainer
+        assert not hasattr(trainer, "learnable_params_config")
 
     def test_final_loss_initialized(self):
         """Test that final_loss is initialized."""
@@ -172,10 +144,11 @@ class TestFieldTrainerInitialization:
         assert trainer.final_loss == 0.0
 
     def test_optimization_history_initialized(self):
-        """Test that optimization_history is initialized."""
+        """Test that training_history is initialized (Phase 1 renamed)."""
         trainer = SimpleConcreteFieldTrainer({})
-        assert hasattr(trainer, "optimization_history")
-        assert trainer.optimization_history == []
+        # Phase 1: renamed from optimization_history to training_history
+        assert hasattr(trainer, "training_history")
+        assert trainer.training_history == []
 
 
 class TestFieldTrainerAbstractMethods:
@@ -185,154 +158,76 @@ class TestFieldTrainerAbstractMethods:
         """Test that FieldTrainer defines expected abstract methods."""
         abstract_methods = FieldTrainer.__abstractmethods__
 
-        expected = {"_create_data_manager", "_create_model", "_setup_optimization"}
+        # Phase 1: Only _train_sample is abstract
+        expected = {"_train_sample"}
         assert expected.issubset(abstract_methods)
 
     def test_field_trainer_is_abstract(self):
         """Test that FieldTrainer cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            FieldTrainer({})
+            # Phase 1: Need to pass model and params, but will fail anyway due to abstract method
+            FieldTrainer({}, None, [])
 
-    def test_missing_create_data_manager_raises_error(self):
-        """Test that missing _create_data_manager() raises TypeError."""
-
-        class IncompleteTrainer(FieldTrainer):
-            def _create_model(self):
-                pass
-
-            def _setup_optimization(self):
-                pass
-
-        with pytest.raises(TypeError):
-            IncompleteTrainer({})
-
-    def test_missing_create_model_raises_error(self):
-        """Test that missing _create_model() raises TypeError."""
+    def test_missing_train_sample_raises_error(self):
+        """Test that missing _train_sample() raises TypeError."""
 
         class IncompleteTrainer(FieldTrainer):
-            def _create_data_manager(self):
-                pass
+            def __init__(self, config):
+                model = SimplePhysicalModel()
+                learnable_params = []
+                super().__init__(config, model, learnable_params)
 
-            def _setup_optimization(self):
-                pass
-
-        with pytest.raises(TypeError):
-            IncompleteTrainer({})
-
-    def test_missing_setup_optimization_raises_error(self):
-        """Test that missing _setup_optimization() raises TypeError."""
-
-        class IncompleteTrainer(FieldTrainer):
-            def _create_data_manager(self):
-                pass
-
-            def _create_model(self):
-                pass
-
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError, match="abstract method"):
             IncompleteTrainer({})
 
 
 class TestFieldTrainerDefaultTrain:
     """Tests for the default train() implementation."""
 
-    def test_train_requires_model_and_data_manager(self):
-        """Test that train() raises error if model or data_manager not set."""
+    def test_train_requires_model(self):
+        """Test that train() raises error if model is None."""
 
-        class NoComponentsTrainer(FieldTrainer):
+        class NoModelTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
-                self.model = None
-                self.data_manager = None
+                # Pass None as model
+                super().__init__(config, None, [])
 
-            def _create_data_manager(self):
-                return None
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
-            def _create_model(self):
-                return None
+        trainer = NoModelTrainer({})
 
-            def _setup_optimization(self):
-                return None
-
-        trainer = NoComponentsTrainer({})
-
-        with pytest.raises(
-            RuntimeError, match="Model and data manager must be initialized"
-        ):
-            trainer.train()
+        with pytest.raises(RuntimeError, match="Model must be initialized"):
+            trainer.train([], num_epochs=1)
 
     def test_train_returns_dict(self):
         """Test that train() returns a dictionary."""
         trainer = SimpleConcreteFieldTrainer({})
 
-        # Mock the methods to avoid actual optimization
-        trainer._load_ground_truth = lambda: {"test": CenteredGrid(1.0, x=10, y=10)}
-        trainer._run_simulation = lambda x: {"test": CenteredGrid(0.9, x=10, y=10)}
-        trainer._compute_loss = lambda p, gt: math.tensor(0.1)
-
-        # Don't actually run optimization, just test structure
-        # result = trainer.train()  # This would run actual optimization
-
-        # Just verify the trainer is properly set up
-        assert trainer.model is not None
-        assert trainer.data_manager is not None
+        # Create mock data source
+        mock_data = [({"field1": None}, {"field1": None})]  # Minimal mock data
+        
+        # Train should return a dict with results
+        result = trainer.train(mock_data, num_epochs=1)
+        
+        assert isinstance(result, dict)
+        assert "num_epochs" in result
 
 
 class TestFieldTrainerUtilityMethods:
     """Tests for utility methods."""
 
-    def test_run_simulation(self):
-        """Test _run_simulation method."""
+    def test_model_is_stored(self):
+        """Test that model is stored in trainer."""
         trainer = SimpleConcreteFieldTrainer({})
-        trainer.config = {"trainer_params": {"num_predict_steps": 2}}
+        assert trainer.model is not None
+        assert isinstance(trainer.model, SimplePhysicalModel)
 
-        # Create initial data
-        field = CenteredGrid(1.0, x=10, y=10)
-        initial_data = {"test_field": math.stack([field], batch("time"))}
-
-        # Run simulation
-        predictions = trainer._run_simulation(initial_data)
-
-        assert "test_field" in predictions
-        assert isinstance(predictions["test_field"], (Field, Tensor))
-
-    def test_compute_loss(self):
-        """Test _compute_loss method."""
+    def test_learnable_params_are_stored(self):
+        """Test that learnable_params are stored."""
         trainer = SimpleConcreteFieldTrainer({})
-
-        # Create test fields
-        field1 = CenteredGrid(1.0, x=10, y=10)
-        field2 = CenteredGrid(0.9, x=10, y=10)
-
-        predictions = {"test": field1}
-        ground_truth = {"test": field2}
-
-        loss = trainer._compute_loss(predictions, ground_truth)
-
-        assert isinstance(loss, (Tensor, float))
-
-    def test_update_model_parameters(self):
-        """Test _update_model_parameters method."""
-        trainer = SimpleConcreteFieldTrainer({})
-        trainer.model = SimplePhysicalModel(param=1.0)
-        trainer.learnable_params_config = [{"name": "param"}]
-
-        # Update parameters
-        new_params = [2.0]
-        trainer._update_model_parameters(new_params)
-
-        assert trainer.model.param == 2.0
-
-    def test_update_model_parameters_single_value(self):
-        """Test _update_model_parameters with single value."""
-        trainer = SimpleConcreteFieldTrainer({})
-        trainer.model = SimplePhysicalModel(param=1.0)
-        trainer.learnable_params_config = [{"name": "param"}]
-
-        # Update with single value (not list)
-        trainer._update_model_parameters(3.0)
-
-        assert trainer.model.param == 3.0
+        assert trainer.learnable_params is not None
+        assert len(trainer.learnable_params) > 0
 
 
 class TestFieldTrainerResultsSaving:
@@ -355,7 +250,7 @@ class TestFieldTrainerResultsSaving:
             assert path.exists()
 
     def test_load_results_applies_parameters(self):
-        """Test that load_results applies parameters to model."""
+        """Test that load_results loads parameters (Phase 1: doesn't auto-apply)."""
         trainer = SimpleConcreteFieldTrainer({})
         trainer.model = SimplePhysicalModel(param=1.0)
 
@@ -370,8 +265,11 @@ class TestFieldTrainerResultsSaving:
             trainer.save_results(path, results)
             loaded_results = trainer.load_results(path)
 
+            # Phase 1: load_results just returns data, doesn't auto-apply
             assert loaded_results["final_loss"] == 0.5
-            assert trainer.model.param == 2.5
+            assert loaded_results["optimized_parameters"]["param"] == 2.5
+            # Model parameter unchanged (user must apply manually)
+            assert trainer.model.param == 1.0
 
     def test_load_results_missing_file_raises_error(self):
         """Test that loading missing results file raises error."""
@@ -388,7 +286,7 @@ class TestFieldTrainerIntegration:
         """Test that trainer can be fully initialized."""
         trainer = SimpleConcreteFieldTrainer({})
 
-        assert trainer.data_manager is not None
+        # Phase 1: Check for expected attributes
         assert trainer.model is not None
         assert len(trainer.learnable_params) > 0
         assert len(trainer.learnable_params_config) > 0
@@ -407,30 +305,24 @@ class TestFieldTrainerIntegration:
 
 
 class TestFieldTrainerLoadGroundTruth:
-    """Tests for _load_ground_truth method."""
+    """Tests for ground truth loading (Phase 1: done externally)."""
 
-    def test_load_ground_truth_not_implemented_by_default(self):
-        """Test that _load_ground_truth raises NotImplementedError if not overridden."""
-
+    def test_ground_truth_loading_is_external(self):
+        """Test that Phase 1 trainers don't have _load_ground_truth method."""
+        
         class MinimalTrainer(FieldTrainer):
             def __init__(self, config):
-                super().__init__(config)
-                self.model = SimplePhysicalModel()
-                self.data_manager = SimpleMockDataManager()
+                model = SimplePhysicalModel()
+                learnable_params = [torch.nn.Parameter(torch.tensor(1.0))]
+                super().__init__(config, model, learnable_params)
 
-            def _create_data_manager(self):
-                return SimpleMockDataManager()
-
-            def _create_model(self):
-                return SimplePhysicalModel()
-
-            def _setup_optimization(self):
-                return math.Solve(method="L-BFGS-B", abs_tol=1e-6, x0=[1.0])
+            def _train_sample(self, initial_fields, target_fields):
+                return 0.5
 
         trainer = MinimalTrainer({})
 
-        with pytest.raises(NotImplementedError):
-            trainer._load_ground_truth()
+        # Phase 1: No _load_ground_truth method (data is external)
+        assert not hasattr(trainer, "_load_ground_truth") or not callable(getattr(trainer, "_load_ground_truth", None))
 
 
 class TestFieldTrainerConfigurationHandling:
@@ -457,10 +349,10 @@ class TestFieldTrainerConfigurationHandling:
 class TestFieldTrainerOptimizationHistory:
     """Tests for optimization history tracking."""
 
-    def test_optimization_history_initially_empty(self):
-        """Test that optimization history is initially empty."""
+    def test_training_history_initially_empty(self):
+        """Test that training_history is initially empty (Phase 1 renamed)."""
         trainer = SimpleConcreteFieldTrainer({})
-        assert trainer.optimization_history == []
+        assert trainer.training_history == []
 
     def test_final_loss_initially_zero(self):
         """Test that final_loss is initially 0.0."""

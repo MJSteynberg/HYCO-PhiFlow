@@ -11,23 +11,26 @@ defaults:
 run_params:
   experiment_name: 'smoke_unet_128_v1'
   notes: 'Training UNet on Smoke 128x128'
-  mode: ['train', 'evaluate']
+  mode: [ 'train', 'evaluate']
   model_type: 'synthetic'
 
 model:
   synthetic:
     model_save_name: 'smoke_unet_128'
 
+generation_params:
+  num_simulations: 1
+
 trainer_params:
-  train_sim: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]  # 16 sims for training
-  val_sim: [16,17,18,19]  # 4 sims for validation
-  epochs: 1000
+  train_sim: [0]  # 16 sims for training
+  val_sim: [0]  # 4 sims for validation
+  epochs: 20
   batch_size: 16
   num_predict_steps: 4
   use_sliding_window: true
 
 evaluation_params:
-  test_sim: [0,20,21,22,23]
+  test_sim: [0]
   num_frames: 75
 
 project_root: ${hydra:runtime.cwd}

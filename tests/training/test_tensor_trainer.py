@@ -1,7 +1,7 @@
 """
-Tests for TensorTrainer
+Tests for TensorTrainer (Phase 1 API)
 
-Tests the base class for PyTorch tensor-based trainers.
+Tests the base class for PyTorch tensor-based trainers with external model management.
 """
 
 import pytest
@@ -28,45 +28,18 @@ def default_trainer_config():
 
 
 class SimpleConcreteTensorTrainer(TensorTrainer):
-    """Minimal concrete implementation for testing."""
+    """Minimal concrete implementation for testing Phase 1 API."""
 
-    def __init__(self, config):
-        super().__init__(config)
-        self.model = self._create_model()
-        self.train_loader, self.val_loader = self._create_data_loaders()
+    def __init__(self, config, model):
+        super().__init__(config, model)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
 
-    def _create_model(self):
-        """Create a simple linear model."""
-        return nn.Linear(10, 5)
-
-    def _create_data_loaders(self):
-        """Create simple train and validation dataloaders."""
-        # Train data
-        X_train = torch.randn(100, 10)
-        y_train = torch.randn(100, 5)
-        train_dataset = TensorDataset(X_train, y_train)
-        train_loader = DataLoader(train_dataset, batch_size=10)
-        
-        # Val data (smaller)
-        X_val = torch.randn(20, 10)
-        y_val = torch.randn(20, 5)
-        val_dataset = TensorDataset(X_val, y_val)
-        val_loader = DataLoader(val_dataset, batch_size=10)
-        
-        return train_loader, val_loader
-
-    def _compute_batch_loss(self, batch):
-        """Compute loss for a batch."""
-        X, y = batch
-        pred = self.model(X)
-        return nn.MSELoss()(pred, y)
-
-    def _train_epoch(self):
-        """Simple training epoch."""
+    def _train_epoch_with_data(self, data_source):
+        """Simple training epoch with data_source."""
         total_loss = 0.0
-        for batch in self.train_loader:
+        for batch in data_source:
             X, y = batch
+            X, y = X.to(self.device), y.to(self.device)
             pred = self.model(X)
             loss = nn.MSELoss()(pred, y)
 
@@ -76,7 +49,7 @@ class SimpleConcreteTensorTrainer(TensorTrainer):
 
             total_loss += loss.item()
 
-        return total_loss / len(self.train_loader)
+        return total_loss / len(data_source)
 
 
 class TestTensorTrainerInheritance:
@@ -88,7 +61,8 @@ class TestTensorTrainerInheritance:
 
     def test_concrete_trainer_is_tensor_trainer(self, default_trainer_config):
         """Test that concrete implementation is a TensorTrainer."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         assert isinstance(trainer, TensorTrainer)
         assert isinstance(trainer, AbstractTrainer)
 
@@ -98,7 +72,8 @@ class TestTensorTrainerInitialization:
 
     def test_device_assignment(self, default_trainer_config):
         """Test that device is properly assigned."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
 
         assert hasattr(trainer, "device")
         assert isinstance(trainer.device, torch.device)
@@ -106,82 +81,37 @@ class TestTensorTrainerInitialization:
 
     def test_device_is_cuda_or_cpu(self, default_trainer_config):
         """Test that device is either CUDA or CPU."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         assert trainer.device.type in ["cuda", "cpu"]
 
-    def test_model_initialized_as_none(self, default_trainer_config):
-        """Test that model is initialized as None by TensorTrainer."""
-        config = {}
+    def test_model_set_from_parameter(self, default_trainer_config):
+        """Test that model is set from constructor parameter."""
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
+        assert trainer.model is model
 
-        # Before subclass sets it, should be None
-        class PartialTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                # Don't set model yet
-
-            def _create_model(self):
-                pass
-
-            def _create_data_loaders(self):
-                return None, None
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
-                pass
-
-        trainer = PartialTrainer(config)
-        assert trainer.model is None
-
-    def test_optimizer_initialized_as_none(self, default_trainer_config):
-        """Test that optimizer is initialized as None."""
+    def test_optimizer_created_automatically(self, default_trainer_config):
+        """Test that optimizer is created automatically by base class."""
 
         class PartialTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
+            def __init__(self, config, model):
+                super().__init__(config, model)
+                # Optimizer created automatically
 
-            def _create_model(self):
-                pass
+            def _train_epoch_with_data(self, data_source):
+                return 0.0
 
-            def _create_data_loaders(self):
-                return None, None
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
-                pass
-
-        trainer = PartialTrainer({})
-        assert trainer.optimizer is None
-
-    def test_dataloader_initialized_as_none(self, default_trainer_config):
-        """Test that dataloader is initialized as None."""
-
-        class PartialTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-
-            def _create_model(self):
-                pass
-
-            def _create_data_loaders(self):
-                return None, None
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
-                pass
-
-        trainer = PartialTrainer({})
-        assert trainer.train_loader is None
-        assert trainer.val_loader is None
+        model = nn.Linear(10, 5)
+        trainer = PartialTrainer({}, model)
+        # With Phase 1 API, optimizer is created automatically if model exists
+        assert trainer.optimizer is not None
+        assert isinstance(trainer.optimizer, torch.optim.Optimizer)
 
     def test_checkpoint_path_initialized_as_none(self, default_trainer_config):
         """Test that checkpoint_path is initialized as None."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         # Subclass may set it, but base initializes to None
         assert hasattr(trainer, "checkpoint_path")
 
@@ -189,65 +119,28 @@ class TestTensorTrainerInitialization:
 class TestTensorTrainerAbstractMethods:
     """Tests for abstract method enforcement."""
 
-    def test_tensor_trainer_has_abstract_methods(self, default_trainer_config):
-        """Test that TensorTrainer defines expected abstract methods."""
+    def test_tensor_trainer_has_abstract_method(self, default_trainer_config):
+        """Test that TensorTrainer defines expected abstract method."""
         abstract_methods = TensorTrainer.__abstractmethods__
 
-        expected = {"_create_model", "_create_data_loaders", "_compute_batch_loss", "_train_epoch"}
+        expected = {"_train_epoch_with_data"}
         assert expected.issubset(abstract_methods)
 
     def test_tensor_trainer_is_abstract(self, default_trainer_config):
         """Test that TensorTrainer cannot be instantiated directly."""
         with pytest.raises(TypeError, match="Can't instantiate abstract class"):
-            TensorTrainer({})
+            model = nn.Linear(10, 5)
+            TensorTrainer({}, model)
 
-    def test_missing_create_model_raises_error(self, default_trainer_config):
-        """Test that missing _create_model() raises TypeError."""
-
-        class IncompleteTrainer(TensorTrainer):
-            def _create_data_loaders(self):
-                return None, None
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
-                pass
-
-        with pytest.raises(TypeError):
-            IncompleteTrainer({})
-
-    def test_missing_create_data_loader_raises_error(self, default_trainer_config):
-        """Test that missing _create_data_loader() raises TypeError."""
+    def test_missing_train_epoch_with_data_raises_error(self, default_trainer_config):
+        """Test that missing _train_epoch_with_data() raises TypeError."""
 
         class IncompleteTrainer(TensorTrainer):
-            def _create_model(self):
-                pass
-
-            def _train_epoch(self):
-                pass
+            pass  # Missing _train_epoch_with_data
 
         with pytest.raises(TypeError):
-            IncompleteTrainer({})
-
-    def test_missing_train_epoch_raises_error(self, default_trainer_config):
-        """Test that missing _train_epoch() raises TypeError."""
-
-        class IncompleteTrainer(TensorTrainer):
-            def _create_model(self):
-                pass
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-        with pytest.raises(TypeError):
-            IncompleteTrainer({})
+            model = nn.Linear(10, 5)
+            IncompleteTrainer({}, model)
 
 
 class TestTensorTrainerDefaultTrain:
@@ -263,94 +156,101 @@ class TestTensorTrainerDefaultTrain:
                 "checkpoint_freq": 0,  # Disable checkpointing for tests
             }
         }
-        return SimpleConcreteTensorTrainer(config)
+        model = nn.Linear(10, 5)
+        return SimpleConcreteTensorTrainer(config, model)
 
-    def test_train_executes_successfully(self, trainer_with_config):
-        """Test that train() executes without error."""
+    @pytest.fixture
+    def sample_data_loader(self):
+        """Create sample data loader."""
+        X = torch.randn(100, 10)
+        y = torch.randn(100, 5)
+        dataset = TensorDataset(X, y)
+        return DataLoader(dataset, batch_size=10)
+
+    def test_train_executes_successfully(self, trainer_with_config, sample_data_loader):
+        """Test that train() executes without error with explicit data."""
         trainer = trainer_with_config
-        result = trainer.train()
+        result = trainer.train(data_source=sample_data_loader, num_epochs=3)
 
         assert isinstance(result, dict)
         assert "train_losses" in result
         assert "epochs" in result
 
-    def test_train_returns_results(self, trainer_with_config):
+    def test_train_returns_results(self, trainer_with_config, sample_data_loader):
         """Test that train() returns results dictionary."""
-        result = trainer_with_config.train()
+        result = trainer_with_config.train(data_source=sample_data_loader, num_epochs=3)
 
         assert isinstance(result, dict)
         assert "train_losses" in result
-        assert "val_losses" in result
         assert "epochs" in result
         assert len(result["train_losses"]) == 3  # 3 epochs
         assert len(result["epochs"]) == 3
 
-    def test_train_requires_model_and_dataloader(self, default_trainer_config):
-        """Test that train() raises error if model or dataloader not set."""
+    def test_train_requires_model(self, default_trainer_config):
+        """Test that train() raises error if model not set."""
 
         class NoModelTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                self.model = None  # Not set
-                self.dataloader = None  # Not set
+            def __init__(self, config, model):
+                super().__init__(config, None)  # Pass None as model
 
-            def _create_model(self):
-                return None
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
+            def _train_epoch_with_data(self, data_source):
                 return 0.0
 
-        trainer = NoModelTrainer({})
+        trainer = NoModelTrainer({}, None)
+        X = torch.randn(100, 10)
+        y = torch.randn(100, 5)
+        dataset = TensorDataset(X, y)
+        data_loader = DataLoader(dataset, batch_size=10)
 
-        with pytest.raises(
-            RuntimeError, match="Model and train_loader must be initialized"
-        ):
-            trainer.train()
+        with pytest.raises(RuntimeError, match="Model must be initialized"):
+            trainer.train(data_source=data_loader, num_epochs=1)
 
 
 class TestTensorTrainerConfigMethods:
-    """Tests for configuration getter methods."""
+    """Tests for configuration access."""
 
     def test_get_num_epochs_default(self, default_trainer_config):
         """Test default number of epochs from Hydra config."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
-        assert trainer.get_num_epochs() == 100
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
+        # Access config directly via config dictionary
+        trainer_params = trainer.config.get("trainer_params", {})
+        assert trainer_params.get("epochs", 100) == 100
 
     def test_get_num_epochs_custom(self, default_trainer_config):
         """Test custom number of epochs."""
         config = {"trainer_params": {"epochs": 50, "print_freq": 10, "checkpoint_freq": 50}}
-        trainer = SimpleConcreteTensorTrainer(config)
-        assert trainer.get_num_epochs() == 50
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(config, model)
+        assert trainer.config["trainer_params"]["epochs"] == 50
 
     def test_get_print_frequency_default(self, default_trainer_config):
         """Test default print frequency from Hydra config."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
-        assert trainer.get_print_frequency() == 10
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
+        trainer_params = trainer.config.get("trainer_params", {})
+        assert trainer_params.get("print_freq", 10) == 10
 
     def test_get_print_frequency_custom(self, default_trainer_config):
         """Test custom print frequency."""
         config = {"trainer_params": {"epochs": 100, "print_freq": 5, "checkpoint_freq": 50}}
-        trainer = SimpleConcreteTensorTrainer(config)
-        assert trainer.get_print_frequency() == 5
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(config, model)
+        assert trainer.config["trainer_params"]["print_freq"] == 5
 
     def test_get_checkpoint_frequency_default(self, default_trainer_config):
         """Test default checkpoint frequency from Hydra config."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
-        assert trainer.get_checkpoint_frequency() == 50
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
+        trainer_params = trainer.config.get("trainer_params", {})
+        assert trainer_params.get("checkpoint_freq", 50) == 50
 
     def test_get_checkpoint_frequency_custom(self, default_trainer_config):
         """Test custom checkpoint frequency."""
         config = {"trainer_params": {"epochs": 100, "print_freq": 10, "checkpoint_freq": 25}}
-        trainer = SimpleConcreteTensorTrainer(config)
-        assert trainer.get_checkpoint_frequency() == 25
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(config, model)
+        assert trainer.config["trainer_params"]["checkpoint_freq"] == 25
 
 
 class TestTensorTrainerCheckpointManagement:
@@ -361,7 +261,8 @@ class TestTensorTrainerCheckpointManagement:
         """Create trainer with temporary directory for checkpoints."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config = {"project_root": tmpdir}
-            trainer = SimpleConcreteTensorTrainer(config)
+            model = nn.Linear(10, 5)
+            trainer = SimpleConcreteTensorTrainer(config, model)
             trainer.checkpoint_path = Path(tmpdir) / "test_checkpoint.pth"
             yield trainer
 
@@ -374,7 +275,8 @@ class TestTensorTrainerCheckpointManagement:
 
     def test_save_checkpoint_without_path_raises_error(self, default_trainer_config):
         """Test that save_checkpoint without path raises ValueError."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         trainer.checkpoint_path = None
 
         with pytest.raises(ValueError, match="checkpoint_path not set"):
@@ -385,26 +287,15 @@ class TestTensorTrainerCheckpointManagement:
         config = {}
 
         class NoModelTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                self.model = None
+            def __init__(self, config, model):
+                super().__init__(config, model)
+                self.model = None  # Override to None
                 self.checkpoint_path = Path("test.pth")
 
-            def _create_model(self):
-                return None
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
+            def _train_epoch_with_data(self, data_source):
                 return 0.0
 
-        trainer = NoModelTrainer(config)
+        trainer = NoModelTrainer(config, None)
 
         with pytest.raises(RuntimeError, match="Model not initialized"):
             trainer.save_checkpoint(epoch=1, loss=0.5)
@@ -477,13 +368,15 @@ class TestTensorTrainerModelSummary:
 
     def test_get_parameter_count(self, default_trainer_config):
         """Test that get_parameter_count returns correct count."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         # Linear(10, 5) has 10*5 weights + 5 biases = 55 parameters
         assert trainer.get_parameter_count() == 55
 
     def test_get_trainable_parameter_count(self, default_trainer_config):
         """Test counting only trainable parameters."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
 
         # Freeze some parameters
         for param in list(trainer.model.parameters())[:1]:
@@ -498,56 +391,35 @@ class TestTensorTrainerModelSummary:
         """Test parameter count when model is None."""
 
         class NoModelTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                self.model = None
+            def __init__(self, config, model):
+                super().__init__(config, model)
+                self.model = None  # Override to None
 
-            def _create_model(self):
-                return None
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
+            def _train_epoch_with_data(self, data_source):
                 return 0.0
 
-        trainer = NoModelTrainer({})
+        trainer = NoModelTrainer({}, None)
         assert trainer.get_parameter_count() == 0
         assert trainer.get_trainable_parameter_count() == 0
 
     def test_print_model_summary_executes(self, default_trainer_config):
         """Test that print_model_summary executes without error."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         trainer.print_model_summary()  # Should not raise error
 
     def test_print_model_summary_without_model(self, default_trainer_config):
         """Test print_model_summary when model is None."""
 
         class NoModelTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                self.model = None
+            def __init__(self, config, model):
+                super().__init__(config, model)
+                self.model = None  # Override to None
 
-            def _create_model(self):
-                return None
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
+            def _train_epoch_with_data(self, data_source):
                 return 0.0
 
-        trainer = NoModelTrainer({})
+        trainer = NoModelTrainer({}, None)
         trainer.print_model_summary()  # Should not raise error
 
 
@@ -556,7 +428,8 @@ class TestTensorTrainerDeviceManagement:
 
     def test_move_model_to_device(self, default_trainer_config):
         """Test that model can be moved to device."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         trainer.move_model_to_device()
 
         # Check that model parameters are on the right device
@@ -567,25 +440,14 @@ class TestTensorTrainerDeviceManagement:
         """Test move_model_to_device when model is None."""
 
         class NoModelTrainer(TensorTrainer):
-            def __init__(self, config):
-                super().__init__(config)
-                self.model = None
+            def __init__(self, config, model):
+                super().__init__(config, model)
+                self.model = None  # Override to None
 
-            def _create_model(self):
-                return None
-
-            def _create_data_loaders(self):
-                return None, None
-
-
-
-            def _compute_batch_loss(self, batch):
-                return torch.tensor(0.0)
-
-            def _train_epoch(self):
+            def _train_epoch_with_data(self, data_source):
                 return 0.0
 
-        trainer = NoModelTrainer({})
+        trainer = NoModelTrainer({}, None)
         trainer.move_model_to_device()  # Should not raise error
 
 
@@ -594,21 +456,24 @@ class TestTensorTrainerModeManagement:
 
     def test_set_train_mode(self, default_trainer_config):
         """Test that model can be set to training mode."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         trainer.set_train_mode()
 
         assert trainer.model.training is True
 
     def test_set_eval_mode(self, default_trainer_config):
         """Test that model can be set to evaluation mode."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
         trainer.set_eval_mode()
 
         assert trainer.model.training is False
 
     def test_mode_toggle(self, default_trainer_config):
         """Test toggling between train and eval modes."""
-        trainer = SimpleConcreteTensorTrainer(default_trainer_config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(default_trainer_config, model)
 
         trainer.set_train_mode()
         assert trainer.model.training is True
@@ -632,10 +497,17 @@ class TestTensorTrainerIntegration:
                 "checkpoint_freq": 50
             }
         }
-        trainer = SimpleConcreteTensorTrainer(config)
+        model = nn.Linear(10, 5)
+        trainer = SimpleConcreteTensorTrainer(config, model)
+
+        # Create simple data source (list of tuples)
+        simple_data = [
+            (torch.randn(4, 10), torch.randn(4, 5))  # (X, y) tuples
+            for _ in range(5)  # 5 batches
+        ]
 
         # Train
-        result = trainer.train()
+        result = trainer.train(simple_data, num_epochs=2)
 
         # Verify results
         assert len(result["train_losses"]) == 2
@@ -643,8 +515,10 @@ class TestTensorTrainerIntegration:
 
     def test_multiple_trainers_independent(self, default_trainer_config):
         """Test that multiple trainer instances are independent."""
-        trainer1 = SimpleConcreteTensorTrainer({"id": 1})
-        trainer2 = SimpleConcreteTensorTrainer({"id": 2})
+        model1 = nn.Linear(10, 5)
+        model2 = nn.Linear(10, 5)
+        trainer1 = SimpleConcreteTensorTrainer({"id": 1}, model1)
+        trainer2 = SimpleConcreteTensorTrainer({"id": 2}, model2)
 
         # Models should be different instances
         assert trainer1.model is not trainer2.model

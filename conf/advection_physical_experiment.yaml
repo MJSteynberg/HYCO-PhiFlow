@@ -19,11 +19,13 @@ model:
     dt: 0.5
 
 trainer_params:
-  epochs: 100
+  epochs: 1
   num_predict_steps: 4
   train_sim: [0]
   learnable_parameters:
     - name: 'advection_coeff'
       initial_guess: 0.3
+  max_iterations: 3  # Very low to ensure non-convergence
+  suppress_convergence_errors: true  # Should not crash even with non-convergence
 
 project_root: ${hydra:runtime.cwd}

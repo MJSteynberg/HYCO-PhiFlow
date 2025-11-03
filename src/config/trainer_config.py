@@ -14,8 +14,6 @@ class SyntheticTrainerConfig:
     train_sim: List[int] = field(default_factory=list)
     val_sim: Optional[List[int]] = None
 
-    use_sliding_window: bool = False
-
     # Optimizer settings
     optimizer: str = "adam"
     scheduler: str = "cosine"

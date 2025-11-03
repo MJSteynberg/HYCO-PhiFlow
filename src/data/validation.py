@@ -17,6 +17,12 @@ import json
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 
+try:
+    from omegaconf import DictConfig, OmegaConf
+    HAS_OMEGACONF = True
+except ImportError:
+    HAS_OMEGACONF = False
+
 
 class CacheValidator:
     """
@@ -273,6 +279,10 @@ def compute_hash(obj: Any) -> str:
         >>> hash1 == hash2
         True
     """
+    # Convert OmegaConf DictConfig to regular dict if needed
+    if HAS_OMEGACONF and isinstance(obj, DictConfig):
+        obj = OmegaConf.to_container(obj, resolve=True)
+    
     json_str = json.dumps(obj, sort_keys=True)
     return hashlib.sha256(json_str.encode()).hexdigest()
 

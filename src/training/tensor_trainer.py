@@ -31,6 +31,12 @@ class TensorTrainer(AbstractTrainer):
     """
     Base class for PyTorch tensor-based trainers.
 
+    NEW ARCHITECTURE (Phase 1):
+    - Model is passed in __init__, not created internally
+    - Data is passed to train() method, not held internally
+    - Trainers are persistent across training calls
+    - Optimizer state is preserved
+
     Provides all PyTorch-specific functionality:
     - Device management (CPU/GPU)
     - Model checkpoint saving/loading
@@ -38,284 +44,171 @@ class TensorTrainer(AbstractTrainer):
     - Common epoch-based training loop structure
     - Validation support (optional)
 
-    Subclasses must implement:
-    - _create_model(): Create and initialize the PyTorch model
-    - _create_data_loaders(): Create train and validation DataLoaders
-    - _train_epoch(): Train for one epoch and return loss
-    - _compute_batch_loss(): Compute loss for a single batch (used for validation)
+    Subclasses should implement:
+    - _train_epoch_with_data(): Train for one epoch using provided data_source
+    - _compute_batch_loss(): Compute loss for a single batch (optional, for validation)
 
-    The train() method can be overridden if needed, but a default
-    implementation is provided for standard epoch-based training with
-    optional validation.
+    The train() method accepts data explicitly and should not be overridden
+    in most cases.
 
     Attributes:
         config: Full configuration dictionary
         device: PyTorch device (CPU or CUDA)
-        model: The PyTorch neural network model
+        model: The PyTorch neural network model (passed in __init__)
         optimizer: PyTorch optimizer
-        train_loader: PyTorch DataLoader for training
-        val_loader: PyTorch DataLoader for validation (optional)
         checkpoint_path: Path to model checkpoint file
         best_val_loss: Best validation loss seen so far
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], model: nn.Module):
         """
-        Initialize tensor trainer.
+        Initialize tensor trainer with model.
 
         Args:
             config: Full configuration dictionary containing all settings
+            model: Pre-created PyTorch model
         """
         super().__init__(config)
 
         # PyTorch-specific initialization
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # To be set by subclasses
-        self.model: Optional[nn.Module] = None
-        self.optimizer: Optional[torch.optim.Optimizer] = None
-        self.train_loader: Optional[DataLoader] = None
-        self.val_loader: Optional[DataLoader] = None
+        # Store model and move to device (allow None for testing)
+        if model is not None:
+            self.model = model.to(self.device)
+        else:
+            self.model = None
+        
+        # Create optimizer for the model (only if model exists)
+        self.optimizer = self._create_optimizer() if model is not None else None
+        
+        # Checkpoint path (can be set by subclass)
         self.checkpoint_path: Optional[Path] = None
 
         # Validation state tracking
         self.best_val_loss = float("inf")
         self.best_epoch = 0
 
-    @abstractmethod
-    def _create_model(self) -> nn.Module:
+    def _create_optimizer(self) -> torch.optim.Optimizer:
         """
-        Create and return the PyTorch model.
-
-        This method should:
-        1. Get model specifications from self.config
-        2. Instantiate the appropriate model class
-        3. Move model to self.device if needed
-        4. Set self.model
-        5. Return the model
-
+        Create optimizer for the model.
+        
+        Can be overridden by subclasses for custom optimizer configuration.
+        Default: Adam with learning rate from config.
+        
         Returns:
-            PyTorch model instance
+            PyTorch optimizer instance
         """
-        pass
+        learning_rate = self.config.get("trainer_params", {}).get("learning_rate", 0.001)
+        return torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
     @abstractmethod
-    def _create_data_loaders(self):
+    def _train_epoch_with_data(self, data_source: DataLoader) -> float:
         """
-        Create and return train and validation DataLoaders.
+        Train for one epoch using provided data source.
 
         This method should:
-        1. Get data specifications from self.config
-        2. Create training dataset and DataLoader
-        3. Create validation dataset and DataLoader (if val_sim specified)
-        4. Set self.train_loader and self.val_loader
-        
-        Note: val_loader can be None if no validation data specified.
-        """
-        pass
-
-    @abstractmethod
-    def _compute_batch_loss(self, batch) -> torch.Tensor:
-        """
-        Compute loss for a single batch.
-        
-        Used by both training and validation to ensure same loss computation.
-        Subclasses define the batch structure and how to compute loss.
-        
-        Args:
-            batch: A batch from the DataLoader (structure defined by subclass)
-            
-        Returns:
-            Loss tensor for the batch
-        """
-        pass
-
-    @abstractmethod
-    def _train_epoch(self) -> float:
-        """
-        Train for one epoch.
-
-        This method should:
-        1. Iterate through batches from self.dataloader
+        1. Iterate through batches from data_source
         2. Perform forward pass
         3. Compute loss
         4. Perform backward pass and optimization
         5. Return average epoch loss
+
+        Args:
+            data_source: DataLoader yielding (input, target) tuples
+                        Note: NO weights - all samples treated equally!
 
         Returns:
             Average loss for the epoch
         """
         pass
 
-    def _validate_epoch(self) -> Optional[float]:
+    def train(self, data_source: DataLoader, num_epochs: int) -> Dict[str, Any]:
         """
-        Run validation for one epoch.
-        
-        Returns validation loss if validation data exists, None otherwise.
-        Uses rollout-based validation if configured, otherwise batch validation.
-        
-        Returns:
-            Average validation loss, or None if no validation data
-        """
-        if self.val_loader is None or len(self.val_loader) == 0:
-            return None
-        
-        # Check if rollout validation is enabled
-        use_rollout = self.config.get("trainer_params", {}).get("validation_rollout", True)
-        
-        if use_rollout:
-            return self._validate_epoch_rollout()
-        else:
-            return self._validate_epoch_batch()
-    
-    def _validate_epoch_batch(self) -> float:
-        """
-        Run batch-based validation (original method).
-        
-        Returns:
-            Average validation loss across batches
-        """
-        logger.debug("Running batch-based validation")
-        
-        self.model.eval()
-        total_loss = 0.0
-        num_batches = 0
-        
-        with torch.no_grad():
-            for batch in self.val_loader:
-                loss = self._compute_batch_loss(batch)
-                total_loss += loss.item()
-                num_batches += 1
-        
-        avg_val_loss = total_loss / num_batches if num_batches > 0 else float('inf')
-        return avg_val_loss
-    
-    def _validate_epoch_rollout(self) -> float:
-        """
-        Run rollout-based validation.
-        
-        Performs full autoregressive rollouts from t=0 to end of simulation
-        for each validation sample, computing loss over the entire trajectory.
-        This provides a better estimate of model performance on real rollouts.
-        
-        Returns:
-            Average validation loss across all rollout trajectories
-        """
-        raise NotImplementedError(
-            "Rollout validation must be implemented by subclass. "
-            "Override _validate_epoch_rollout() to provide rollout logic."
-        )
+        Execute training for specified number of epochs with provided data.
 
-    def train(self) -> Dict[str, Any]:
-        """
-        Execute epoch-based training loop with optional validation.
-
-        Default implementation of standard epoch-based training.
-        If val_loader exists, runs validation and tracks best model.
-        Subclasses can override for custom training logic.
-
+        NEW SIGNATURE: Data is passed explicitly, not held internally.
+        
+        Args:
+            data_source: PyTorch DataLoader yielding (input, target) tuples
+            num_epochs: Number of epochs to train
+        
         Returns:
             Dictionary with training results including losses and metrics
         """
-        if self.model is None or self.train_loader is None:
-            raise RuntimeError(
-                "Model and train_loader must be initialized before training"
-            )
+        if self.model is None:
+            raise RuntimeError("Model must be initialized before training")
 
         results = {
             "train_losses": [],
-            "val_losses": [],
             "epochs": [],
+            "num_epochs": num_epochs,
             "best_epoch": 0,
-            "best_val_loss": float('inf')
+            "best_val_loss": float("inf")
         }
-        
-        has_validation = self.val_loader is not None and len(self.val_loader) > 0
-        validate_every = self.config["trainer_params"].get("validate_every", 1)
 
-        logger.info(f"Training on {self.device}")
-        if has_validation:
-            logger.debug(f"Validation every {validate_every} epoch(s)")
+        logger.info(f"Training on {self.device} for {num_epochs} epochs")
+
+        # Get checkpoint configuration
+        save_best_only = self.config.get("trainer_params", {}).get("save_best_only", True)
+        checkpoint_freq = self.config.get("trainer_params", {}).get("checkpoint_freq", 10)
 
         # Create progress bar for epochs
-        pbar = tqdm(range(self.get_num_epochs()), desc="Training", unit="epoch")
+        pbar = tqdm(range(num_epochs), desc="Training", unit="epoch")
 
         for epoch in pbar:
             start_time = time.time()
             
             # Training
-            train_loss = self._train_epoch()
+            train_loss = self._train_epoch_with_data(data_source)
             results["train_losses"].append(train_loss)
             results["epochs"].append(epoch + 1)
 
-            # Validation (if enabled and at right frequency)
-            val_loss = None
-            if has_validation and (epoch + 1) % validate_every == 0:
-                val_loss = self._validate_epoch()
-                results["val_losses"].append(val_loss)
+            # Track best model (based on train loss if no validation)
+            if train_loss < self.best_val_loss:
+                self.best_val_loss = train_loss
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
                 
-                # Track best model based on validation loss
-                if val_loss < self.best_val_loss:
-                    self.best_val_loss = val_loss
-                    self.best_epoch = epoch + 1
-                    results["best_epoch"] = self.best_epoch
-                    results["best_val_loss"] = self.best_val_loss
-                    
-                    # Save best model (only if checkpoint_path is set)
-                    if self.checkpoint_path is not None:
-                        self.save_checkpoint(
-                            epoch=epoch,
-                            loss=val_loss,
-                            optimizer_state=self.optimizer.state_dict() if self.optimizer else None,
-                            is_best=True
-                        )
+                # Save best model (only if checkpoint_path is set)
+                if self.checkpoint_path is not None:
+                    self.save_checkpoint(
+                        epoch=epoch,
+                        loss=train_loss,
+                        optimizer_state=self.optimizer.state_dict() if self.optimizer else None,
+                        is_best=True
+                    )
 
             epoch_time = time.time() - start_time
             
-            # Update progress bar with train/val loss and time
+            # Update progress bar
             postfix_dict = {
                 "train_loss": f"{train_loss:.6f}",
                 "time": f"{epoch_time:.2f}s"
             }
             
-            if val_loss is not None:
-                postfix_dict["val_loss"] = f"{val_loss:.6f}"
-                
             if self.best_epoch > 0:
                 postfix_dict["best_epoch"] = self.best_epoch
             
             pbar.set_postfix(postfix_dict)
 
             # Periodic checkpoint (if not using best_only)
-            save_best_only = self.config["trainer_params"].get("save_best_only", True)
-            checkpoint_freq = self.get_checkpoint_frequency()
-            
             if not save_best_only and checkpoint_freq > 0 and (epoch + 1) % checkpoint_freq == 0:
-                self.save_checkpoint(
-                    epoch=epoch,
-                    loss=train_loss,
-                    optimizer_state=(
-                        self.optimizer.state_dict() if self.optimizer else None
-                    ),
-                )
+                if self.checkpoint_path is not None:
+                    self.save_checkpoint(
+                        epoch=epoch,
+                        loss=train_loss,
+                        optimizer_state=(
+                            self.optimizer.state_dict() if self.optimizer else None
+                        ),
+                    )
 
-        logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, " + 
-                   (f"Val Loss: {results['best_val_loss']:.6f}, " if has_validation else "") +
-                   f"Train Loss: {results['train_losses'][-1]:.6f}")
+        final_loss = results["train_losses"][-1]
+        logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}")
 
+        results["final_loss"] = final_loss
         return results
-
-    def get_num_epochs(self) -> int:
-        """Get number of training epochs from config."""
-        return self.config["trainer_params"]["epochs"]
-
-    def get_print_frequency(self) -> int:
-        """Get how often to print progress (in epochs)."""
-        return self.config["trainer_params"]["print_freq"]
-
-    def get_checkpoint_frequency(self) -> int:
-        """Get how often to save checkpoints (in epochs)."""
-        return self.config["trainer_params"]["checkpoint_freq"]
 
     # =========================================================================
     # PyTorch-Specific Utilities

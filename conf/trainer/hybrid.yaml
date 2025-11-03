@@ -1,0 +1,35 @@
+# HYCO Hybrid Training Configuration
+
+# General training settings
+epochs: 50
+num_predict_steps: 10
+train_sim: [0, 1, 2]
+val_sim: [3]
+
+# Hybrid-specific parameters
+alpha: 0.5  # Weight for real data (0.5 = equal real/synthetic)
+interleave_frequency: 1  # Train both models every N epochs
+warmup_epochs: 5  # Pre-train synthetic model alone
+
+# Synthetic model settings
+synthetic:
+  learning_rate: 1e-4
+  batch_size: 16
+  optimizer: adam
+  scheduler: cosine
+  weight_decay: 0.0
+
+# Physical model settings
+physical:
+  method: 'L-BFGS-B'
+  abs_tol: 1e-6
+  max_iterations: 5  # Low for fast iterations in hybrid training
+  suppress_convergence_errors: true  # Don't raise errors on non-convergence
+
+# Checkpointing
+save_interval: 10
+save_best_only: true
+checkpoint_dir: 'results/models/hybrid'
+
+# Memory and performance
+enable_memory_monitoring: false

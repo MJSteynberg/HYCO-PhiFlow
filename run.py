@@ -66,9 +66,42 @@ def main(cfg: DictConfig) -> None:
 
         elif task == "train":
             logger.info("Running training")
-            # Use factory to create trainer
+            # Use factory to create trainer (Phase 1 API)
             trainer = TrainerFactory.create_trainer(config)
-            trainer.train()
+            
+            # Create data loader/dataset based on model type
+            model_type = config["run_params"]["model_type"]
+            
+            if model_type == "synthetic":
+                # Create DataLoader for synthetic training
+                data_loader = TrainerFactory.create_data_loader_for_synthetic(
+                    config,
+                    use_sliding_window=True,  # Always True in Phase 1
+                )
+                
+                # Train with explicit data passing (Phase 1 API)
+                num_epochs = config["trainer_params"]["epochs"]
+                trainer.train(data_source=data_loader, num_epochs=num_epochs)
+                
+            elif model_type == "physical":
+                # Create HybridDataset for physical training
+                dataset = TrainerFactory.create_dataset_for_physical(
+                    config,
+                    use_sliding_window=True,  # Always True in Phase 1
+                )
+                
+                # Train with explicit data passing (Phase 1 API)
+                # Physical typically uses single epoch (optimization per sample)
+                num_epochs = config["trainer_params"].get("epochs", 1)
+                trainer.train(data_source=dataset, num_epochs=num_epochs)
+                
+            elif model_type == "hybrid":
+                # TODO: Phase 3 - Hybrid training with data augmentation
+                raise NotImplementedError("Hybrid training not yet implemented (Phase 3)")
+            
+            else:
+                raise ValueError(f"Unknown model_type: {model_type}")
+
 
         elif task == "evaluate":
             logger.info("Running evaluation")

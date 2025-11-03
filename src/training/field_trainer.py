@@ -21,7 +21,6 @@ from phi.field import Field
 from phi.math import Solve, Tensor, minimize
 
 from src.training.abstract_trainer import AbstractTrainer
-from src.data import DataManager
 from src.models.physical.base import PhysicalModel
 from src.utils.logger import get_logger
 
@@ -32,284 +31,146 @@ class FieldTrainer(AbstractTrainer):
     """
     Base class for PhiFlow field-based trainers.
 
+    NEW ARCHITECTURE (Phase 1):
+    - Model and learnable_params are passed in __init__, not created internally
+    - Data is passed to train() method, not held internally
+    - Trainers are persistent across training calls
+    - Optimizer state is preserved
+
     Provides all PhiFlow-specific functionality:
-    - Field-based data management via DataManager
-    - Optimization-based parameter inference
+    - Field-based optimization
     - Physical model simulation and evaluation
     - Result saving in appropriate formats
 
     Unlike TensorTrainer which uses epoch-based training, FieldTrainer
-    uses optimization-based training (e.g., math.minimize) which is more
-    appropriate for physical parameter inference.
+    uses sample-by-sample iteration (since field operations don't batch well).
 
-    Subclasses must implement:
-    - _create_data_manager(): Create DataManager for loading fields
-    - _create_model(): Create and initialize the physical model
-    - _setup_optimization(): Setup optimization parameters and solve config
+    Subclasses should implement:
+    - _train_sample(): Train on a single sample
 
-    The train() method can be overridden if needed, but a default
-    implementation is provided for standard optimization-based training.
+    The train() method accepts data explicitly and should not be overridden
+    in most cases.
 
     Attributes:
         config: Full configuration dictionary
-        data_manager: DataManager for loading field data
-        model: PhysicalModel instance
-        learnable_params: List of parameters to optimize
-        learnable_params_config: Configuration for learnable parameters
+        model: PhysicalModel instance (passed in __init__)
+        learnable_params: List of parameters to optimize (passed in __init__)
+        optimizer: PhiML/PyTorch optimizer
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(
+        self, 
+        config: Dict[str, Any],
+        model: Any,  # PhysicalModel instance
+        learnable_params: List[torch.nn.Parameter]
+    ):
         """
-        Initialize field trainer.
+        Initialize field trainer with model and learnable parameters.
 
         Args:
             config: Full configuration dictionary containing all settings
+            model: Pre-created PhysicalModel instance
+            learnable_params: List of parameters to optimize
         """
         super().__init__(config)
 
-        # Field-specific components (to be set by subclasses)
-        self.data_manager: Optional[DataManager] = None
-        self.model: Optional[PhysicalModel] = None
-        self.learnable_params: List[Tensor] = []
-        self.learnable_params_config: List[Dict[str, Any]] = []
+        # Store model and parameters
+        self.model = model
+        self.learnable_params = learnable_params
 
         # Results storage
         self.final_loss: float = 0.0
-        self.optimization_history: List[float] = []
+        self.training_history: List[float] = []
 
     @abstractmethod
-    def _create_data_manager(self) -> DataManager:
+    def _train_sample(
+        self, 
+        initial_fields: Dict[str, Field], 
+        target_fields: Dict[str, Field]
+    ) -> float:
         """
-        Create and return DataManager for loading field data.
-
+        Train on a single sample.
+        
         This method should:
-        1. Get data specifications from self.config
-        2. Set up paths for raw data and cache
-        3. Create DataManager instance with appropriate settings
-        4. Set self.data_manager
-        5. Return the DataManager
-
+        1. Run simulation from initial_fields
+        2. Compute loss against target_fields
+        3. Perform backward pass and optimization step
+        4. Return loss value
+        
+        Args:
+            initial_fields: Dict[field_name, Field] for initial state
+            target_fields: Dict[field_name, List[Field]] for target trajectory
+        
         Returns:
-            DataManager instance
+            Loss value for this sample
         """
         pass
 
-    @abstractmethod
-    def _create_model(self) -> PhysicalModel:
+    def train(self, data_source, num_epochs: int) -> Dict[str, Any]:
         """
-        Create and return the physical model.
+        Execute training for specified number of epochs with provided data.
 
-        This method should:
-        1. Get model specifications from self.config
-        2. Instantiate the appropriate PhysicalModel subclass
-        3. Initialize learnable parameters to their initial guesses
-        4. Set self.model
-        5. Return the model
-
+        NEW SIGNATURE: Data is passed explicitly, not held internally.
+        
+        Args:
+            data_source: Iterable yielding (initial_fields, target_fields) tuples
+                        Note: NO weights - all samples treated equally!
+            num_epochs: Number of epochs to train
+        
         Returns:
-            PhysicalModel instance
+            Dictionary with training results including losses and metrics
         """
-        pass
-
-    @abstractmethod
-    def _setup_optimization(self) -> Solve:
-        """
-        Setup optimization configuration.
-
-        This method should:
-        1. Get optimization settings from self.config
-        2. Determine which parameters to optimize
-        3. Create math.Solve configuration
-        4. Set self.learnable_params and self.learnable_params_config
-        5. Return the Solve configuration
-
-        Returns:
-            math.Solve configuration for optimization
-        """
-        pass
-
-    def train(self) -> Dict[str, Any]:
-        """
-        Execute optimization-based training.
-
-        Default implementation of optimization-based parameter inference.
-        Uses math.minimize to optimize physical model parameters.
-
-        Subclasses can override for custom training logic.
-
-        Returns:
-            Dictionary with training results including optimized parameters
-            and loss values
-        """
-        if self.model is None or self.data_manager is None:
-            raise RuntimeError(
-                "Model and data manager must be initialized before training"
-            )
+        if self.model is None:
+            raise RuntimeError("Model must be initialized before training")
 
         logger.info(f"\n{'='*60}")
-        logger.info(f"Starting Physical Model Optimization")
+        logger.info(f"Starting Physical Model Training")
+        logger.info(f"Epochs: {num_epochs}")
         logger.info(f"{'='*60}\n")
 
-        # Get optimization configuration
-        solve_config = self._setup_optimization()
-
-        # Get ground truth data for this training run
-        gt_data = self._load_ground_truth()
-
-        # Define loss function for optimization
-        def loss_fn(*params):
-            """
-            Loss function for optimization.
-
-            Args:
-                *params: Learnable parameter values
-
-            Returns:
-                Loss value (scalar)
-            """
-            # Update model parameters
-            self._update_model_parameters(params)
-
-            # Run simulation
-            predictions = self._run_simulation(gt_data)
-
-            # Compute loss against ground truth
-            loss = self._compute_loss(predictions, gt_data)
-
-            # Track history
-            loss_value = float(loss)
-            self.optimization_history.append(loss_value)
-
-            return loss
-
-        # Run optimization
-        logger.info(f"Optimizing {len(self.learnable_params)} parameter(s)...")
-        optimized_params = minimize(loss_fn, solve=solve_config, *self.learnable_params)
-
-        # Update model with optimized parameters
-        self._update_model_parameters(optimized_params)
-
-        # Compute final loss
-        final_predictions = self._run_simulation(gt_data)
-        self.final_loss = float(self._compute_loss(final_predictions, gt_data))
-
-        # Build results
         results = {
-            "final_loss": self.final_loss,
-            "optimization_history": self.optimization_history,
-            "optimized_parameters": {},
-            "iterations": len(self.optimization_history),
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs
         }
 
-        # Store optimized parameter values
-        for param_config, param_value in zip(
-            self.learnable_params_config, optimized_params
-        ):
-            param_name = param_config["name"]
-            results["optimized_parameters"][param_name] = float(param_value)
-            logger.info(f"  {param_name}: {param_value}")
-
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            num_samples = 0
+            
+            # Iterate through data source
+            for sample in data_source:
+                # Unpack sample (2-tuple: no weights!)
+                initial_fields, target_fields = sample
+                
+                # Train on this sample
+                loss = self._train_sample(initial_fields, target_fields)
+                
+                epoch_loss += loss
+                num_samples += 1
+            
+            # Compute average loss for epoch
+            avg_loss = epoch_loss / num_samples if num_samples > 0 else float('inf')
+            results["train_losses"].append(avg_loss)
+            results["epochs"].append(epoch + 1)
+            self.training_history.append(avg_loss)
+            
+            logger.info(f"Epoch {epoch + 1}/{num_epochs} - Loss: {avg_loss:.6f}")
+        
+        self.final_loss = results["train_losses"][-1]
+        results["final_loss"] = self.final_loss
+        
         logger.info(f"\n{'='*60}")
-        logger.info(f"Optimization Complete!")
+        logger.info(f"Training Complete!")
         logger.info(f"Final Loss: {self.final_loss:.6f}")
-        logger.info(f"Iterations: {len(self.optimization_history)}")
         logger.info(f"{'='*60}\n")
 
         return results
 
+
     # =========================================================================
-    # PhiFlow-Specific Utilities
+    # PhiFlow-Specific Utilities (kept for backward compatibility)
     # =========================================================================
-
-    def _load_ground_truth(self) -> Dict[str, Field]:
-        """
-        Load ground truth field data for training.
-
-        This method can be overridden by subclasses for custom loading logic.
-
-        Returns:
-            Dictionary mapping field names to Field objects with time dimension
-        """
-        raise NotImplementedError("Subclass must implement _load_ground_truth()")
-
-    def _run_simulation(self, initial_data: Dict[str, Field]) -> Dict[str, Field]:
-        """
-        Run physical simulation with current model parameters.
-
-        Args:
-            initial_data: Dictionary of Fields with initial conditions
-
-        Returns:
-            Dictionary of Fields with simulation predictions
-        """
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-
-        # Get initial state (first timestep)
-        initial_state = {name: field.time[0] for name, field in initial_data.items()}
-
-        # Get number of prediction steps from config
-        num_steps = self.config["trainer_params"]["num_predict_steps"]
-
-        # Run simulation
-        predictions = {name: [initial_state[name]] for name in initial_state.keys()}
-        current_state = initial_state
-
-        for t in range(num_steps):
-            current_state = self.model.step(current_state)
-            for name, field in current_state.items():
-                predictions[name].append(field)
-
-        # Stack predictions along time dimension
-        from phi.field import stack
-        from phi.math import batch
-
-        stacked_predictions = {}
-        for name, fields in predictions.items():
-            stacked_predictions[name] = stack(fields, batch("time"))
-
-        return stacked_predictions
-
-    def _compute_loss(
-        self, predictions: Dict[str, Field], ground_truth: Dict[str, Field]
-    ) -> Tensor:
-        """
-        Compute loss between predictions and ground truth.
-
-        Args:
-            predictions: Dictionary of predicted Fields
-            ground_truth: Dictionary of ground truth Fields
-
-        Returns:
-            Loss value as scalar Tensor
-        """
-        from phi.field import l2_loss
-
-        total_loss = 0.0
-
-        for field_name in predictions.keys():
-            pred = predictions[field_name]
-            gt = ground_truth[field_name]
-
-            # Compute L2 loss for this field
-            field_loss = l2_loss(pred - gt)
-            total_loss = total_loss + field_loss
-
-        return total_loss
-
-    def _update_model_parameters(self, params):
-        """
-        Update model parameters during optimization.
-
-        Args:
-            params: Tuple or list of parameter values
-        """
-        if not isinstance(params, (tuple, list)):
-            params = [params]
-
-        for param_config, param_value in zip(self.learnable_params_config, params):
-            param_name = param_config["name"]
-            setattr(self.model, param_name, param_value)
 
     def save_results(self, path: Path, results: Dict[str, Any]):
         """
@@ -327,11 +188,11 @@ class FieldTrainer(AbstractTrainer):
 
         # Save as PyTorch file for consistency, but content is different
         torch.save(results, path)
-        logger.info(f"Saved optimization results to {path}")
+        logger.info(f"Saved training results to {path}")
 
     def load_results(self, path: Path) -> Dict[str, Any]:
         """
-        Load optimization results from file.
+        Load training results from file.
 
         Args:
             path: Path to results file
@@ -344,12 +205,7 @@ class FieldTrainer(AbstractTrainer):
             raise FileNotFoundError(f"Results file not found: {path}")
 
         results = torch.load(path)
-
-        # Apply optimized parameters to model
-        if "optimized_parameters" in results:
-            for param_name, param_value in results["optimized_parameters"].items():
-                if hasattr(self.model, param_name):
-                    setattr(self.model, param_name, param_value)
-                    logger.info(f"Loaded parameter {param_name} = {param_value}")
+        logger.info(f"Loaded training results from {path}")
 
         return results
+
