@@ -23,16 +23,8 @@ from tqdm import tqdm
 from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
-from src.data.augmentation import (
-    AugmentedTensorDataset,
-    AugmentedFieldDataset,
-    CacheManager,
-)
-from src.data.augmentation.generation_utils import (
-    generate_synthetic_predictions,
-    generate_physical_predictions,
-)
-from src.data import HybridDataset
+from src.factories.dataloader_factory import DataLoaderFactory
+from src.data import TensorDataset, FieldDataset
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,18 +83,9 @@ class HybridTrainer(AbstractTrainer):
         self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
         self.physical_trainer = PhysicalTrainer(config, physical_model, learnable_params)
         
-        # Cache manager (if using cached strategy)
-        cache_enabled = self.aug_config.get("cache", {}).get("enabled", False)
-        if cache_enabled:
-            cache_root = config.get("cache", {}).get("root", "data/cache")
-            experiment_name = config.get("run_params", {}).get("experiment_name", "hybrid")
-            self.cache_manager = CacheManager(
-                cache_root=str(cache_root),
-                experiment_name=f"{experiment_name}_hybrid",
-                auto_create=True,
-            )
-        else:
-            self.cache_manager = None
+        # Note: CacheManager removed in new architecture
+        # Augmentation is now handled directly by TensorDataset/FieldDataset
+        # via augmentation_config parameter
         
         # Training state
         self.current_cycle = 0
@@ -117,7 +100,6 @@ class HybridTrainer(AbstractTrainer):
         logger.info(f"  Physical epochs per cycle: {self.physical_epochs_per_cycle}")
         logger.info(f"  Augmentation alpha: {self.alpha}")
         logger.info(f"  Warmup epochs: {self.warmup_synthetic_epochs}")
-        logger.info(f"  Cache enabled: {cache_enabled}")
         logger.info("="*60)
     
     def train(self):
@@ -186,7 +168,7 @@ class HybridTrainer(AbstractTrainer):
         logger.info("  Data: Real data only (no augmentation)")
         
         # Create standard dataset (no augmentation)
-        # Use HybridDataset directly for the base data
+        # Use TensorDataset directly for the base data
         base_dataset = self._create_hybrid_dataset(
             self.trainer_config["train_sim"]
         )
@@ -208,61 +190,34 @@ class HybridTrainer(AbstractTrainer):
         logger.info("Warmup complete")
     
     def _create_hybrid_dataset(self, sim_indices: List[int], return_fields: bool = False):
-        """Create HybridDataset for training.
+        """Create dataset for training using new DataLoaderFactory.
         
         Args:
             sim_indices: List of simulation indices to include
-            return_fields: If True, return PhiFlow Fields (for physical model).
-                          If False, return tensors (for synthetic model).
+            return_fields: If True, return FieldDataset (for physical model).
+                          If False, return TensorDataset (for synthetic model).
         """
-        from src.data import DataManager, HybridDataset
-        from pathlib import Path
+        # Use the new DataLoaderFactory
+        mode = 'field' if return_fields else 'tensor'
         
-        # Extract configuration
-        data_config = self.config["data"]
-        model_config = self.config["model"]
-        trainer_config = self.trainer_config
-        project_root = Path(self.config["project_root"])
-        
-        # Create paths
-        raw_data_dir = project_root / data_config.get("data_dir", "data") / data_config["dset_name"]
-        cache_dir = project_root / self.config.get("cache", {}).get("root", "data/cache")
-        
-        # Create DataManager
-        data_manager = DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
+        # For physical model (field mode), we get a FieldDataset directly
+        # For synthetic model (tensor mode), we get a DataLoader, so extract the dataset
+        result = DataLoaderFactory.create(
             config=self.config,
-        )
-        
-        # Extract field specifications
-        field_names = data_config["fields"]
-        # For synthetic model
-        if "synthetic" in model_config and "input_specs" in model_config["synthetic"]:
-            input_specs = model_config["synthetic"]["input_specs"]
-            output_specs = model_config["synthetic"]["output_specs"]
-        else:
-            # For physical model - use data config
-            input_specs = {f: {} for f in field_names}
-            output_specs = {f: {} for f in field_names}
-        
-        dynamic_fields = list(output_specs.keys())
-        static_fields = [f for f in input_specs.keys() if f not in output_specs]
-        
-        num_predict_steps = trainer_config["num_predict_steps"]
-        
-        # Create dataset
-        return HybridDataset(
-            data_manager=data_manager,
+            mode=mode,
             sim_indices=sim_indices,
-            field_names=field_names,
-            num_frames=None,  # Load all available frames
-            num_predict_steps=num_predict_steps,
-            dynamic_fields=dynamic_fields,
-            static_fields=static_fields,
             use_sliding_window=True,
-            return_fields=return_fields,
+            enable_augmentation=False,  # We handle augmentation separately in hybrid training
+            batch_size=None if return_fields else self.trainer_config.get("batch_size", 16),
         )
+        
+        # Extract dataset if we got a DataLoader
+        if return_fields:
+            # Field mode returns FieldDataset directly
+            return result
+        else:
+            # Tensor mode returns DataLoader, extract the dataset
+            return result.dataset
     
     def _generate_physical_predictions(self) -> List[Tuple]:
         """
@@ -279,22 +234,26 @@ class HybridTrainer(AbstractTrainer):
             return_fields=True  # Physical model needs Fields not tensors
         )
         
-        # Generate predictions
+        # Generate predictions using the physical model's method
         # Use num_predict_steps to match dataset format
         num_predict_steps = self.trainer_config["num_predict_steps"]
         
-        initial_fields_list, target_fields_list = generate_physical_predictions(
-            model=self.physical_model,
+        initial_fields_list, target_fields_list = self.physical_model.generate_predictions(
             real_dataset=field_dataset,
             alpha=self.alpha,
             device=str(self.device),
             num_rollout_steps=num_predict_steps,
         )
         
-        # Convert Fields to tensors for AugmentedTensorDataset
-        # Need to convert each Field dict to tensor format matching HybridDataset output
+        # Convert Fields to tensors for synthetic model training
+        # Need to convert each Field dict to tensor format matching TensorDataset output
         from src.utils.field_conversion import make_converter
+        from src.config import ConfigHelper
         import torch
+        
+        # Get dynamic fields from config (for synthetic model training)
+        cfg = ConfigHelper(self.config)
+        dynamic_fields, static_fields = cfg.get_field_types()
         
         tensor_predictions = []
         for initial_fields, target_fields_list in zip(initial_fields_list, target_fields_list):
@@ -317,13 +276,13 @@ class HybridTrainer(AbstractTrainer):
             input_tensor = torch.cat(input_tensors, dim=0)  # [C_all, H, W]
             
             # Convert target fields to output tensor
-            # Format: [T, C_dynamic, H, W] - only dynamic fields, one frame per timestep
-            # target_fields_list is now a list of dicts (one per timestep)
+            # Format: [T, C_all, H, W] - ALL fields to match UNet output structure
+            # This ensures consistency between synthetic and physical training
             timestep_tensors = []
             for target_fields in target_fields_list:
-                # For each timestep, concatenate dynamic fields
+                # For each timestep, concatenate ALL fields in the same order as input
                 field_tensors = []
-                for field_name in field_dataset.dynamic_fields:
+                for field_name in cfg.get_field_names():
                     converter = make_converter(target_fields[field_name])
                     field_tensor = converter.field_to_tensor(target_fields[field_name], ensure_cpu=False)
                     # Move to correct device
@@ -336,12 +295,16 @@ class HybridTrainer(AbstractTrainer):
                         field_tensor = field_tensor.unsqueeze(0)
                     field_tensors.append(field_tensor)
                 
-                # Concatenate all dynamic fields for this timestep [C_dynamic, H, W]
+                # Concatenate all fields for this timestep [C_all, H, W]
                 timestep_tensor = torch.cat(field_tensors, dim=0)
                 timestep_tensors.append(timestep_tensor)
             
-            # Stack timesteps to create [T, C_dynamic, H, W]
+            # Stack timesteps to create [T, C_all, H, W]
             target_tensor = torch.stack(timestep_tensors, dim=0)
+            
+            # Move tensors to CPU for storage (DataLoader will handle device placement)
+            input_tensor = input_tensor.cpu()
+            target_tensor = target_tensor.cpu()
             
             tensor_predictions.append((input_tensor, target_tensor))
         
@@ -362,17 +325,19 @@ class HybridTrainer(AbstractTrainer):
             self.trainer_config["train_sim"]
         )
         
-        # Generate predictions
+        # Generate predictions using the synthetic model's method
         batch_size = self.trainer_config.get("batch_size", 32)
         
-        predictions = generate_synthetic_predictions(
-            model=self.synthetic_model,
+        inputs_list, targets_list = self.synthetic_model.generate_predictions(
             real_dataset=tensor_dataset,
             alpha=self.alpha,
             device=str(self.device),
             batch_size=batch_size,
             num_workers=0,
         )
+        
+        # Convert to list of tuples: [(input1, target1), (input2, target2), ...]
+        predictions = list(zip(inputs_list, targets_list))
         
         logger.info(f"Generated {len(predictions)} synthetic predictions")
         return predictions
@@ -392,21 +357,50 @@ class HybridTrainer(AbstractTrainer):
         """
         logger.info("Training synthetic model with augmented data...")
         
-        # Create real dataset
-        real_dataset = self._create_hybrid_dataset(
-            self.trainer_config["train_sim"]
+        # In the new architecture, augmentation is handled via augmentation_config
+        # We create a TensorDataset with augmentation_config using 'memory' mode
+        augmentation_config = {
+            'mode': 'memory',
+            'alpha': self.alpha,
+            'data': generated_data,  # Pre-loaded augmented data
+        }
+        
+        # Manually create the dataset with augmentation (can't use DataLoaderFactory
+        # because we need to pass pre-generated data in memory)
+        from torch.utils.data import DataLoader
+        from src.config import ConfigHelper
+        from src.data import DataManager
+        
+        cfg = ConfigHelper(self.config)
+        
+        # Create DataManager
+        project_root = cfg.get_project_root()
+        raw_data_dir = project_root / cfg.get_raw_data_dir()
+        cache_dir = project_root / cfg.get_cache_dir()
+        
+        data_manager = DataManager(
+            raw_data_dir=str(raw_data_dir),
+            cache_dir=str(cache_dir),
+            config=self.config,
         )
         
-        # Create augmented dataset
-        augmented_dataset = AugmentedTensorDataset(
-            real_dataset=real_dataset,
-            generated_data=generated_data,
-            alpha=self.alpha,
-            device=str(self.device),
+        # Get field specs
+        dynamic_fields, static_fields = cfg.get_field_types()
+        
+        # Create TensorDataset with augmentation
+        augmented_dataset = TensorDataset(
+            data_manager=data_manager,
+            sim_indices=self.trainer_config["train_sim"],
+            field_names=cfg.get_field_names(),
+            num_frames=None,  # Load all frames for sliding window
+            num_predict_steps=cfg.get_num_predict_steps(),
+            dynamic_fields=dynamic_fields,
+            static_fields=static_fields,
+            use_sliding_window=True,
+            augmentation_config=augmentation_config,  # Pass generated data
         )
         
         # Create dataloader
-        from torch.utils.data import DataLoader
         train_loader = DataLoader(
             augmented_dataset,
             batch_size=self.trainer_config.get("batch_size", 16),
@@ -446,18 +440,39 @@ class HybridTrainer(AbstractTrainer):
             logger.info("Skipping physical training - no learnable parameters")
             return 0.0
         
-        # Create real dataset
-        real_dataset = self._create_hybrid_dataset(
-            self.trainer_config["train_sim"],
-            return_fields=True  # Physical trainer needs Fields
+        # In the new architecture, create FieldDataset with augmentation
+        augmentation_config = {
+            'mode': 'memory',
+            'alpha': self.alpha,
+            'data': generated_data,  # Pre-loaded augmented data
+        }
+        
+        # Create FieldDataset with augmentation
+        from src.config import ConfigHelper
+        from src.data import DataManager
+        
+        cfg = ConfigHelper(self.config)
+        
+        # Create DataManager
+        project_root = cfg.get_project_root()
+        raw_data_dir = project_root / cfg.get_raw_data_dir()
+        cache_dir = project_root / cfg.get_cache_dir()
+        
+        data_manager = DataManager(
+            raw_data_dir=str(raw_data_dir),
+            cache_dir=str(cache_dir),
+            config=self.config,
         )
         
-        # Create augmented dataset
-        augmented_dataset = AugmentedFieldDataset(
-            real_dataset=real_dataset,
-            generated_data=generated_data,
-            alpha=self.alpha,
-            shuffle=True,
+        # Create FieldDataset with augmentation
+        augmented_dataset = FieldDataset(
+            data_manager=data_manager,
+            sim_indices=self.trainer_config["train_sim"],
+            field_names=cfg.get_field_names(),
+            num_frames=None,  # Load all frames for sliding window
+            num_predict_steps=cfg.get_num_predict_steps(),
+            use_sliding_window=True,
+            augmentation_config=augmentation_config,  # Pass generated data
         )
         
         # Physical trainer doesn't have a high-level train method yet

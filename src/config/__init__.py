@@ -1,5 +1,6 @@
 """Structured configuration using Hydra dataclasses."""
 
+from .config_helper import ConfigHelper
 from .data_config import DataConfig
 from .model_config import PhysicalModelConfig, SyntheticModelConfig
 from .trainer_config import SyntheticTrainerConfig, PhysicalTrainerConfig
@@ -14,6 +15,7 @@ from .augmentation_config import (
 )
 
 __all__ = [
+    "ConfigHelper",
     "DataConfig",
     "PhysicalModelConfig",
     "SyntheticModelConfig",

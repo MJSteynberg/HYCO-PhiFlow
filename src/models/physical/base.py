@@ -160,3 +160,126 @@ class PhysicalModel(ABC):
     def __call__(self, *args) -> tuple[Field, ...]:
         """Convenience wrapper for the step method."""
         return self.step(*args)
+
+    def generate_predictions(
+        self,
+        real_dataset,
+        alpha: float,
+        device: str = 'cpu',
+        num_rollout_steps: int = 10
+    ):
+        """
+        Generate predictions for data augmentation.
+        
+        This method generates rollout predictions on real Field samples for use
+        in hybrid training augmentation. The number of predictions is proportional
+        to alpha.
+        
+        Args:
+            real_dataset: Dataset of real field samples (FieldDataset)
+            alpha: Proportion of generated samples (e.g., 0.1 = 10%)
+            device: Device to run model on ('cpu' or 'cuda')
+            num_rollout_steps: Number of rollout steps for prediction
+            
+        Returns:
+            Tuple of (initial_fields_list, target_fields_list) where:
+            - initial_fields_list: List of initial field states (Dict[str, Field])
+            - target_fields_list: List of predicted rollout states (List[Dict[str, Field]])
+        """
+        import torch
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Calculate number of samples to generate
+        num_real = len(real_dataset)
+        num_generate = int(num_real * alpha)
+        
+        logger.info(
+            f"Generating {num_generate} physical predictions "
+            f"(alpha={alpha:.2f} * {num_real} real samples)"
+        )
+        
+        if num_generate == 0:
+            logger.warning("Alpha too small, no samples will be generated")
+            return [], []
+        
+        # Select proportional indices
+        indices = self._select_proportional_indices(num_real, num_generate)
+        
+        # Generate predictions
+        initial_fields_list = []
+        target_fields_list = []
+        
+        with torch.no_grad():
+            for idx in indices:
+                # Get sample from dataset
+                initial_fields, _ = real_dataset[idx]
+                
+                # Perform rollout prediction
+                predictions = self._perform_rollout(initial_fields, num_rollout_steps)
+                
+                # Store results
+                initial_fields_list.append(initial_fields)
+                target_fields_list.append(predictions)
+        
+        logger.info(f"Generated {len(initial_fields_list)} physical predictions")
+        
+        return initial_fields_list, target_fields_list
+    
+    def _perform_rollout(self, initial_fields: Dict[str, Field], num_steps: int):
+        """
+        Perform rollout prediction.
+        
+        Args:
+            initial_fields: Initial field state (dict of PhiFlow Fields)
+            num_steps: Number of rollout steps
+            
+        Returns:
+            List of predicted field states, one for each step (List[Dict[str, Field]])
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"Performing {num_steps}-step rollout with physical model")
+        
+        # Start from initial state
+        current_state = initial_fields
+        
+        # Store all rollout states
+        rollout_states = []
+        
+        # Perform rollout steps
+        for step_num in range(num_steps):
+            try:
+                # Call model's step method
+                current_state = self.step(current_state)
+                # Store the state at this step
+                rollout_states.append(current_state)
+            except Exception as e:
+                logger.warning(f"Rollout failed at step {step_num}/{num_steps}: {e}")
+                # Return states collected so far
+                return rollout_states if rollout_states else [current_state]
+        
+        return rollout_states
+    
+    @staticmethod
+    def _select_proportional_indices(total_count: int, sample_count: int):
+        """
+        Select indices proportionally across the dataset.
+        
+        Ensures diverse sampling rather than just taking the first N samples.
+        """
+        if sample_count >= total_count:
+            return list(range(total_count))
+        
+        # Calculate step size for proportional sampling
+        step = total_count / sample_count
+        
+        # Select indices evenly distributed
+        indices = [int(i * step) for i in range(sample_count)]
+        
+        # Ensure no duplicates and within bounds
+        indices = sorted(list(set(indices)))[:sample_count]
+        
+        return indices

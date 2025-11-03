@@ -11,7 +11,7 @@ defaults:
 run_params:
   experiment_name: 'advection_synthetic_experiment'
   notes: 'Training synthetic UNet model to predict pure advection dynamics'
-  mode: ['evaluate']
+  mode: ['generate', 'train', 'evaluate']
   model_type: 'synthetic'
 
 model:
@@ -19,10 +19,10 @@ model:
     model_save_name: 'advection_128_synthetic'
 
 generation_params:
-  num_simulations: 10
+  num_simulations: 2
 
 trainer_params:
-  train_sim: [0,1,2,3,4,5,6,7,8,9]  # Train on 10 simulations
+  train_sim: [0]  # Train on 10 simulations
   val_sim: [0]  # Validate on 2 simulations
   epochs: 100
   batch_size: 16

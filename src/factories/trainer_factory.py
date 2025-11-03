@@ -11,15 +11,11 @@ from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 # HybridTrainer imported lazily to avoid circular dependency
-from src.data import DataManager, HybridDataset
+from src.data import DataManager, FieldDataset
 from src.factories.model_factory import ModelFactory
-from src.data.augmentation import (
-    AdaptiveAugmentedDataLoader,
-    CacheManager,
-    generate_and_cache_predictions,
-)
-from src.config import AugmentationConfig, create_cache_path, get_augmentation_summary
+from src.factories.dataloader_factory import DataLoaderFactory
 from src.utils.logger import get_logger
+import warnings
 
 logger = get_logger(__name__)
 
@@ -142,8 +138,8 @@ class TrainerFactory:
         """
         Create DataLoader for synthetic training with optional augmentation.
         
-        This method checks if augmentation is enabled in the config and creates
-        either a standard DataLoader or an AdaptiveAugmentedDataLoader accordingly.
+        DEPRECATED: Use DataLoaderFactory.create(config, mode='tensor') instead.
+        This method is kept for backward compatibility but will be removed in a future version.
         
         Args:
             config: Full configuration dictionary
@@ -153,161 +149,36 @@ class TrainerFactory:
             use_sliding_window: Whether to use sliding window (default True for Phase 1)
             
         Returns:
-            DataLoader (or AdaptiveAugmentedDataLoader) with HybridDataset
+            DataLoader with TensorDataset
         """
-        data_config = config["data"]
-        trainer_config = config["trainer_params"]
-        model_config = config["model"]["synthetic"]
+        warnings.warn(
+            "create_data_loader_for_synthetic is deprecated. "
+            "Use DataLoaderFactory.create(config, mode='tensor') instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         
-        # Use provided values or defaults from config
-        if sim_indices is None:
-            sim_indices = trainer_config["train_sim"]
-        if batch_size is None:
-            batch_size = trainer_config["batch_size"]
-        
-        # Setup paths
-        project_root = Path(config.get("project_root", "."))
-        raw_data_dir = project_root / data_config["data_dir"] / data_config["dset_name"]
-        cache_dir = project_root / data_config["data_dir"] / "cache"
-        
-        # Create DataManager
-        data_manager = DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
+        # Use new DataLoaderFactory
+        return DataLoaderFactory.create(
             config=config,
-            validate_cache=data_config.get("validate_cache", True),
-            auto_clear_invalid=data_config.get("auto_clear_invalid", False),
-        )
-        
-        # Extract field specifications
-        field_names = data_config["fields"]
-        input_specs = model_config["input_specs"]
-        output_specs = model_config["output_specs"]
-        
-        dynamic_fields = list(output_specs.keys())
-        static_fields = [f for f in input_specs.keys() if f not in output_specs]
-        
-        num_predict_steps = trainer_config["num_predict_steps"]
-        
-        # Calculate frames needed
-        if use_sliding_window:
-            num_frames = None  # Load all available frames
-        else:
-            num_frames = num_predict_steps + 1
-        
-        # Create base dataset
-        dataset = HybridDataset(
-            data_manager=data_manager,
+            mode='tensor',
             sim_indices=sim_indices,
-            field_names=field_names,
-            num_frames=num_frames,
-            num_predict_steps=num_predict_steps,
-            dynamic_fields=dynamic_fields,
-            static_fields=static_fields,
-            use_sliding_window=use_sliding_window,
-        )
-        
-        # Check if augmentation is enabled
-        augmentation_config = trainer_config.get("augmentation", {})
-        aug_config = AugmentationConfig(augmentation_config)
-        
-        if not aug_config.enabled:
-            # Standard DataLoader without augmentation
-            logger.info("Creating standard DataLoader (augmentation disabled)")
-            data_loader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                num_workers=0,
-                pin_memory=True if torch.cuda.is_available() else False,
-            )
-            return data_loader
-        
-        # Augmentation is enabled - use AdaptiveAugmentedDataLoader
-        logger.info("Creating AdaptiveAugmentedDataLoader (augmentation enabled)")
-        logger.info(get_augmentation_summary(aug_config))
-        
-        # Create cache path
-        cache_root = config.get("cache", {}).get("root", "data/cache")
-        cache_root = project_root / cache_root
-        experiment_name = aug_config.get_cache_config().get("experiment_name", data_config["dset_name"])
-        
-        # Create CacheManager
-        cache_manager = CacheManager(
-            cache_root=str(cache_root),
-            experiment_name=experiment_name,
-            auto_create=config.get("cache", {}).get("auto_create", True),
-        )
-        
-        # Create AdaptiveAugmentedDataLoader
-        strategy = aug_config.get_strategy()
-        
-        # Determine strategy and prepare accordingly
-        if strategy == "cached":
-            # Check if cache exists, if not warn user
-            if not cache_manager.exists() or cache_manager.is_empty():
-                logger.warning(
-                    f"Cache directory is empty or doesn't exist: {cache_manager.cache_dir}\n"
-                    f"No augmented data will be used. To use cached augmentation:\n"
-                    f"1. Pre-generate cache using scripts/generate_cache.py, or\n"
-                    f"2. Switch to 'on_the_fly' strategy in config"
-                )
-                # Fall back to standard DataLoader
-                data_loader = DataLoader(
-                    dataset,
-                    batch_size=batch_size,
-                    shuffle=shuffle,
-                    num_workers=0,
-                    pin_memory=True if torch.cuda.is_available() else False,
-                )
-                return data_loader
-            
-            logger.info(f"Using cached augmentation strategy from {cache_manager.cache_dir}")
-            logger.info(f"Cache contains {cache_manager.count_samples()} samples")
-            
-        elif strategy == "on_the_fly":
-            logger.info("Using on-the-fly augmentation strategy (not yet fully implemented)")
-            logger.warning("On-the-fly generation requires model - will use cached/memory strategy")
-        
-        # Create adaptive loader
-        # Map config strategy names to AdaptiveAugmentedDataLoader strategy names
-        strategy_map = {
-            "cached": "cache",
-            "on_the_fly": "on_the_fly",
-        }
-        loader_strategy = strategy_map.get(strategy, strategy)
-        
-        adaptive_loader = AdaptiveAugmentedDataLoader(
-            real_dataset=dataset,
-            alpha=aug_config.get_alpha(),
-            generated_data=None,  # Will load from cache if strategy='cache'
-            cache_dir=str(cache_manager.cache_dir) if strategy == "cached" else None,
-            cache_size=aug_config.get_cache_config().get("max_memory_samples", 1000),
-            strategy=loader_strategy,
-            validate_count=True,
-        )
-        
-        # Get the actual DataLoader
-        loader = adaptive_loader.get_loader(
             batch_size=batch_size,
             shuffle=shuffle,
-            num_workers=0,
+            use_sliding_window=use_sliding_window,
         )
-        
-        # Log info about created loader
-        info = adaptive_loader.get_info()
-        logger.info(f"Adaptive loader info: {info}")
-        
-        return loader
 
     @staticmethod
     def create_dataset_for_physical(
         config: Dict[str, Any],
         sim_indices: List[int] = None,
         use_sliding_window: bool = True,
-    ) -> HybridDataset:
+    ) -> FieldDataset:
         """
-        Create HybridDataset for physical training (returns fields, not tensors).
+        Create FieldDataset for physical training (returns fields, not tensors).
+        
+        DEPRECATED: Use DataLoaderFactory.create(config, mode='field') instead.
+        This method is kept for backward compatibility but will be removed in a future version.
         
         Args:
             config: Full configuration dictionary
@@ -315,46 +186,23 @@ class TrainerFactory:
             use_sliding_window: Whether to use sliding window (default True for Phase 1)
             
         Returns:
-            HybridDataset with return_fields=True
+            FieldDataset (new simplified version)
         """
-        data_config = config["data"]
-        trainer_config = config["trainer_params"]
+        warnings.warn(
+            "create_dataset_for_physical is deprecated. "
+            "Use DataLoaderFactory.create(config, mode='field') instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         
-        # Use provided values or defaults from config
-        if sim_indices is None:
-            sim_indices = trainer_config["train_sim"]
-        
-        # Setup paths
-        project_root = Path(config.get("project_root", "."))
-        raw_data_dir = project_root / data_config["data_dir"] / data_config["dset_name"]
-        cache_dir = project_root / data_config["data_dir"] / "cache"
-        
-        # Create DataManager
-        data_manager = DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
+        # Use new DataLoaderFactory which returns FieldDataset directly
+        return DataLoaderFactory.create(
             config=config,
-            validate_cache=data_config.get("validate_cache", True),
-            auto_clear_invalid=data_config.get("auto_clear_invalid", False),
-        )
-        
-        # Extract field specifications
-        field_names = data_config["fields"]
-        num_predict_steps = trainer_config["num_predict_steps"]
-        num_frames = num_predict_steps + 1  # Initial state + targets
-        
-        # Create dataset with return_fields=True for PhiFlow training
-        dataset = HybridDataset(
-            data_manager=data_manager,
+            mode='field',
             sim_indices=sim_indices,
-            field_names=field_names,
-            num_frames=num_frames,
-            num_predict_steps=num_predict_steps,
-            return_fields=True,  # Return PhiFlow fields, not tensors
             use_sliding_window=use_sliding_window,
+            batch_size=None,  # Physical training doesn't use batching
         )
-        
-        return dataset
 
     @staticmethod
     def generate_augmented_cache(
@@ -366,8 +214,8 @@ class TrainerFactory:
         """
         Generate and cache augmented predictions for training.
         
-        This method should be called before training with cached augmentation strategy
-        to pre-populate the cache with model predictions.
+        DEPRECATED: This method is deprecated and not yet updated for the new architecture.
+        Cache generation is now handled differently in hybrid training.
         
         Args:
             config: Full configuration dictionary
@@ -377,120 +225,17 @@ class TrainerFactory:
             
         Returns:
             Number of samples generated and cached
-            
-        Example:
-            >>> config = load_config()
-            >>> model = load_pretrained_model()
-            >>> num_cached = TrainerFactory.generate_augmented_cache(
-            ...     config, model, model_type='synthetic'
-            ... )
-            >>> print(f"Cached {num_cached} predictions")
         """
-        data_config = config["data"]
-        trainer_config = config["trainer_params"]
-        
-        # Check if augmentation is enabled
-        augmentation_config = trainer_config.get("augmentation", {})
-        aug_config = AugmentationConfig(augmentation_config)
-        
-        if not aug_config.enabled:
-            logger.warning("Augmentation is disabled in config, no cache to generate")
-            return 0
-        
-        # Get augmentation parameters
-        alpha = aug_config.get_alpha()
-        device = aug_config.get_device()
-        
-        # Setup cache
-        project_root = Path(config.get("project_root", "."))
-        cache_root = config.get("cache", {}).get("root", "data/cache")
-        cache_root = project_root / cache_root
-        experiment_name = aug_config.get_cache_config().get("experiment_name", data_config["dset_name"])
-        
-        cache_manager = CacheManager(
-            cache_root=str(cache_root),
-            experiment_name=experiment_name,
-            auto_create=True,
+        warnings.warn(
+            "generate_augmented_cache is deprecated and not yet updated for the new architecture. "
+            "Cache generation is now handled differently in hybrid training.",
+            DeprecationWarning,
+            stacklevel=2
         )
-        
-        # Check if cache already exists
-        if cache_manager.exists() and not cache_manager.is_empty() and not force_regenerate:
-            num_existing = cache_manager.count_samples()
-            logger.info(
-                f"Cache already contains {num_existing} samples. "
-                f"Use force_regenerate=True to overwrite."
-            )
-            return num_existing
-        
-        if force_regenerate and cache_manager.exists():
-            logger.info("Force regenerate: clearing existing cache")
-            cache_manager.clear_cache(confirm=True)
-        
-        # Create dataset for generation
-        if model_type == "synthetic":
-            # Create standard dataloader
-            data_loader = TrainerFactory.create_data_loader_for_synthetic(
-                config,
-                shuffle=False,  # Don't shuffle for generation
-            )
-            # Extract dataset from dataloader
-            real_dataset = data_loader.dataset
-            
-            # Generate predictions
-            logger.info(f"Generating synthetic predictions with alpha={alpha}")
-            num_cached = generate_and_cache_predictions(
-                model=model,
-                real_dataset=real_dataset,
-                cache_manager=cache_manager,
-                alpha=alpha,
-                model_type='synthetic',
-                device=device,
-                batch_size=aug_config.get_on_the_fly_config().get('batch_size', 32),
-                save_format=aug_config.get_cache_config().get('format', 'dict'),
-            )
-            
-        elif model_type == "physical":
-            # Create dataset for physical model
-            dataset = TrainerFactory.create_dataset_for_physical(config)
-            
-            # Generate physical predictions
-            logger.info(f"Generating physical predictions with alpha={alpha}")
-            from src.data.augmentation import generate_physical_predictions
-            
-            inputs_list, targets_list = generate_physical_predictions(
-                model=model,
-                real_dataset=dataset,
-                alpha=alpha,
-                device=device,
-                num_rollout_steps=aug_config.get_on_the_fly_config().get('rollout_steps', 10),
-            )
-            
-            # Save to cache
-            num_cached = len(inputs_list)
-            save_format = aug_config.get_cache_config().get('format', 'dict')
-            for idx, (inp, tgt) in enumerate(zip(inputs_list, targets_list)):
-                cache_manager.save_sample(idx, inp, tgt, format=save_format)
-            
-            # Update metadata
-            cache_manager.update_metadata({
-                'alpha': alpha,
-                'model_type': 'physical',
-                'num_samples': num_cached,
-                'rollout_steps': aug_config.get_on_the_fly_config().get('rollout_steps', 10),
-            })
-        else:
-            raise ValueError(f"Unknown model_type: {model_type}")
-        
-        logger.info(f"Successfully cached {num_cached} predictions")
-        
-        # Validate cache
-        validation = cache_manager.validate_cache(expected_count=num_cached)
-        if not validation['valid']:
-            logger.warning(f"Cache validation issues: {validation}")
-        else:
-            logger.info("Cache validation passed")
-        
-        return num_cached
+        raise NotImplementedError(
+            "generate_augmented_cache is not yet implemented in the new architecture. "
+            "Augmentation is now handled directly via augmentation_config in datasets."
+        )
 
     @staticmethod
     def create_hybrid_trainer(config: Dict[str, Any]):

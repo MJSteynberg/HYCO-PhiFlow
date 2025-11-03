@@ -26,7 +26,7 @@ class SyntheticTrainer(TensorTrainer):
     """
     Tensor-based trainer for synthetic models using DataManager pipeline.
 
-    Uses HybridDataset for efficient cached data loading with no runtime
+    Uses TensorDataset for efficient cached data loading with no runtime
     Field conversions. All conversions happen once during caching.
 
     Inherits from TensorTrainer to get PyTorch-specific functionality.
@@ -189,7 +189,7 @@ class SyntheticTrainer(TensorTrainer):
         Used by both training and validation through parent class.
         
         Args:
-            batch: Tuple of (initial_state, rollout_targets) from HybridDataset
+            batch: Tuple of (initial_state, rollout_targets) from TensorDataset
             
         Returns:
             Loss tensor for the batch
@@ -218,11 +218,20 @@ class SyntheticTrainer(TensorTrainer):
             
             pred_dynamic = torch.cat(pred_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
             
-            # Get ground truth for this timestep (already only dynamic fields)
-            target = rollout_targets[:, t, :, :, :]  # [B, C_dynamic, H, W]
+            # Get ground truth for this timestep (now contains all fields)
+            target_all = rollout_targets[:, t, :, :, :]  # [B, C_all, H, W]
+            
+            # Extract only dynamic fields from target for loss computation
+            target_dynamic_tensors = []
+            for field_name in self.field_names:
+                if field_name in self.dynamic_fields:
+                    start, end = self.channel_map[field_name]
+                    target_dynamic_tensors.append(target_all[:, start:end, :, :])
+            
+            target_dynamic = torch.cat(target_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
             
             # Compute loss on dynamic fields only
-            step_loss = self.loss_fn(pred_dynamic, target)
+            step_loss = self.loss_fn(pred_dynamic, target_dynamic)
             total_step_loss += step_loss
             
             # Use full prediction (all fields) as input for next timestep

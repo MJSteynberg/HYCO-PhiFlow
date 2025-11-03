@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 class PhysicalTrainer(FieldTrainer):
     """
     Solves an inverse problem for a PhysicalModel using cached data
-    from DataManager/HybridDataset.
+    from DataManager/FieldDataset.
 
     This trainer uses math.minimize for optimization and leverages
     the efficient DataLoader pipeline with field conversion.

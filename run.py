@@ -22,6 +22,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.generator import run_generation
 from src.factories.trainer_factory import TrainerFactory
+from src.factories.dataloader_factory import DataLoaderFactory
 from src.evaluation import Evaluator
 from src.utils.logger import setup_logger
 
@@ -69,14 +70,15 @@ def main(cfg: DictConfig) -> None:
             # Use factory to create trainer (Phase 1 API)
             trainer = TrainerFactory.create_trainer(config)
             
-            # Create data loader/dataset based on model type
+            # Create data loader/dataset based on model type using NEW DataLoaderFactory
             model_type = config["run_params"]["model_type"]
             
             if model_type == "synthetic":
-                # Create DataLoader for synthetic training
-                data_loader = TrainerFactory.create_data_loader_for_synthetic(
+                # Create DataLoader for synthetic training using DataLoaderFactory
+                data_loader = DataLoaderFactory.create(
                     config,
-                    use_sliding_window=True,  # Always True in Phase 1
+                    mode='tensor',
+                    shuffle=True,
                 )
                 
                 # Train with explicit data passing (Phase 1 API)
@@ -84,10 +86,11 @@ def main(cfg: DictConfig) -> None:
                 trainer.train(data_source=data_loader, num_epochs=num_epochs)
                 
             elif model_type == "physical":
-                # Create HybridDataset for physical training
-                dataset = TrainerFactory.create_dataset_for_physical(
+                # Create FieldDataset for physical training using DataLoaderFactory
+                dataset = DataLoaderFactory.create(
                     config,
-                    use_sliding_window=True,  # Always True in Phase 1
+                    mode='field',
+                    batch_size=None,  # Physical models don't use batching
                 )
                 
                 # Train with explicit data passing (Phase 1 API)

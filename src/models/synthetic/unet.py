@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 from phiml.nn import u_net
 from src.models.registry import ModelRegistry
+from src.models.synthetic.base import SyntheticModel
 
 
 @ModelRegistry.register_synthetic("UNet")
-class UNet(nn.Module):
+class UNet(SyntheticModel):
     """
     Tensor-based U-Net for efficient training.
 
@@ -31,19 +32,16 @@ class UNet(nn.Module):
                 - output_specs: Dict[field_name, num_channels] - fields to predict
                 - architecture: Dict with levels, filters, batch_norm
         """
-        super().__init__()
+        # Call parent constructor to set up base attributes
+        super().__init__(config)
 
-        self.config = config
-        self.input_specs = config["input_specs"]
-        self.output_specs = config["output_specs"]
-
-        # Calculate total channels
-        self.in_channels = sum(self.input_specs.values())
-        self.out_channels = sum(self.output_specs.values())
+        # Calculate total channels (parent already sets input_specs and output_specs via INPUT_SPECS/OUTPUT_SPECS)
+        self.in_channels = sum(self.INPUT_SPECS.values())
+        self.out_channels = sum(self.OUTPUT_SPECS.values())
 
         # Identify static fields (in input but not output)
-        self.static_fields = [f for f in self.input_specs if f not in self.output_specs]
-        self.dynamic_fields = list(self.output_specs.keys())
+        self.static_fields = [f for f in self.INPUT_SPECS if f not in self.OUTPUT_SPECS]
+        self.dynamic_fields = list(self.OUTPUT_SPECS.keys())
 
         # Build channel indices for slicing
         self._build_channel_indices()
@@ -68,7 +66,7 @@ class UNet(nn.Module):
         self.input_channel_map = {}
         offset = 0
 
-        for field_name, num_channels in self.input_specs.items():
+        for field_name, num_channels in self.INPUT_SPECS.items():
             self.input_channel_map[field_name] = (offset, offset + num_channels)
             offset += num_channels
 
@@ -103,17 +101,17 @@ class UNet(nn.Module):
         dynamic_prediction = self.unet(x)  # [B, out_channels, H, W]
 
         # Reconstruct full output by interleaving static and dynamic fields
-        # in the original input_specs order
+        # in the original INPUT_SPECS order
         output_tensors = []
         dynamic_offset = 0
 
-        for field_name in self.input_specs.keys():
+        for field_name in self.INPUT_SPECS.keys():
             if field_name in self.static_fields:
                 # Use preserved static field
                 output_tensors.append(static_channels[field_name])
             else:
                 # Use predicted dynamic field
-                num_channels = self.output_specs[field_name]
+                num_channels = self.OUTPUT_SPECS[field_name]
                 output_tensors.append(
                     dynamic_prediction[
                         :, dynamic_offset : dynamic_offset + num_channels, :, :

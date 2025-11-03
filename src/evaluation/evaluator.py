@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from src.data import DataManager, HybridDataset
+from src.data import DataManager
 from src.models import ModelRegistry
 from .metrics import compute_all_metrics, compute_metrics_per_field, aggregate_metrics
 from .visualizations import (

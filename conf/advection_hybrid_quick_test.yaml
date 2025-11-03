@@ -18,7 +18,7 @@ model:
 
 trainer_params:
   train_sim: [0, 1]  # Use 2 simulations for quick test
-  val_sim: []
+  val_sim: [0]
   epochs: 2  # Very short for quick test
   num_predict_steps: 3
   batch_size: 8
@@ -45,7 +45,7 @@ trainer_params:
   
   # Physical model training settings
   physical:
-    method: 'L-BFGS-B'
+    method: 'GD'
     abs_tol: 1e-6
     max_iterations: 10  # Increased for learning advection_coeff
     suppress_convergence_errors: true
