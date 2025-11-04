@@ -1,0 +1,82 @@
+# Smoke Simulation Experiment (Navier-Stokes)
+# 
+# This is a comprehensive configuration for smoke simulation problems.
+# Modify the settings below based on your needs:
+#
+# Quick Test Mode:
+#   - Set epochs: 2, train_sim: [0,1], val_sim: [2]
+#   - Set mode: ['train'] (skip evaluation for speed)
+#   - Reduce validation_rollout_steps: 20
+#
+# Physical Model:
+#   - Change model_type: 'physical'
+#   - Use trainer: physical or physical_with_suppression
+#   - Add learnable_parameters under trainer_params
+#   - Example: learnable_parameters: ['viscosity', 'buoyancy_factor']
+#
+# Hybrid Training:
+#   - Change model_type: 'hybrid'
+#   - Use trainer: hybrid
+#   - Adjust physical_weight and neural_weight
+#
+# Data Generation:
+#   - Add 'generate' to mode: ['generate', 'train', 'evaluate']
+#   - Set generation_params.num_simulations as needed
+#   - Adjust total_steps for longer/shorter simulations
+
+defaults:
+  - data: smoke_128
+  - model/physical: smoke
+  - model/synthetic: smoke_unet
+  - trainer: synthetic
+  - generation: default
+  - evaluation: default
+  - _self_
+
+run_params:
+  experiment_name: 'smoke_experiment'
+  notes: 'Smoke simulation with synthetic UNet model'
+  mode: ['train', 'evaluate']  # Options: generate, train, evaluate
+  model_type: 'synthetic'  # Options: synthetic, physical, hybrid
+
+model:
+  synthetic:
+    model_save_name: 'smoke_unet_128'
+
+generation_params:
+  num_simulations: 10
+  total_steps: 100
+  save_interval: 1
+
+trainer_params:
+  # Training data
+  train_sim: [0,1,2,3,4,5,6,7,8]  # Training simulations
+  val_sim: [9]  # Validation simulations
+  
+  # Training hyperparameters
+  epochs: 100
+  batch_size: 16
+  num_predict_steps: 4
+  
+  # Optimizer (for synthetic/hybrid)
+  learning_rate: 0.0001
+  optimizer: 'adam'
+  scheduler: 'cosine'
+  weight_decay: 0.0
+  
+  # Validation
+  validate_every: 1
+  validation_rollout_steps: 75
+  
+  # Checkpointing
+  checkpoint_freq: 10
+  print_freq: 10
+
+evaluation_params:
+  test_sim: [0]
+  num_frames: 75
+  metrics: ['mse', 'mae', 'rmse']
+  save_animations: true
+  save_plots: true
+
+project_root: ${hydra:runtime.cwd}
