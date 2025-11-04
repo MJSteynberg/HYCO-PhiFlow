@@ -172,7 +172,6 @@ class Evaluator:
             raw_data_dir=raw_data_dir,
             cache_dir=cache_dir,
             config=self.config,  # Pass full config for validation
-            validate_cache=self.data_config.get("validate_cache", True),
             auto_clear_invalid=self.data_config.get("auto_clear_invalid", False),
         )
 

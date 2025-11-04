@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class AugmentationConfig:
     """Validates and manages augmentation configuration."""
     
-    VALID_STRATEGIES = ['cached', 'on_the_fly']
+    # Note: Only 'cached' strategy is supported (on_the_fly removed)
     VALID_FORMATS = ['dict', 'tuple']
     
     def __init__(self, config: Dict[str, Any]):
@@ -24,6 +24,8 @@ class AugmentationConfig:
         
         Args:
             config: Configuration dictionary with augmentation settings
+        
+        Note: Strategy is hardcoded to 'cached' only.
         """
         self.config = config
         self.enabled = config.get('enabled', False)
@@ -40,20 +42,9 @@ class AugmentationConfig:
         if alpha < 0.0 or alpha > 1.0:
             raise ValueError(f"alpha must be in [0.0, 1.0], got {alpha}")
         
-        # Validate strategy
-        strategy = self.config.get('strategy', 'cached')
-        if strategy not in self.VALID_STRATEGIES:
-            raise ValueError(
-                f"strategy must be one of {self.VALID_STRATEGIES}, got '{strategy}'"
-            )
-        
+        # Note: Strategy is always 'cached' (hardcoded)
         # Validate cache settings
-        if strategy == 'cached':
-            self._validate_cache_settings()
-        
-        # Validate on-the-fly settings
-        if strategy == 'on_the_fly':
-            self._validate_on_the_fly_settings()
+        self._validate_cache_settings()
         
         # Validate device
         device = self.config.get('device', 'cuda')
@@ -90,46 +81,18 @@ class AugmentationConfig:
                 f"cache.reuse_existing must be boolean, got {type(reuse)}"
             )
     
-    def _validate_on_the_fly_settings(self):
-        """Validate on-the-fly generation settings."""
-        otf_config = self.config.get('on_the_fly', {})
-        
-        # Validate generate_every
-        generate_every = otf_config.get('generate_every', 1)
-        if not isinstance(generate_every, int) or generate_every < 0:
-            raise ValueError(
-                f"on_the_fly.generate_every must be non-negative integer, got {generate_every}"
-            )
-        
-        # Validate batch_size
-        batch_size = otf_config.get('batch_size', 32)
-        if not isinstance(batch_size, int) or batch_size <= 0:
-            raise ValueError(
-                f"on_the_fly.batch_size must be positive integer, got {batch_size}"
-            )
-        
-        # Validate rollout_steps
-        rollout_steps = otf_config.get('rollout_steps', 10)
-        if not isinstance(rollout_steps, int) or rollout_steps <= 0:
-            raise ValueError(
-                f"on_the_fly.rollout_steps must be positive integer, got {rollout_steps}"
-            )
     
     def get_alpha(self) -> float:
         """Get alpha value."""
         return self.config.get('alpha', 0.1)
     
     def get_strategy(self) -> str:
-        """Get augmentation strategy."""
-        return self.config.get('strategy', 'cached')
+        """Get augmentation strategy (always 'cached')."""
+        return 'cached'  # Hardcoded
     
     def get_cache_config(self) -> Dict[str, Any]:
         """Get cache configuration."""
         return self.config.get('cache', {})
-    
-    def get_on_the_fly_config(self) -> Dict[str, Any]:
-        """Get on-the-fly configuration."""
-        return self.config.get('on_the_fly', {})
     
     def get_device(self) -> str:
         """Get device for prediction generation."""
@@ -143,30 +106,17 @@ class AugmentationConfig:
             epoch: Current training epoch
             
         Returns:
-            True if predictions should be regenerated
+            False (cached strategy never regenerates - hardcoded)
         """
-        if not self.enabled:
-            return False
-        
-        strategy = self.get_strategy()
-        if strategy == 'cached':
-            return False  # Cached strategy doesn't regenerate
-        
-        # On-the-fly strategy
-        generate_every = self.get_on_the_fly_config().get('generate_every', 1)
-        if generate_every == 0:
-            return False  # Never regenerate
-        
-        return epoch % generate_every == 0
+        return False  # Cached strategy doesn't regenerate (hardcoded)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
         return {
             'enabled': self.enabled,
             'alpha': self.get_alpha(),
-            'strategy': self.get_strategy(),
+            'strategy': 'cached',  # Hardcoded
             'cache': self.get_cache_config(),
-            'on_the_fly': self.get_on_the_fly_config(),
             'device': self.get_device(),
         }
     
@@ -178,7 +128,7 @@ class AugmentationConfig:
             f"AugmentationConfig("
             f"enabled=True, "
             f"alpha={self.get_alpha()}, "
-            f"strategy='{self.get_strategy()}', "
+            f"strategy='cached', "  # Hardcoded
             f"device='{self.get_device()}')"
         )
 

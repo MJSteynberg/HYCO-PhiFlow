@@ -2,6 +2,3 @@ data_dir: 'data/'
 dset_name: 'burgers_128'
 fields: ['velocity']
 fields_scheme: 'VV'
-cache_dir: 'data/cache'
-validate_cache: true
-auto_clear_invalid: true

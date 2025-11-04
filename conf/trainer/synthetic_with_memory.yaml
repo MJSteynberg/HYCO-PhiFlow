@@ -1,5 +1,7 @@
 # @package _global_.trainer_params
-# Quick test with memory monitoring enabled
+# Quick test - memory monitoring controlled via logging config
+# Note: Hardcoded behaviors same as synthetic.yaml
+
 learning_rate: 0.0001
 batch_size: 16
 epochs: 2
@@ -8,17 +10,9 @@ num_predict_steps: 4
 train_sim: []
 val_sim: null
 
-use_sliding_window: false
-
 # Validation settings
 validate_every: 1
-validate_on_train: false
-validation_rollout: true  # Use full simulation rollout for validation
 validation_rollout_steps: 10  # Short rollout for quick testing
-
-# Memory monitoring settings
-enable_memory_monitoring: true  # Enable memory tracking
-memory_monitor_batches: 5       # Print detailed info for first 5 batches
 
 # Optimizer settings
 optimizer: 'adam'
@@ -26,5 +20,4 @@ scheduler: 'cosine'
 weight_decay: 0.0
 
 # Checkpoint settings
-save_interval: 1
-save_best_only: false
+checkpoint_freq: 1

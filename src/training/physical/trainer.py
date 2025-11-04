@@ -59,7 +59,8 @@ class PhysicalTrainer(FieldTrainer):
         # --- Optimization settings ---
         self.method = self.trainer_config.get("method", "L-BFGS-B")
         self.abs_tol = self.trainer_config.get("abs_tol", 1e-6)
-        self.max_iterations = self.trainer_config.get("max_iterations")
+        # Note: epochs now controls max_iterations per simulation (semantic change)
+        self.max_iterations = self.trainer_config.get("epochs", 50)
         
         # Configure error suppression for hybrid training
         self.suppress_convergence = self.trainer_config.get("suppress_convergence_errors", False)
@@ -175,7 +176,7 @@ class PhysicalTrainer(FieldTrainer):
             method=self.method,
             abs_tol=self.abs_tol,
             x0=self.learnable_params,  # Use params from base class
-            max_iterations=self.max_iterations if self.max_iterations else 100,
+            max_iterations=self.max_iterations,
             suppress=tuple(suppress_list),
         )
 

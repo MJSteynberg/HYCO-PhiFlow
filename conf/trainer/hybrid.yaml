@@ -1,4 +1,8 @@
 # HYCO Hybrid Training Configuration
+# Note: Hardcoded behaviors:
+# - validation_rollout: always true
+# - save_best_only: always true
+# - augmentation uses cached strategy only
 
 # General training settings
 epochs: 50
@@ -15,20 +19,12 @@ warmup_epochs: 5  # Pre-train synthetic model alone
 augmentation:
   enabled: true  # Enable data augmentation
   alpha: 0.1  # Augmentation ratio: num_synthetic = alpha * num_real
-  strategy: "cached"  # Strategy: "cached" or "on_the_fly"
   
   # Cache settings
   cache:
     experiment_name: "${data.dset_name}"  # Use dataset name for cache directory
-    format: "dict"  # Save format: "dict" or "tuple"
     max_memory_samples: 1000  # LRU cache size (number of samples)
     reuse_existing: true  # Reuse cache from previous runs
-  
-  # On-the-fly generation settings
-  on_the_fly:
-    generate_every: 1  # Regenerate every N epochs (0 = never regenerate)
-    batch_size: 32  # Batch size for prediction generation
-    rollout_steps: 10  # For physical models: number of rollout steps
   
   # Generation device
   device: "cuda"  # Device for prediction generation (cuda/cpu)
@@ -41,17 +37,12 @@ synthetic:
   scheduler: cosine
   weight_decay: 0.0
 
-# Physical model settings
+# Physical model settings (epochs controls max iterations)
 physical:
   method: 'L-BFGS-B'
   abs_tol: 1e-6
-  max_iterations: 5  # Low for fast iterations in hybrid training
   suppress_convergence_errors: true  # Don't raise errors on non-convergence
 
 # Checkpointing
-save_interval: 10
-save_best_only: true
+checkpoint_freq: 10
 checkpoint_dir: 'results/models/hybrid'
-
-# Memory and performance
-enable_memory_monitoring: false

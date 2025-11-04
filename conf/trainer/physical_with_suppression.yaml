@@ -1,7 +1,8 @@
 # Physical Model Configuration with Convergence Error Suppression
 # Suitable for hybrid training where fast iterations are needed
+# Note: 'epochs' parameter controls max optimization iterations per simulation
 
-epochs: 50
+epochs: 50  # Max iterations per simulation
 num_predict_steps: 10
 train_sim: [0, 1, 2]
 
@@ -13,8 +14,4 @@ learnable_parameters:
 # Optimizer settings optimized for hybrid training
 method: 'L-BFGS-B'
 abs_tol: 1e-6
-max_iterations: 5  # Low for fast iterations
 suppress_convergence_errors: true  # Don't raise errors on non-convergence
-
-# Memory monitoring (optional)
-enable_memory_monitoring: false

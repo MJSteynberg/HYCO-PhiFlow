@@ -1,7 +1,7 @@
 # @package _global_.trainer_params
-learning_rate: 0.0001
+# Note: 'epochs' parameter controls max optimization iterations per simulation
 batch_size: 1
-epochs: 50
+epochs: 50  # Max iterations per simulation
 num_predict_steps: 5
 
 train_sim: []
@@ -12,7 +12,6 @@ learnable_parameters: []
 # Optimizer settings
 method: 'L-BFGS-B'
 abs_tol: 1e-6
-max_iterations: null
 
 # Progress reporting
 print_freq: 10

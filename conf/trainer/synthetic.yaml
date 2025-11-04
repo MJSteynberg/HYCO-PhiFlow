@@ -1,4 +1,10 @@
 # @package _global_.trainer_params
+# Note: The following behaviors are hardcoded:
+# - use_sliding_window: always true (better memory efficiency)
+# - validate_on_train: always false (standard ML practice)
+# - validation_rollout: always true (accurate validation)
+# - save_best_only: always true (saves disk space)
+
 learning_rate: 0.0001
 batch_size: 16
 epochs: 100
@@ -7,20 +13,9 @@ num_predict_steps: 4
 train_sim: []
 val_sim: []  # Empty by default, should be specified in experiment configs
 
-use_sliding_window: true
-
 # Validation settings
 validate_every: 1  # Validate every N epochs
-validate_on_train: false  # Whether to also compute train metrics during validation
-validation_rollout: true  # Use full simulation rollout for validation (more accurate but slower)
 validation_rollout_steps: 75  # Number of timesteps for validation rollout (null for full length)
-
-# Early stopping
-early_stopping:
-  enabled: false
-  patience: 10  # Stop if no improvement for N epochs
-  min_delta: 1e-6  # Minimum change to count as improvement
-  monitor: val_loss  # Metric to monitor (val_loss, train_loss)
 
 # Optimizer settings
 optimizer: 'adam'
@@ -28,28 +23,17 @@ scheduler: 'cosine'
 weight_decay: 0.0
 
 # Checkpoint settings
-save_interval: 10
-save_best_only: true  # Save only when validation improves (if val_sim specified)
 checkpoint_freq: 10
 
 # Progress reporting
 print_freq: 10
 
-# Memory monitoring
-memory_monitor_batches: 5
-
 # Data augmentation configuration (optional for synthetic trainer)
 augmentation:
   enabled: false  # Disabled by default for pure synthetic training
   alpha: 0.1
-  strategy: "cached"
   cache:
     experiment_name: "${data.dset_name}"
-    format: "dict"
     max_memory_samples: 1000
     reuse_existing: true
-  on_the_fly:
-    generate_every: 1
-    batch_size: 32
-    rollout_steps: 10
   device: "cuda"

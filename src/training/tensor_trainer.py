@@ -149,8 +149,7 @@ class TensorTrainer(AbstractTrainer):
 
         logger.info(f"Training on {self.device} for {num_epochs} epochs")
 
-        # Get checkpoint configuration
-        save_best_only = self.config.get("trainer_params", {}).get("save_best_only", True)
+        # Get checkpoint configuration (save_best_only is always true - hardcoded)
         checkpoint_freq = self.config.get("trainer_params", {}).get("checkpoint_freq", 10)
 
         # Create progress bar for epochs
@@ -193,16 +192,7 @@ class TensorTrainer(AbstractTrainer):
             
             pbar.set_postfix(postfix_dict)
 
-            # Periodic checkpoint (if not using best_only)
-            if not save_best_only and checkpoint_freq > 0 and (epoch + 1) % checkpoint_freq == 0:
-                if self.checkpoint_path is not None:
-                    self.save_checkpoint(
-                        epoch=epoch,
-                        loss=train_loss,
-                        optimizer_state=(
-                            self.optimizer.state_dict() if self.optimizer else None
-                        ),
-                    )
+            # Note: Periodic checkpoints disabled - save_best_only is hardcoded to True
 
         final_loss = results["train_losses"][-1]
         logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}")

@@ -49,7 +49,6 @@ class DataManager:
         raw_data_dir: str,
         cache_dir: str,
         config: Dict[str, Any],
-        validate_cache: bool = True,
         auto_clear_invalid: bool = False,
     ):
         """
@@ -61,19 +60,19 @@ class DataManager:
             cache_dir: Absolute path where cached tensors will be stored
                       (e.g., "data/cache")
             config: Configuration dictionary containing dataset parameters
-            validate_cache: Whether to validate cached data against current config
             auto_clear_invalid: Whether to automatically remove invalid cache files
+        
+        Note: Cache creation and validation are always enabled (hardcoded).
         """
         self.raw_data_dir = Path(raw_data_dir)
         self.cache_dir = Path(cache_dir)
         self.config = config
-        self.validate_cache = validate_cache
         self.auto_clear_invalid = auto_clear_invalid
 
         # Create cache validator
         self.validator = CacheValidator(config)
 
-        # Create cache directory if it doesn't exist
+        # Always create cache directory if it doesn't exist (hardcoded behavior)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def get_cached_path(self, sim_index: int) -> Path:
@@ -105,7 +104,7 @@ class DataManager:
         """
         Check if a simulation has already been cached with matching parameters.
 
-        This method performs comprehensive validation if validate_cache is True,
+        This method always performs comprehensive validation (hardcoded behavior),
         checking PDE parameters, resolution, domain, and more. If validation
         fails and auto_clear_invalid is True, the invalid cache will be removed.
 
@@ -123,10 +122,10 @@ class DataManager:
             return False
 
         # If no validation parameters provided, just check existence
-        if field_names is None and num_frames is None and not self.validate_cache:
+        if field_names is None and num_frames is None:
             return True
 
-        # Load and validate metadata
+        # Load and validate metadata (always performed - hardcoded)
         try:
             cached_data = torch.load(cache_path, weights_only=False)
             metadata = cached_data.get("metadata", {})
@@ -153,8 +152,8 @@ class DataManager:
                         cache_path.unlink()
                     return False
 
-            # Enhanced validation (if enabled)
-            if self.validate_cache and field_names is not None:
+            # Enhanced validation (always performed - hardcoded)
+            if field_names is not None:
                 is_valid, reasons = self.validator.validate_cache(
                     metadata, field_names, num_frames
                 )

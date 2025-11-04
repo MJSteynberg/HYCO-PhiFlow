@@ -6,9 +6,9 @@ defaults:
   - generation: default
   - evaluation: default
   - logging: default
+  - optional experiment: ???  # Specify with experiment=name
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
-  - optional experiment: ???  # Specify with experiment=name
   - _self_
 
 run_params:
@@ -18,12 +18,9 @@ run_params:
   model_type: synthetic
 
 # Cache configuration for augmented data
+# Note: Cache creation and validation are always enabled (hardcoded)
 cache:
   root: "data/cache"
-  auto_create: true
-  validation:
-    check_on_load: true
-    expected_count: null  # Auto-detect from cache
   cleanup:
     on_start: false  # Clear cache before training
     on_error: false  # Clear cache if validation fails

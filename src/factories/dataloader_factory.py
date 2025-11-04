@@ -223,14 +223,15 @@ class DataLoaderFactory:
         
         Returns:
             Configured DataManager instance
+        
+        Note: Cache creation and validation are always enabled (hardcoded).
         """
         # Get paths
         project_root = cfg.get_project_root()
         raw_data_dir = project_root / cfg.get_raw_data_dir()
         cache_dir = project_root / cfg.get_cache_dir()
         
-        # Get validation settings
-        validate_cache = cfg.should_validate_cache()
+        # Get auto-clear setting
         auto_clear_invalid = cfg.should_auto_clear_invalid()
         
         logger.info(f"  Raw data: {raw_data_dir}")
@@ -240,7 +241,6 @@ class DataLoaderFactory:
             raw_data_dir=str(raw_data_dir),
             cache_dir=str(cache_dir),
             config=config,
-            validate_cache=validate_cache,
             auto_clear_invalid=auto_clear_invalid,
         )
     
