@@ -147,13 +147,16 @@ class TensorTrainer(AbstractTrainer):
             "best_val_loss": float("inf")
         }
 
-        logger.info(f"Training on {self.device} for {num_epochs} epochs")
+        # Only log if not suppressed in config
+        if not self.config.get("trainer_params", {}).get("suppress_training_logs", False):
+            logger.info(f"Training on {self.device} for {num_epochs} epochs")
 
         # Get checkpoint configuration (save_best_only is always true - hardcoded)
         checkpoint_freq = self.config.get("trainer_params", {}).get("checkpoint_freq", 10)
 
-        # Create progress bar for epochs
-        pbar = tqdm(range(num_epochs), desc="Training", unit="epoch")
+        # Create progress bar for epochs (disable if suppress_training_logs is True)
+        disable_tqdm = self.config.get("trainer_params", {}).get("suppress_training_logs", False)
+        pbar = tqdm(range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm)
 
         for epoch in pbar:
             start_time = time.time()
@@ -195,7 +198,10 @@ class TensorTrainer(AbstractTrainer):
             # Note: Periodic checkpoints disabled - save_best_only is hardcoded to True
 
         final_loss = results["train_losses"][-1]
-        logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}")
+        
+        # Only log if not suppressed in config
+        if not self.config.get("trainer_params", {}).get("suppress_training_logs", False):
+            logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}")
 
         results["final_loss"] = final_loss
         return results

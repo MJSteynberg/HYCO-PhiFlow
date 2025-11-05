@@ -83,6 +83,7 @@ class TensorDataset(AbstractDataset):
         static_fields: List[str] = None,
         use_sliding_window: bool = False,
         augmentation_config: Optional[Dict[str, Any]] = None,
+        access_policy: str = 'both',
         max_cached_sims: int = 5,
         pin_memory: bool = True,
     ):
@@ -126,6 +127,7 @@ class TensorDataset(AbstractDataset):
             num_predict_steps=num_predict_steps,
             use_sliding_window=use_sliding_window,
             augmentation_config=augmentation_config,
+            access_policy=access_policy,
             max_cached_sims=max_cached_sims,
         )
     

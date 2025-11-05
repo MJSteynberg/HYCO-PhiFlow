@@ -83,6 +83,7 @@ class FieldDataset(AbstractDataset):
         num_predict_steps: int,
         use_sliding_window: bool = False,
         augmentation_config: Optional[Dict[str, Any]] = None,
+        access_policy: str = 'both',
         max_cached_sims: int = 5,
         move_to_gpu: bool = True,
     ):
@@ -95,6 +96,9 @@ class FieldDataset(AbstractDataset):
         # Store field-specific attributes
         self.move_to_gpu = move_to_gpu and torch.cuda.is_available()
         
+        # Initialize field metadata cache (will be populated when needed)
+        self._field_metadata_cache = None
+        
         # Call parent constructor (handles common initialization)
         super().__init__(
             data_manager=data_manager,
@@ -104,6 +108,7 @@ class FieldDataset(AbstractDataset):
             num_predict_steps=num_predict_steps,
             use_sliding_window=use_sliding_window,
             augmentation_config=augmentation_config,
+            access_policy=access_policy,
             max_cached_sims=max_cached_sims,
         )
     
@@ -261,6 +266,170 @@ class FieldDataset(AbstractDataset):
                 fields_list.append(field_t)
             
             target_fields[field_name] = fields_list
+        
+        return initial_fields, target_fields
+    
+    def _get_field_metadata(self) -> Dict[str, FieldMetadata]:
+        """
+        Get field metadata for all fields in the dataset.
+        
+        This method loads metadata from the first simulation if not already cached.
+        Used for converting augmented samples (tensors) to Fields.
+        
+        Returns:
+            Dictionary mapping field names to FieldMetadata objects
+        """
+        if self._field_metadata_cache is not None:
+            return self._field_metadata_cache
+        
+        # Load first simulation to extract metadata
+        first_sim_idx = self.sim_indices[0]
+        data = self._cached_load_simulation(first_sim_idx)
+        
+        # Reconstruct FieldMetadata from cached metadata
+        field_metadata_dict = data["metadata"]["field_metadata"]
+        field_metadata = {}
+        
+        for name, meta in field_metadata_dict.items():
+            # Reconstruct domain (Box) from bounds
+            if "bounds_lower" in meta and "bounds_upper" in meta:
+                lower = meta["bounds_lower"]
+                upper = meta["bounds_upper"]
+                
+                # Create Box with correct dimensions
+                if len(lower) == 2:
+                    domain = Box(x=(lower[0], upper[0]), y=(lower[1], upper[1]))
+                elif len(lower) == 3:
+                    domain = Box(
+                        x=(lower[0], upper[0]),
+                        y=(lower[1], upper[1]),
+                        z=(lower[2], upper[2]),
+                    )
+                else:
+                    # Fallback for unexpected dimensions
+                    domain = Box(x=1, y=1)
+            else:
+                raise ValueError(
+                    f"Invalid cache format for field '{name}'. "
+                    f"Missing 'bounds_lower' or 'bounds_upper'. "
+                    f"Please clear cache and regenerate data."
+                )
+            
+            # Extract resolution from tensor shape
+            tensor_shape = data["tensor_data"][name].shape  # [T, C, H, W]
+            spatial_dims = meta["spatial_dims"]
+            resolution_sizes = {
+                dim: tensor_shape[i + 2] for i, dim in enumerate(spatial_dims)
+            }
+            resolution = spatial(**resolution_sizes)
+            
+            # Create FieldMetadata object
+            field_metadata[name] = FieldMetadata.from_cache_metadata(
+                meta, domain, resolution
+            )
+        
+        # Cache for future use
+        self._field_metadata_cache = field_metadata
+        return field_metadata
+    
+    def _process_augmented_sample(
+        self, 
+        sample: Tuple[torch.Tensor, torch.Tensor]
+    ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
+        """
+        Convert tensor-based augmented sample to Field format.
+        
+        This method handles the conversion of synthetic model predictions (tensors)
+        to the Field format expected by physical model training. It uses the existing
+        field conversion infrastructure (BatchConcatenationConverter) to split
+        concatenated tensors back into individual Fields.
+        
+        Args:
+            sample: Tuple of (input_tensor, target_tensor) where:
+                - input_tensor: [C_all, H, W] - concatenated input fields
+                - target_tensor: [T, C_all, H, W] - concatenated target fields
+        
+        Returns:
+            Tuple of (initial_fields, target_fields) where:
+                - initial_fields: Dict[field_name, Field] - initial state
+                - target_fields: Dict[field_name, List[Field]] - target trajectory
+        """
+        from src.utils.field_conversion import make_batch_converter
+        from src.utils.logger import get_logger
+        
+        logger = get_logger(__name__)
+        
+        input_tensor, target_tensor = sample
+        
+        # Move tensors to GPU if configured
+        if self.move_to_gpu:
+            if isinstance(input_tensor, torch.Tensor):
+                input_tensor = input_tensor.cuda() if not input_tensor.is_cuda else input_tensor
+            if isinstance(target_tensor, torch.Tensor):
+                target_tensor = target_tensor.cuda() if not target_tensor.is_cuda else target_tensor
+        
+        # Debug: log tensor shapes
+        logger.debug(f"Processing augmented sample:")
+        logger.debug(f"  Input tensor shape: {input_tensor.shape}")
+        logger.debug(f"  Target tensor shape: {target_tensor.shape}")
+        logger.debug(f"  Input tensor device: {input_tensor.device}")
+        logger.debug(f"  Target tensor device: {target_tensor.device}")
+        
+        # Get field metadata
+        field_metadata = self._get_field_metadata()
+        
+        # Create batch converter for splitting concatenated tensors
+        batch_converter = make_batch_converter(field_metadata)
+        
+        logger.debug(f"  Expected total channels: {batch_converter.total_channels}")
+        logger.debug(f"  Field channel counts: {batch_converter.channel_counts}")
+        
+        # Convert input tensor to initial fields
+        # Input format: [C_all, H, W] - need to add batch dim for converter
+        input_with_batch = input_tensor.unsqueeze(0)  # [1, C_all, H, W]
+        initial_fields = batch_converter.tensor_to_fields_batch(input_with_batch)
+        
+        # Remove batch dimension from fields (they have shape [1, ...])
+        for name, field in initial_fields.items():
+            # Fields returned by converter may have batch dimension, remove it
+            if 'batch' in field.shape:
+                initial_fields[name] = field.batch[0]
+        
+        # Convert target tensor to target fields
+        # Target format can be either:
+        # - [T, C_all, H, W] for multi-timestep predictions
+        # - [C_all, H, W] for single-timestep predictions (from synthetic model)
+        
+        # Check if target is single-timestep or multi-timestep
+        if target_tensor.dim() == 3:
+            # Single timestep: [C_all, H, W]
+            # Treat as T=1 by adding time dimension
+            target_tensor = target_tensor.unsqueeze(0)  # [1, C_all, H, W]
+            logger.debug(f"  Target is single-timestep, expanded to: {target_tensor.shape}")
+        
+        num_timesteps = target_tensor.shape[0]
+        target_fields = {name: [] for name in self.field_names}
+        
+        for t in range(num_timesteps):
+            # Extract timestep: shape [C_all, H, W]
+            timestep_tensor = target_tensor[t]
+            
+            logger.debug(f"  Timestep {t} tensor shape: {timestep_tensor.shape}")
+            
+            # Add batch dimension: [C_all, H, W] -> [1, C_all, H, W]
+            timestep_tensor = timestep_tensor.unsqueeze(0)
+            
+            logger.debug(f"  Timestep {t} after unsqueeze: {timestep_tensor.shape}")
+            
+            # Convert to fields
+            timestep_fields = batch_converter.tensor_to_fields_batch(timestep_tensor)
+            
+            # Append to each field's list (remove batch dim)
+            for name, field in timestep_fields.items():
+                if 'batch' in field.shape:
+                    target_fields[name].append(field.batch[0])
+                else:
+                    target_fields[name].append(field)
         
         return initial_fields, target_fields
     

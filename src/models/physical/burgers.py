@@ -1,34 +1,32 @@
 import torch
 from phi.torch.flow import *
-from phi.math import jit_compile, batch
+from phi.math import batch
 
 from .base import PhysicalModel  # <-- Assuming this base class exists
 from src.models.registry import ModelRegistry
 from typing import Dict
 
 
-# --- JIT-Compiled Physics Function ---
 @jit_compile
 def _burgers_physics_step(
-    velocity: StaggeredGrid, dt: float, nu: Tensor
-) -> StaggeredGrid:
+    velocity: CenteredGrid, dt: float, nu: Tensor
+) -> CenteredGrid:
     """
     Performs one physics-based Burgers' equation step.
 
     Args:
-        velocity (StaggeredGrid): Current velocity field.
+        velocity (CenteredGrid): Current velocity field.
         dt (float): Time step.
-        nu (float): Viscosity.
+        nu (Tensor): Viscosity parameter (must support gradient tracking).
 
     Returns:
-        StaggeredGrid: new_velocity
+        CenteredGrid: new_velocity
     """
-
-    velocity = diffuse.explicit(u=velocity, diffusivity=nu, dt=dt)
     # Advect velocity (self-advection: u * grad(u))
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
-
+    
     # Diffuse velocity (viscosity: nu * laplace(u))
+    velocity = diffuse.explicit(velocity, nu, dt=dt)
 
     return velocity
 
@@ -58,15 +56,44 @@ class BurgersModel(PhysicalModel):
         """
         b = batch(batch=self.batch_size)
 
-        velocity_0 = StaggeredGrid(
+        temp = StaggeredGrid(
             Noise(scale=20),  # Initialize with noise
             extrapolation.PERIODIC,  # Use periodic boundaries
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-        velocity_0 = math.expand(velocity_0, b)
 
+        velocity_0 = CenteredGrid(
+            temp,
+            extrapolation.PERIODIC,  # Use periodic boundaries
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain
+        )
+        velocity_0 = math.expand(velocity_0, b)
+        return {"velocity": velocity_0}
+    
+    def get_random_state(self) -> Dict[str, Field]:
+        """
+        Returns a random initial state of (noisy velocity).
+        We use periodic boundaries as they are common for Burgers.
+        """
+        temp = StaggeredGrid(
+            Noise(scale=20),  # Initialize with noise
+            extrapolation.PERIODIC,  # Use periodic boundaries
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+
+        velocity_0 = CenteredGrid(
+            temp,
+            extrapolation.PERIODIC,  # Use periodic boundaries
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain
+        )
         return {"velocity": velocity_0}
 
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:

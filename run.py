@@ -13,6 +13,13 @@ import logging
 from pathlib import Path
 from typing import List
 
+# Fix Unicode encoding issues on Windows by suppressing PhiFlow's verbose logging
+# PhiFlow's logger uses Φ character which causes encoding errors on Windows
+if sys.platform == 'win32':
+    # Suppress PhiFlow's INFO logging to avoid Unicode errors
+    logging.getLogger('Φ-ML').setLevel(logging.WARNING)
+    logging.getLogger('phiml').setLevel(logging.WARNING)
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 

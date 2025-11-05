@@ -6,10 +6,10 @@ defaults:
   - generation: default
   - evaluation: default
   - logging: default
+  - _self_
   - optional experiment: ???  # Specify with experiment=name
   - override hydra/job_logging: default
   - override hydra/hydra_logging: default
-  - _self_
 
 run_params:
   experiment_name: ???  # Must be specified

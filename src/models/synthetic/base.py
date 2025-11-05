@@ -95,7 +95,7 @@ class SyntheticModel(nn.Module, ABC):
         num_real = len(real_dataset)
         num_generate = int(num_real * alpha)
         
-        logger.info(
+        logger.debug(
             f"Generating {num_generate} synthetic predictions "
             f"(alpha={alpha:.2f} * {num_real} real samples)"
         )
@@ -128,12 +128,22 @@ class SyntheticModel(nn.Module, ABC):
                 # Generate predictions
                 batch_predictions = self(batch_inputs)
                 
+                # Debug: log shapes
+                if len(inputs_list) == 0:  # Log only for first batch
+                    logger.debug(f"  Batch inputs shape: {batch_inputs.shape}")
+                    logger.debug(f"  Batch predictions shape: {batch_predictions.shape}")
+                
                 # Store results (move back to CPU for storage)
                 for i in range(batch_inputs.shape[0]):
                     inputs_list.append(batch_inputs[i].cpu())
                     targets_list.append(batch_predictions[i].cpu())
         
-        logger.info(f"Generated {len(inputs_list)} synthetic predictions")
+        logger.debug(f"Generated {len(inputs_list)} synthetic predictions")
+        
+        # Debug: log sample shapes
+        if len(inputs_list) > 0:
+            logger.debug(f"  Sample input shape: {inputs_list[0].shape}")
+            logger.debug(f"  Sample target shape: {targets_list[0].shape}")
         
         return inputs_list, targets_list
     

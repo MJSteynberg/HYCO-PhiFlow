@@ -1,7 +1,9 @@
 # In src/training/physical/trainer.py
 
 import os
+import sys
 import time
+import logging
 from typing import Dict, Any, List
 
 # --- PhiFlow Imports ---
@@ -15,6 +17,19 @@ from src.training.field_trainer import FieldTrainer
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Suppress PhiFlow's verbose ML_LOGGER to avoid Unicode errors on Windows
+# PhiFlow uses its own logging that outputs Unicode characters
+import warnings
+warnings.filterwarnings('ignore')
+try:
+    # Suppress PhiFlow's internal loggers
+    for logger_name in ['phi', 'phiml', 'phi.math', 'phiml.math']:
+        phi_logger = logging.getLogger(logger_name)
+        phi_logger.setLevel(logging.CRITICAL)
+        phi_logger.disabled = True
+except Exception:
+    pass
 
 
 class PhysicalTrainer(FieldTrainer):
@@ -59,11 +74,12 @@ class PhysicalTrainer(FieldTrainer):
         # --- Optimization settings ---
         self.method = self.trainer_config.get("method", "L-BFGS-B")
         self.abs_tol = self.trainer_config.get("abs_tol", 1e-6)
+        # Note: rel_tol is not supported by minimize(), only abs_tol
         # Note: epochs now controls max_iterations per simulation (semantic change)
-        self.max_iterations = self.trainer_config.get("epochs", 50)
+        self.max_iterations = self.trainer_config.get("max_iterations", self.trainer_config.get("epochs", 50))
         
         # Configure error suppression for hybrid training
-        self.suppress_convergence = self.trainer_config.get("suppress_convergence_errors", False)
+        self.suppress_convergence = self.trainer_config.get("suppress_convergence_errors", True)
         
         # --- Store parameter names for logging ---
         learnable_params_config = self.trainer_config.get("learnable_parameters", [])
@@ -94,9 +110,11 @@ class PhysicalTrainer(FieldTrainer):
         else:
             self.memory_monitor = None
 
-        logger.info(
-            f"PhysicalTrainer initialized with {len(learnable_params)} learnable parameter(s)."
-        )
+        # Only log initialization if not suppressed
+        if not self.config.get("trainer_params", {}).get("suppress_training_logs", False):
+            logger.info(
+                f"PhysicalTrainer initialized with {len(learnable_params)} learnable parameter(s)."
+            )
 
     def _train_sample(self, initial_fields: Dict[str, Any], target_fields: Dict[str, Any]) -> float:
         """
@@ -160,9 +178,9 @@ class PhysicalTrainer(FieldTrainer):
                 total_loss += step_loss
 
             final_loss = total_loss / self.num_predict_steps
-
-            # Print loss for first few iterations (if monitoring enabled)
-            if hasattr(self, "memory_monitor") and self.memory_monitor and iteration_num <= self.verbose_iterations:
+            # Print loss for first few iterations (if monitoring enabled and not suppressed)
+            suppress_logs = self.config.get("trainer_params", {}).get("suppress_training_logs", False)
+            if not suppress_logs and hasattr(self, "memory_monitor") and self.memory_monitor and iteration_num <= self.verbose_iterations:
                 logger.info(f"  Iteration {iteration_num}: loss={final_loss}")
 
             return final_loss
@@ -179,9 +197,9 @@ class PhysicalTrainer(FieldTrainer):
             max_iterations=self.max_iterations,
             suppress=tuple(suppress_list),
         )
-
-        # Run optimization
+        # Run optimization with detailed error tracking
         try:
+            # Suppress PhiFlow's internal logger that causes Unicode errors on Windows
             if hasattr(self, "memory_monitor") and self.memory_monitor:
                 with self.memory_monitor.track("optimization"):
                     estimated_tensors = math.minimize(loss_function, solve_params)
@@ -189,7 +207,7 @@ class PhysicalTrainer(FieldTrainer):
                 estimated_tensors = math.minimize(loss_function, solve_params)
             
         except Exception as e:
-            logger.error(f"Optimization error: {e}")
+            logger.error(f"Optimization failed: {e}")
             estimated_tensors = tuple(self.learnable_params)
 
         # Compute final loss and return as float

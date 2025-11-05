@@ -33,7 +33,7 @@ defaults:
 run_params:
   experiment_name: 'advection_experiment'
   notes: 'Pure advection with synthetic UNet model'
-  mode: ['train', 'evaluate']  # Options: generate, train, evaluate
+  mode: ['evaluate']  # Options: generate, train, evaluate
   model_type: 'synthetic'  # Options: synthetic, physical, hybrid
 
 model:
@@ -47,11 +47,11 @@ generation_params:
 
 trainer_params:
   # Training data
-  train_sim: [0,1,2,3,4,5,6,7,8]  # Training simulations
-  val_sim: [9]  # Validation simulations
+  train_sim: [1]  # Training simulations
+  val_sim: [0]  # Validation simulations
   
   # Training hyperparameters
-  epochs: 100
+  epochs: 3000
   batch_size: 16
   num_predict_steps: 4
   
@@ -61,8 +61,13 @@ trainer_params:
   scheduler: 'cosine'
   weight_decay: 0.0
   
+  # Physical model learnable parameters (for physical/hybrid)
+  learnable_parameters:
+    - name: 'advection_coeff'
+      initial_guess: 1.0  # Starting value for optimization
+  
   # Validation
-  validate_every: 1
+  validate_every: 10
   validation_rollout_steps: 75
   
   # Checkpointing
@@ -70,7 +75,7 @@ trainer_params:
   print_freq: 10
 
 evaluation_params:
-  test_sim: [0]
+  test_sim: [0,1]
   num_frames: 75
   metrics: ['mse', 'mae', 'rmse']
   save_animations: true

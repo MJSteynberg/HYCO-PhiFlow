@@ -133,22 +133,21 @@ class FieldTrainer(AbstractTrainer):
             "epochs": [],
             "num_epochs": num_epochs
         }
-
         for epoch in range(num_epochs):
             epoch_loss = 0.0
             num_samples = 0
             
             # Iterate through data source
-            for sample in data_source:
-                # Unpack sample (2-tuple: no weights!)
-                initial_fields, target_fields = sample
-                
-                # Train on this sample
-                loss = self._train_sample(initial_fields, target_fields)
-                
-                epoch_loss += loss
-                num_samples += 1
+            sample = data_source[0] # For now only use sample 0.
+            # Unpack sample (2-tuple: no weights!)
+            initial_fields, target_fields = sample
             
+            # Train on this sample
+            loss = self._train_sample(initial_fields, target_fields)
+            
+            epoch_loss += loss
+            num_samples += 1
+                
             # Compute average loss for epoch
             avg_loss = epoch_loss / num_samples if num_samples > 0 else float('inf')
             results["train_losses"].append(avg_loss)

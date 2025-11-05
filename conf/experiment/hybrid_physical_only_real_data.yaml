@@ -1,0 +1,64 @@
+# @package _global_
+
+# Hybrid Training: Physical Model Only Sees Real Data
+# Use case: You trust your physics and want to use real data primarily for
+#           parameter calibration, while synthetic model learns from physics
+
+defaults:
+  - /trainer: hybrid
+  - /data: burgers_128
+  - /model/synthetic: unet
+  - /model/physical: burgers
+  - /logging: default
+
+trainer_params:
+  train_sim: [0, 1, 2]
+  val_sim: [3]
+  
+  epochs: 50
+  batch_size: 16
+  num_predict_steps: 10
+  
+  # Augmentation configuration
+  augmentation:
+    alpha: 0.3  # More physics-based augmentation
+  
+  # Hybrid configuration with restricted data access
+  hybrid:
+    num_cycles: 15
+    synthetic_epochs_per_cycle: 5  # Synthetic learns from physics
+    physical_epochs_per_cycle: 5   # Physical learns parameters from real data
+    warmup_synthetic_epochs: 0     # No warmup (will train on physics from start)
+    
+    # KEY PARAMETER: Only physical model sees real data
+    real_data_access: 'physical_only'
+  
+  # Synthetic model settings (learns from physics predictions)
+  synthetic:
+    learning_rate: 1e-4
+    weight_decay: 1e-5  # Light regularization
+    optimizer: adam
+    scheduler: cosine
+  
+  # Physical model settings (calibrated on real data)
+  physical:
+    method: 'L-BFGS-B'
+    abs_tol: 1e-6
+
+run_params:
+  model_type: "hybrid"
+  task: "train"
+
+# Expected behavior:
+# - Cycle 1:
+#   1. Physical trains on REAL data (learns parameters)
+#   2. Synthetic trains on PHYSICS predictions only (no real data)
+# - Cycle 2-15:
+#   1. Physical refines parameters on REAL data + synthetic predictions
+#   2. Synthetic trains on improved PHYSICS predictions
+#
+# Use this when:
+#   - You trust your physics model (correct equations)
+#   - Real data is primarily for parameter identification
+#   - You want synthetic model to be physics-guided
+#   - You're testing if synthetic can learn purely from calibrated physics

@@ -145,6 +145,38 @@ class SmokeModel(PhysicalModel):
         # as inflow_0 (batch=1) will broadcast to batch=N
 
         return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
+    
+    def get_random_state(self) -> Dict[str, Field]:
+        """
+        Returns an initial state of (zero velocity, zero density).
+        """
+        b = batch(batch=self.batch_size)
+
+        velocity_0 = StaggeredGrid(
+            Noise(scale=0.01),
+            extrapolation.ZERO,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+        density_0 = CenteredGrid(
+            Noise(scale=0.01),
+            extrapolation.BOUNDARY,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+
+        INFLOW_SHAPE = Sphere(center=self.inflow_center, radius=self.inflow_radius)
+        inflow_0 = self.inflow_rate * CenteredGrid(
+            INFLOW_SHAPE,
+            extrapolation.BOUNDARY,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+
+        return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
 
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """

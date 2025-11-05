@@ -142,6 +142,19 @@ class PhysicalModel(ABC):
         pass
 
     @abstractmethod
+    def get_random_state(self) -> Dict[str, Field]:
+        """
+        Generates a random state for the simulation.
+
+        The batch dimension should be named 'batch'.
+
+        Returns:
+            Dict[str, Field]: A dictionary mapping field names to their
+                              random Field values.
+        """
+        pass
+
+    @abstractmethod
     def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Advances the simulation by one time step (dt).
@@ -195,7 +208,7 @@ class PhysicalModel(ABC):
         num_real = len(real_dataset)
         num_generate = int(num_real * alpha)
         
-        logger.info(
+        logger.debug(
             f"Generating {num_generate} physical predictions "
             f"(alpha={alpha:.2f} * {num_real} real samples)"
         )
@@ -214,8 +227,7 @@ class PhysicalModel(ABC):
         with torch.no_grad():
             for idx in indices:
                 # Get sample from dataset
-                initial_fields, _ = real_dataset[idx]
-                
+                initial_fields = self.get_random_state()
                 # Perform rollout prediction
                 predictions = self._perform_rollout(initial_fields, num_rollout_steps)
                 
@@ -223,7 +235,7 @@ class PhysicalModel(ABC):
                 initial_fields_list.append(initial_fields)
                 target_fields_list.append(predictions)
         
-        logger.info(f"Generated {len(initial_fields_list)} physical predictions")
+        logger.debug(f"Generated {len(initial_fields_list)} physical predictions")
         
         return initial_fields_list, target_fields_list
     

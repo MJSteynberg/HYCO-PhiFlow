@@ -56,6 +56,7 @@ class AbstractDataset(Dataset, ABC):
         num_predict_steps: Number of prediction steps for training
         use_sliding_window: If True, create multiple samples per simulation
         augmentation_config: Optional dict with augmentation settings
+        access_policy: Control which data is accessible ('both', 'real_only', 'generated_only')
         max_cached_sims: LRU cache size (number of simulations in memory)
         
     Augmentation Config Structure:
@@ -65,6 +66,11 @@ class AbstractDataset(Dataset, ABC):
             'data': List,                 # Pre-loaded data (for 'memory' mode)
             'cache_dir': str,             # Cache directory path (for 'cache' mode)
         }
+    
+    Access Policy:
+        - 'both': Dataset provides both real and augmented samples (default)
+        - 'real_only': Dataset provides only real samples (ignores augmentation)
+        - 'generated_only': Dataset provides only augmented samples (requires augmentation)
     """
     
     def __init__(
@@ -76,6 +82,7 @@ class AbstractDataset(Dataset, ABC):
         num_predict_steps: int,
         use_sliding_window: bool = False,
         augmentation_config: Optional[Dict[str, Any]] = None,
+        access_policy: str = 'both',
         max_cached_sims: int = 5,
     ):
         """
@@ -88,6 +95,7 @@ class AbstractDataset(Dataset, ABC):
         4. Create LRU cache for lazy loading
         5. Build sliding window index if enabled
         6. Load augmentation data if configured
+        7. Apply access policy to control real vs generated data
         """
         # Store basic parameters
         self.data_manager = data_manager
@@ -97,6 +105,15 @@ class AbstractDataset(Dataset, ABC):
         self.num_predict_steps = num_predict_steps
         self.use_sliding_window = use_sliding_window
         self.max_cached_sims = max_cached_sims
+        
+        # Validate and store access policy
+        valid_policies = ['both', 'real_only', 'generated_only']
+        if access_policy not in valid_policies:
+            raise ValueError(
+                f"Invalid access_policy: '{access_policy}'. "
+                f"Must be one of {valid_policies}"
+            )
+        self.access_policy = access_policy
         
         # Validate inputs
         if not sim_indices:
@@ -123,6 +140,12 @@ class AbstractDataset(Dataset, ABC):
         self.augmented_samples = []
         if augmentation_config:
             self._load_augmentation(augmentation_config)
+            # Process augmented samples to ensure correct format
+            if self.augmented_samples:
+                self.augmented_samples = [
+                    self._process_augmented_sample(sample) 
+                    for sample in self.augmented_samples
+                ]
         
         # Calculate sample counts
         self.num_real = (
@@ -131,7 +154,15 @@ class AbstractDataset(Dataset, ABC):
         )
         self.num_augmented = len(self.augmented_samples)
         
-        logger.info(f"  Dataset initialized: {self.num_real} real + {self.num_augmented} augmented = {len(self)} total samples")
+        # Log dataset size based on access policy
+        if self.access_policy == 'both':
+            logger.debug(f"  Dataset: {self.num_real} real + {self.num_augmented} augmented = {len(self)} samples")
+        elif self.access_policy == 'real_only':
+            logger.debug(f"  Dataset: {self.num_real} real samples (access_policy=real_only)")
+        elif self.access_policy == 'generated_only':
+            if self.num_augmented == 0:
+                logger.warning("  Dataset: access_policy=generated_only but no augmented samples available!")
+            logger.debug(f"  Dataset: {self.num_augmented} generated samples (access_policy=generated_only)")
     
     # ==================== Cache Management ====================
     
@@ -150,7 +181,7 @@ class AbstractDataset(Dataset, ABC):
         """
         # Determine num_frames from first simulation if not provided
         if self.num_frames is None:
-            logger.info("  num_frames not specified, determining from first simulation...")
+            logger.debug("num_frames not specified, determining from first simulation...")
             first_sim_data = self.data_manager.get_or_load_simulation(
                 self.sim_indices[0], 
                 field_names=self.field_names, 
@@ -158,7 +189,7 @@ class AbstractDataset(Dataset, ABC):
             )
             # Extract num_frames from first field's tensor
             self.num_frames = first_sim_data["tensor_data"][self.field_names[0]].shape[0]
-            logger.info(f"  Determined num_frames = {self.num_frames}")
+            logger.debug(f"Determined num_frames = {self.num_frames}")
             del first_sim_data  # Free memory immediately
         
         # Check which simulations need caching
@@ -176,18 +207,18 @@ class AbstractDataset(Dataset, ABC):
         
         # Cache all uncached simulations upfront
         if uncached_sims:
-            logger.info(f"  Caching {len(uncached_sims)} simulations upfront...")
+            logger.info(f"  Caching {len(uncached_sims)} simulations...")
             for i, sim_idx in enumerate(uncached_sims, 1):
-                logger.info(f"    [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}...")
+                logger.debug(f"    [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}...")
                 # Load and cache the simulation
                 _ = self.data_manager.get_or_load_simulation(
                     sim_idx, 
                     field_names=self.field_names, 
                     num_frames=self.num_frames
                 )
-            logger.info(f"  All simulations cached successfully!")
+            logger.debug(f"  All simulations cached successfully!")
         else:
-            logger.info(f"  All {len(self.sim_indices)} simulations already cached.")
+            logger.debug(f"All {len(self.sim_indices)} simulations already cached.")
     
     def _create_cached_loader(self):
         """
@@ -267,8 +298,8 @@ class AbstractDataset(Dataset, ABC):
             for start_frame in range(samples_per_sim):
                 self.sample_index.append((sim_idx, start_frame))
         
-        logger.info(f"  Sliding window: {samples_per_sim} samples per simulation")
-        logger.info(f"  Total samples: {len(self.sample_index)} (from {len(self.sim_indices)} simulations)")
+        logger.debug(f"  Sliding window: {samples_per_sim} samples per simulation")
+        logger.debug(f"  Total samples: {len(self.sample_index)} (from {len(self.sim_indices)} simulations)")
     
     # ==================== Augmentation ====================
     
@@ -294,14 +325,14 @@ class AbstractDataset(Dataset, ABC):
         mode = config.get('mode', 'cache')
         alpha = config.get('alpha', 0.0)
         
-        logger.info(f"  Loading augmentation (mode={mode}, alpha={alpha})...")
+        logger.debug(f"  Loading augmentation (mode={mode}, alpha={alpha})...")
         
         if mode == 'memory':
             # Pre-loaded augmented data provided
             if 'data' not in config:
                 raise ValueError("Augmentation mode 'memory' requires 'data' key in config")
             self.augmented_samples = config['data']
-            logger.info(f"    Loaded {len(self.augmented_samples)} pre-loaded augmented samples")
+            logger.debug(f"    Loaded {len(self.augmented_samples)} pre-loaded augmented samples")
         
         elif mode == 'cache':
             # Load from disk cache
@@ -312,7 +343,7 @@ class AbstractDataset(Dataset, ABC):
             expected_count = int(self.num_real * alpha) if alpha > 0 else None
             
             self.augmented_samples = self._load_from_cache(cache_dir, expected_count)
-            logger.info(f"    Loaded {len(self.augmented_samples)} cached augmented samples")
+            logger.debug(f"    Loaded {len(self.augmented_samples)} cached augmented samples")
         
         else:
             raise ValueError(f"Unknown augmentation mode: {mode}")
@@ -384,21 +415,28 @@ class AbstractDataset(Dataset, ABC):
     
     def __len__(self) -> int:
         """
-        Return total number of samples in dataset.
+        Return total number of samples based on access policy.
         
         Returns:
-            num_real + num_augmented
+            - 'real_only': num_real
+            - 'generated_only': num_augmented
+            - 'both': num_real + num_augmented
         """
-        return self.num_real + self.num_augmented
+        if self.access_policy == 'real_only':
+            return self.num_real
+        elif self.access_policy == 'generated_only':
+            return self.num_augmented
+        else:  # 'both'
+            return self.num_real + self.num_augmented
     
     def __getitem__(self, idx: int):
         """
-        Get a training sample by index.
+        Get a training sample by index, respecting access policy.
         
-        This method routes the request to either real or augmented data
-        based on the index value:
-        - idx < num_real: Real sample
-        - idx >= num_real: Augmented sample
+        Access policy routing:
+        - 'real_only': All indices map to real samples
+        - 'generated_only': All indices map to augmented samples
+        - 'both': idx < num_real → real, idx >= num_real → augmented
         
         Args:
             idx: Sample index (0 to len(dataset)-1)
@@ -409,12 +447,26 @@ class AbstractDataset(Dataset, ABC):
         if idx < 0 or idx >= len(self):
             raise IndexError(f"Index {idx} out of range [0, {len(self)})")
         
-        # Route to real or augmented
-        if idx < self.num_real:
+        if self.access_policy == 'real_only':
+            # Only serve real data
             return self._get_real_sample(idx)
-        else:
-            aug_idx = idx - self.num_real
-            return self.augmented_samples[aug_idx]
+        
+        elif self.access_policy == 'generated_only':
+            # Only serve generated data
+            if idx >= self.num_augmented:
+                raise IndexError(
+                    f"Generated index {idx} out of range [0, {self.num_augmented}). "
+                    f"access_policy=generated_only but only {self.num_augmented} augmented samples available."
+                )
+            return self.augmented_samples[idx]
+        
+        else:  # 'both'
+            # Route based on index (existing behavior)
+            if idx < self.num_real:
+                return self._get_real_sample(idx)
+            else:
+                aug_idx = idx - self.num_real
+                return self.augmented_samples[aug_idx]
     
     # ==================== Utility Methods ====================
     
@@ -467,6 +519,8 @@ class AbstractDataset(Dataset, ABC):
             'total_samples': len(self),
             'real_samples': self.num_real,
             'augmented_samples': self.num_augmented,
+            'access_policy': self.access_policy,
+            'effective_samples': len(self),  # Actual samples available based on policy
             'num_simulations': len(self.sim_indices),
             'num_frames': self.num_frames,
             'num_predict_steps': self.num_predict_steps,
@@ -478,6 +532,31 @@ class AbstractDataset(Dataset, ABC):
             'lru_cache_hits': cache_info.hits,
             'lru_cache_misses': cache_info.misses,
         }
+    
+    def _process_augmented_sample(self, sample: Any) -> Any:
+        """
+        Process/convert an augmented sample to match the expected format.
+        
+        This method is called during augmentation loading to ensure augmented
+        samples have the same format as real samples returned by _get_real_sample().
+        
+        Default implementation returns the sample unchanged (no conversion).
+        Subclasses should override this method if augmented samples need format
+        conversion (e.g., TensorDataset receives tensors from both real and
+        augmented sources, but FieldDataset needs to convert augmented tensors
+        to Fields).
+        
+        Args:
+            sample: Raw augmented sample (format depends on augmentation source)
+        
+        Returns:
+            Processed sample in the format expected by _get_real_sample()
+        
+        Example:
+            In FieldDataset, this converts (input_tensor, target_tensor) tuples
+            to (initial_fields, target_fields) format using field converters.
+        """
+        return sample
     
     # ==================== Abstract Methods (Must be Implemented by Subclasses) ====================
     

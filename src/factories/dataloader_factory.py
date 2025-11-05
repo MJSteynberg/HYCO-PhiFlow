@@ -116,7 +116,7 @@ class DataLoaderFactory:
             ...     # target_fields: Dict[str, List[Field]]
             ...     pass
         """
-        logger.info(f"Creating data loader (mode={mode})...")
+        logger.debug(f"Creating data loader (mode={mode})...")
         
         # === Step 1: Extract configuration using ConfigHelper ===
         cfg = ConfigHelper(config)
@@ -135,10 +135,10 @@ class DataLoaderFactory:
         num_frames = cfg.get_num_frames(use_sliding_window)
         num_predict_steps = cfg.get_num_predict_steps()
         
-        logger.info(f"  Simulations: {len(sim_indices)}")
-        logger.info(f"  Batch size: {batch_size}")
-        logger.info(f"  Sliding window: {use_sliding_window}")
-        logger.info(f"  Augmentation: {enable_augmentation}")
+        logger.debug(f"  Simulations: {len(sim_indices)}")
+        logger.debug(f"  Batch size: {batch_size}")
+        logger.debug(f"  Sliding window: {use_sliding_window}")
+        logger.debug(f"  Augmentation: {enable_augmentation}")
         
         # === Step 2: Create DataManager ===
         data_manager = DataLoaderFactory._create_data_manager(config, cfg)
@@ -150,16 +150,16 @@ class DataLoaderFactory:
         augmentation_config = None
         if enable_augmentation:
             augmentation_config = cfg.get_augmentation_config()
-            logger.info(f"  Augmentation mode: {augmentation_config['mode']}")
-            logger.info(f"  Augmentation alpha: {augmentation_config['alpha']}")
+            logger.debug(f"  Augmentation mode: {augmentation_config['mode']}")
+            logger.debug(f"  Augmentation alpha: {augmentation_config['alpha']}")
         
         # === Step 5: Create dataset based on mode ===
         if mode == 'tensor':
             # Tensor mode: for synthetic (neural network) models
             dynamic_fields, static_fields = cfg.get_field_types()
             
-            logger.info(f"  Dynamic fields: {dynamic_fields}")
-            logger.info(f"  Static fields: {static_fields}")
+            logger.debug(f"  Dynamic fields: {dynamic_fields}")
+            logger.debug(f"  Static fields: {static_fields}")
             
             dataset = TensorDataset(
                 data_manager=data_manager,
@@ -174,8 +174,8 @@ class DataLoaderFactory:
             )
             
             # Wrap in DataLoader for batching
-            logger.info(f"  Created TensorDataset with {len(dataset)} samples")
-            logger.info(f"  Creating DataLoader (batch_size={batch_size}, shuffle={shuffle})...")
+            logger.debug(f"  Created TensorDataset with {len(dataset)} samples")
+            logger.debug(f"  Creating DataLoader (batch_size={batch_size}, shuffle={shuffle})...")
             
             data_loader = DataLoader(
                 dataset,
@@ -185,12 +185,12 @@ class DataLoaderFactory:
                 pin_memory=torch.cuda.is_available(),
             )
             
-            logger.info(f"DataLoader created successfully")
+            logger.debug(f"DataLoader created successfully")
             return data_loader
         
         elif mode == 'field':
             # Field mode: for physical (PDE-based) models
-            logger.info(f"  Fields: {field_names}")
+            logger.debug(f"  Fields: {field_names}")
             
             dataset = FieldDataset(
                 data_manager=data_manager,
@@ -203,8 +203,8 @@ class DataLoaderFactory:
             )
             
             # Return dataset directly (no DataLoader for field mode)
-            logger.info(f"  Created FieldDataset with {len(dataset)} samples")
-            logger.info(f"FieldDataset created successfully")
+            logger.debug(f"  Created FieldDataset with {len(dataset)} samples")
+            logger.debug(f"FieldDataset created successfully")
             return dataset
         
         else:
@@ -234,8 +234,8 @@ class DataLoaderFactory:
         # Get auto-clear setting
         auto_clear_invalid = cfg.should_auto_clear_invalid()
         
-        logger.info(f"  Raw data: {raw_data_dir}")
-        logger.info(f"  Cache: {cache_dir}")
+        logger.debug(f"  Raw data: {raw_data_dir}")
+        logger.debug(f"  Cache: {cache_dir}")
         
         return DataManager(
             raw_data_dir=str(raw_data_dir),

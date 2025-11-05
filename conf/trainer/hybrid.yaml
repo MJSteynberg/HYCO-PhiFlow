@@ -3,6 +3,7 @@
 # - validation_rollout: always true
 # - save_best_only: always true
 # - augmentation uses cached strategy only
+# - augmentation is always enabled (inherent to hybrid training)
 
 # General training settings
 epochs: 50
@@ -10,14 +11,32 @@ num_predict_steps: 10
 train_sim: [0, 1, 2]
 val_sim: [3]
 
-# Hybrid-specific parameters
-alpha: 0.5  # Weight for real data (0.5 = equal real/synthetic)
-interleave_frequency: 1  # Train both models every N epochs
-warmup_epochs: 5  # Pre-train synthetic model alone
+# Hybrid cycle configuration
+# These control the iterative training cycle between synthetic and physical models
+hybrid:
+  num_cycles: 10  # Number of hybrid training cycles
+  synthetic_epochs_per_cycle: 5  # Epochs to train synthetic model per cycle
+  physical_epochs_per_cycle: 3  # Epochs to train physical model per cycle
+  warmup_synthetic_epochs: 10  # Initial warmup epochs for synthetic model
+  
+  # ============================================================================
+  # Real Data Access Control
+  # ============================================================================
+  # Controls which models are allowed to train on real data vs. generated data
+  # Options:
+  #   - 'both': Both models see real data + augmentation (default, standard hybrid)
+  #   - 'synthetic_only': Only synthetic model sees real data; physical trains on synthetic predictions
+  #   - 'physical_only': Only physical model sees real data; synthetic trains on physical predictions
+  #   - 'neither': Neither model sees real data; each trains only on the other's predictions
+  #
+  # Use cases:
+  #   - 'synthetic_only': When you want synthetic model to learn from data, physics to adapt to it
+  #   - 'physical_only': When you trust physics more, use data only for parameter calibration
+  #   - 'neither': Extreme case - models learn from each other's predictions only
+  real_data_access: 'both'  # Default: both models see real data
 
-# Data augmentation configuration
+# Data augmentation configuration (always enabled in hybrid training)
 augmentation:
-  enabled: true  # Enable data augmentation
   alpha: 0.1  # Augmentation ratio: num_synthetic = alpha * num_real
   
   # Cache settings

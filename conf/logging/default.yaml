@@ -17,11 +17,11 @@ logging:
   # Override the root level for specific modules
   module_levels:
     src.training: INFO
-    src.data: INFO
-    src.models: INFO
+    src.data: WARNING  # Reduced from INFO to WARNING for hybrid training
+    src.models: WARNING  # Reduced from INFO to WARNING for hybrid training
     src.evaluation: INFO
     src.utils: WARNING
-    src.factories: INFO
+    src.factories: WARNING  # Reduced from INFO to WARNING for hybrid training
   
   # Performance monitoring
   log_memory_usage: false
