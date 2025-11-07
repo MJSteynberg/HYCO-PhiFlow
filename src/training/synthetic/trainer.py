@@ -30,14 +30,14 @@ class SyntheticTrainer(TensorTrainer):
     Field conversions. All conversions happen once during caching.
 
     Inherits from TensorTrainer to get PyTorch-specific functionality.
-    
+
     Phase 1 Migration: Now receives model externally, data passed via train().
     """
 
     def __init__(self, config: Dict[str, Any], model: nn.Module):
         """
         Initializes the trainer with external model.
-        
+
         Args:
             config: Full configuration dictionary
             model: Pre-created synthetic model (e.g., UNet)
@@ -84,7 +84,9 @@ class SyntheticTrainer(TensorTrainer):
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, T_max=epochs
             )
-            logger.debug(f"Created CosineAnnealingLR scheduler with T_max={epochs} epochs")
+            logger.debug(
+                f"Created CosineAnnealingLR scheduler with T_max={epochs} epochs"
+            )
         else:
             self.scheduler = None
 
@@ -138,10 +140,10 @@ class SyntheticTrainer(TensorTrainer):
     def _train_epoch_with_data(self, data_source):
         """
         Runs one epoch of autoregressive training using provided data source.
-        
+
         Args:
             data_source: DataLoader with batches of (initial_state, rollout_targets)
-        
+
         Returns:
             Average loss for the epoch
         """
@@ -185,58 +187,62 @@ class SyntheticTrainer(TensorTrainer):
     def _compute_batch_loss(self, batch) -> torch.Tensor:
         """
         Compute loss for a single batch.
-        
+
         Used by both training and validation through parent class.
-        
+
         Args:
             batch: Tuple of (initial_state, rollout_targets) from TensorDataset
-            
+
         Returns:
             Loss tensor for the batch
         """
         initial_state, rollout_targets = batch
         initial_state = initial_state.to(self.device)
         rollout_targets = rollout_targets.to(self.device)
-        
+
         # Autoregressive rollout
         batch_size = initial_state.shape[0]
         num_steps = rollout_targets.shape[1]
-        
+
         current_state = initial_state  # [B, C_all, H, W] - all fields
         total_step_loss = 0.0
-        
+
         for t in range(num_steps):
             # Predict next state (model returns all fields)
             prediction = self.model(current_state)  # [B, C_all, H, W]
-            
+
             # Extract only dynamic fields from prediction for loss computation
             pred_dynamic_tensors = []
             for field_name in self.field_names:
                 if field_name in self.dynamic_fields:
                     start, end = self.channel_map[field_name]
                     pred_dynamic_tensors.append(prediction[:, start:end, :, :])
-            
-            pred_dynamic = torch.cat(pred_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
-            
+
+            pred_dynamic = torch.cat(
+                pred_dynamic_tensors, dim=1
+            )  # [B, C_dynamic, H, W]
+
             # Get ground truth for this timestep (now contains all fields)
             target_all = rollout_targets[:, t, :, :, :]  # [B, C_all, H, W]
-            
+
             # Extract only dynamic fields from target for loss computation
             target_dynamic_tensors = []
             for field_name in self.field_names:
                 if field_name in self.dynamic_fields:
                     start, end = self.channel_map[field_name]
                     target_dynamic_tensors.append(target_all[:, start:end, :, :])
-            
-            target_dynamic = torch.cat(target_dynamic_tensors, dim=1)  # [B, C_dynamic, H, W]
-            
+
+            target_dynamic = torch.cat(
+                target_dynamic_tensors, dim=1
+            )  # [B, C_dynamic, H, W]
+
             # Compute loss on dynamic fields only
             step_loss = self.loss_fn(pred_dynamic, target_dynamic)
             total_step_loss += step_loss
-            
+
             # Use full prediction (all fields) as input for next timestep
             current_state = prediction
-        
+
         # Average loss over timesteps
         avg_rollout_loss = total_step_loss / num_steps
         return avg_rollout_loss

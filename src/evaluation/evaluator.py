@@ -29,7 +29,7 @@ from .visualizations import (
     plot_keyframes_as_svgs_multi_field,
     plot_error_heatmap,
     create_evaluation_summary,
-    plot_keyframes_as_svgs
+    plot_keyframes_as_svgs,
 )
 from src.utils.logger import get_logger
 
@@ -150,7 +150,9 @@ class Evaluator:
         model.eval()
 
         logger.debug(f"Model loaded from {checkpoint_path}")
-        logger.debug(f"Model architecture: {model_name}, In: {model.in_channels}, Out: {model.out_channels}")
+        logger.debug(
+            f"Model architecture: {model_name}, In: {model.in_channels}, Out: {model.out_channels}"
+        )
 
         self.model = model
         return model
@@ -247,7 +249,9 @@ class Evaluator:
         # Stack predictions
         prediction_tensor = torch.cat(predictions, dim=0)  # [T, C, H, W]
 
-        logger.debug(f"Rollout complete: {prediction_tensor.shape[0]} frames, Shape: {prediction_tensor.shape}")
+        logger.debug(
+            f"Rollout complete: {prediction_tensor.shape[0]} frames, Shape: {prediction_tensor.shape}"
+        )
 
         return {
             "prediction": prediction_tensor.cpu(),
@@ -499,9 +503,14 @@ class Evaluator:
         self.save_metrics_to_json(metrics, metrics_dir / "metrics_summary.json")
 
         # 5. Summary - compact one-liner with key metrics
-        mse_summary = ", ".join([f"{name}: {m['mse']['mean']:.4f}" for name, m in metrics["aggregates"].items()])
+        mse_summary = ", ".join(
+            [
+                f"{name}: {m['mse']['mean']:.4f}"
+                for name, m in metrics["aggregates"].items()
+            ]
+        )
         logger.info(f"Simulation {sim_index} complete - MSE: {mse_summary}")
-        
+
         # Detailed summary at DEBUG level
         logger.debug(f"\n{'='*60}")
         logger.debug(f"EVALUATION COMPLETE")

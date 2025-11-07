@@ -10,6 +10,7 @@ from phi.math import math, Tensor
 from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
+
 # HybridTrainer imported lazily to avoid circular dependency
 from src.data import DataManager, FieldDataset
 from src.factories.model_factory import ModelFactory
@@ -23,7 +24,7 @@ logger = get_logger(__name__)
 class TrainerFactory:
     """
     Factory for creating trainer instances with Phase 1 API.
-    
+
     Phase 1: Creates models and data externally, passes to trainers.
     Trainers now receive:
     - SyntheticTrainer(config, model)
@@ -61,8 +62,7 @@ class TrainerFactory:
         available = TrainerFactory.list_available_trainers()
         if model_type not in available:
             raise ValueError(
-                f"Unknown model_type '{model_type}'. "
-                f"Available: {available}"
+                f"Unknown model_type '{model_type}'. " f"Available: {available}"
             )
 
         # Create trainer based on type
@@ -79,41 +79,45 @@ class TrainerFactory:
     def _create_synthetic_trainer(config: Dict[str, Any]) -> SyntheticTrainer:
         """
         Create SyntheticTrainer with external model.
-        
+
         Args:
             config: Full configuration dictionary
-            
+
         Returns:
             SyntheticTrainer instance
         """
         # Create model externally
         model = ModelFactory.create_synthetic_model(config)
-        
+
         # Create trainer with model
         trainer = SyntheticTrainer(config, model)
-        
+
         return trainer
 
     @staticmethod
     def _create_physical_trainer(config: Dict[str, Any]) -> PhysicalTrainer:
         """
         Create PhysicalTrainer with external model and learnable parameters.
-        
+
         Args:
             config: Full configuration dictionary
-            
+
         Returns:
             PhysicalTrainer instance
         """
         # Create model externally
         model = ModelFactory.create_physical_model(config)
-        
+
         # Extract learnable parameters from config
-        learnable_params_config = config["trainer_params"].get("learnable_parameters", [])
-        
+        learnable_params_config = config["trainer_params"].get(
+            "learnable_parameters", []
+        )
+
         if not learnable_params_config:
-            raise ValueError("No 'learnable_parameters' defined in trainer_params for physical training.")
-        
+            raise ValueError(
+                "No 'learnable_parameters' defined in trainer_params for physical training."
+            )
+
         # Create learnable parameter tensors
         learnable_params: List[Tensor] = []
         for param in learnable_params_config:
@@ -121,10 +125,10 @@ class TrainerFactory:
             initial_guess = param["initial_guess"]
             # Wrap in PhiFlow Tensor
             learnable_params.append(math.tensor(initial_guess))
-        
+
         # Create trainer with model and params
         trainer = PhysicalTrainer(config, model, learnable_params)
-        
+
         return trainer
 
     @staticmethod
@@ -137,17 +141,17 @@ class TrainerFactory:
     ) -> DataLoader:
         """
         Create DataLoader for synthetic training with optional augmentation.
-        
+
         DEPRECATED: Use DataLoaderFactory.create(config, mode='tensor') instead.
         This method is kept for backward compatibility but will be removed in a future version.
-        
+
         Args:
             config: Full configuration dictionary
             sim_indices: Simulation indices to load (defaults to train_sim from config)
             batch_size: Batch size (defaults to config batch_size)
             shuffle: Whether to shuffle data
             use_sliding_window: Whether to use sliding window (default True for Phase 1)
-            
+
         Returns:
             DataLoader with TensorDataset
         """
@@ -155,13 +159,13 @@ class TrainerFactory:
             "create_data_loader_for_synthetic is deprecated. "
             "Use DataLoaderFactory.create(config, mode='tensor') instead.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
-        
+
         # Use new DataLoaderFactory
         return DataLoaderFactory.create(
             config=config,
-            mode='tensor',
+            mode="tensor",
             sim_indices=sim_indices,
             batch_size=batch_size,
             shuffle=shuffle,
@@ -176,15 +180,15 @@ class TrainerFactory:
     ) -> FieldDataset:
         """
         Create FieldDataset for physical training (returns fields, not tensors).
-        
+
         DEPRECATED: Use DataLoaderFactory.create(config, mode='field') instead.
         This method is kept for backward compatibility but will be removed in a future version.
-        
+
         Args:
             config: Full configuration dictionary
             sim_indices: Simulation indices to load (defaults to train_sim from config)
             use_sliding_window: Whether to use sliding window (default True for Phase 1)
-            
+
         Returns:
             FieldDataset (new simplified version)
         """
@@ -192,13 +196,13 @@ class TrainerFactory:
             "create_dataset_for_physical is deprecated. "
             "Use DataLoaderFactory.create(config, mode='field') instead.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
-        
+
         # Use new DataLoaderFactory which returns FieldDataset directly
         return DataLoaderFactory.create(
             config=config,
-            mode='field',
+            mode="field",
             sim_indices=sim_indices,
             use_sliding_window=use_sliding_window,
             batch_size=None,  # Physical training doesn't use batching
@@ -208,21 +212,21 @@ class TrainerFactory:
     def generate_augmented_cache(
         config: Dict[str, Any],
         model: torch.nn.Module,
-        model_type: str = 'synthetic',
+        model_type: str = "synthetic",
         force_regenerate: bool = False,
     ) -> int:
         """
         Generate and cache augmented predictions for training.
-        
+
         DEPRECATED: This method is deprecated and not yet updated for the new architecture.
         Cache generation is now handled differently in hybrid training.
-        
+
         Args:
             config: Full configuration dictionary
             model: Trained model to generate predictions
             model_type: 'synthetic' or 'physical'
             force_regenerate: If True, clear existing cache and regenerate
-            
+
         Returns:
             Number of samples generated and cached
         """
@@ -230,7 +234,7 @@ class TrainerFactory:
             "generate_augmented_cache is deprecated and not yet updated for the new architecture. "
             "Cache generation is now handled differently in hybrid training.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
         raise NotImplementedError(
             "generate_augmented_cache is not yet implemented in the new architecture. "
@@ -241,28 +245,30 @@ class TrainerFactory:
     def create_hybrid_trainer(config: Dict[str, Any]):
         """
         Create a hybrid trainer that alternates between synthetic and physical training.
-        
+
         Args:
             config: Full configuration dictionary
-            
+
         Returns:
             HybridTrainer instance configured with both models
         """
         from src.training.hybrid import HybridTrainer
-        
+
         logger.info("Creating hybrid trainer...")
-        
+
         # Create synthetic model
         synthetic_model = ModelFactory.create_synthetic_model(config)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         synthetic_model.to(device)
-        
+
         # Create physical model and learnable parameters
         physical_model = ModelFactory.create_physical_model(config)
-        
+
         # Extract learnable parameters from config (same as _create_physical_trainer)
-        learnable_params_config = config["trainer_params"].get("learnable_parameters", [])
-        
+        learnable_params_config = config["trainer_params"].get(
+            "learnable_parameters", []
+        )
+
         # Create learnable parameter tensors (empty list if none defined, e.g., for advection)
         learnable_params: List[Tensor] = []
         for param in learnable_params_config:
@@ -270,7 +276,7 @@ class TrainerFactory:
             initial_guess = param["initial_guess"]
             # Wrap in PhiFlow Tensor
             learnable_params.append(math.tensor(initial_guess))
-        
+
         # Create hybrid trainer
         hybrid_trainer = HybridTrainer(
             config=config,
@@ -278,7 +284,7 @@ class TrainerFactory:
             physical_model=physical_model,
             learnable_params=learnable_params,
         )
-        
+
         logger.info("Hybrid trainer created successfully")
         return hybrid_trainer
 

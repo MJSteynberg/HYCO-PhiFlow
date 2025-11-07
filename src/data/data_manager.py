@@ -61,7 +61,7 @@ class DataManager:
                       (e.g., "data/cache")
             config: Configuration dictionary containing dataset parameters
             auto_clear_invalid: Whether to automatically remove invalid cache files
-        
+
         Note: Cache creation and validation are always enabled (hardcoded).
         """
         self.raw_data_dir = Path(raw_data_dir)

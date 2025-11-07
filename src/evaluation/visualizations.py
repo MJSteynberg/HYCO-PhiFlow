@@ -202,7 +202,9 @@ def create_comparison_gif_from_specs(
     channel_idx = 0
 
     for field_name, num_channels in field_specs.items():
-        logger.debug(f"Creating animation for '{field_name}' ({num_channels} channels)...")
+        logger.debug(
+            f"Creating animation for '{field_name}' ({num_channels} channels)..."
+        )
 
         # Extract field data
         pred_field = prediction[:, channel_idx : channel_idx + num_channels, :, :]
@@ -913,7 +915,9 @@ def plot_keyframes_as_svgs(
     for frame_idx in keyframe_indices:
         # Plot Ground Truth
         fig_gt, ax_gt = plt.subplots(figsize=(6, 4))
-        im_gt = ax_gt.imshow(gt_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
+        im_gt = ax_gt.imshow(
+            gt_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower"
+        )
         ax_gt.set_title(f"Ground Truth: {field_label} at t={frame_idx}")
         ax_gt.set_xticks([])
         ax_gt.set_yticks([])
@@ -924,7 +928,9 @@ def plot_keyframes_as_svgs(
 
         # Plot Prediction
         fig_pred, ax_pred = plt.subplots(figsize=(6, 4))
-        im_pred = ax_pred.imshow(pred_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
+        im_pred = ax_pred.imshow(
+            pred_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower"
+        )
         ax_pred.set_title(f"Prediction: {field_label} at t={frame_idx}")
         ax_pred.set_xticks([])
         ax_pred.set_yticks([])
@@ -936,7 +942,9 @@ def plot_keyframes_as_svgs(
         # Plot Difference
         if show_difference:
             fig_diff, ax_diff = plt.subplots(figsize=(6, 4))
-            im_diff = ax_diff.imshow(diff_np[frame_idx], cmap="hot", vmin=0, vmax=diff_vmax, origin="lower")
+            im_diff = ax_diff.imshow(
+                diff_np[frame_idx], cmap="hot", vmin=0, vmax=diff_vmax, origin="lower"
+            )
             ax_diff.set_title(f"Difference: {field_label} at t={frame_idx}")
             ax_diff.set_xticks([])
             ax_diff.set_yticks([])
@@ -985,7 +993,7 @@ def plot_keyframes_as_svgs_multi_field(
 
         # Create subdirectory for this field's SVGs
         field_save_dir = save_dir / f"{field_name}_keyframes_svg"
-        
+
         # Create plot
         plot_keyframes_as_svgs(
             pred_field,

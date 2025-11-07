@@ -59,10 +59,10 @@ class FieldTrainer(AbstractTrainer):
     """
 
     def __init__(
-        self, 
+        self,
         config: Dict[str, Any],
         model: Any,  # PhysicalModel instance
-        learnable_params: List[torch.nn.Parameter]
+        learnable_params: List[torch.nn.Parameter],
     ):
         """
         Initialize field trainer with model and learnable parameters.
@@ -84,23 +84,21 @@ class FieldTrainer(AbstractTrainer):
 
     @abstractmethod
     def _train_sample(
-        self, 
-        initial_fields: Dict[str, Field], 
-        target_fields: Dict[str, Field]
+        self, initial_fields: Dict[str, Field], target_fields: Dict[str, Field]
     ) -> float:
         """
         Train on a single sample.
-        
+
         This method should:
         1. Run simulation from initial_fields
         2. Compute loss against target_fields
         3. Perform backward pass and optimization step
         4. Return loss value
-        
+
         Args:
             initial_fields: Dict[field_name, Field] for initial state
             target_fields: Dict[field_name, List[Field]] for target trajectory
-        
+
         Returns:
             Loss value for this sample
         """
@@ -111,12 +109,12 @@ class FieldTrainer(AbstractTrainer):
         Execute training for specified number of epochs with provided data.
 
         NEW SIGNATURE: Data is passed explicitly, not held internally.
-        
+
         Args:
             data_source: Iterable yielding (initial_fields, target_fields) tuples
                         Note: NO weights - all samples treated equally!
             num_epochs: Number of epochs to train
-        
+
         Returns:
             Dictionary with training results including losses and metrics
         """
@@ -128,44 +126,39 @@ class FieldTrainer(AbstractTrainer):
         logger.info(f"Epochs: {num_epochs}")
         logger.info(f"{'='*60}\n")
 
-        results = {
-            "train_losses": [],
-            "epochs": [],
-            "num_epochs": num_epochs
-        }
+        results = {"train_losses": [], "epochs": [], "num_epochs": num_epochs}
         for epoch in range(num_epochs):
             epoch_loss = 0.0
             num_samples = 0
-            
+
             # Iterate through data source
-            sample = data_source[0] # For now only use sample 0.
+            sample = data_source[0]  # For now only use sample 0.
             # Unpack sample (2-tuple: no weights!)
             initial_fields, target_fields = sample
-            
+
             # Train on this sample
             loss = self._train_sample(initial_fields, target_fields)
-            
+
             epoch_loss += loss
             num_samples += 1
-                
+
             # Compute average loss for epoch
-            avg_loss = epoch_loss / num_samples if num_samples > 0 else float('inf')
+            avg_loss = epoch_loss / num_samples if num_samples > 0 else float("inf")
             results["train_losses"].append(avg_loss)
             results["epochs"].append(epoch + 1)
             self.training_history.append(avg_loss)
-            
+
             logger.info(f"Epoch {epoch + 1}/{num_epochs} - Loss: {avg_loss:.6f}")
-        
+
         self.final_loss = results["train_losses"][-1]
         results["final_loss"] = self.final_loss
-        
+
         logger.info(f"\n{'='*60}")
         logger.info(f"Training Complete!")
         logger.info(f"Final Loss: {self.final_loss:.6f}")
         logger.info(f"{'='*60}\n")
 
         return results
-
 
     # =========================================================================
     # PhiFlow-Specific Utilities (kept for backward compatibility)
@@ -207,4 +200,3 @@ class FieldTrainer(AbstractTrainer):
         logger.info(f"Loaded training results from {path}")
 
         return results
-

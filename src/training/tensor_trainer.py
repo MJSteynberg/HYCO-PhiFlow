@@ -78,10 +78,10 @@ class TensorTrainer(AbstractTrainer):
             self.model = model.to(self.device)
         else:
             self.model = None
-        
+
         # Create optimizer for the model (only if model exists)
         self.optimizer = self._create_optimizer() if model is not None else None
-        
+
         # Checkpoint path (can be set by subclass)
         self.checkpoint_path: Optional[Path] = None
 
@@ -92,14 +92,16 @@ class TensorTrainer(AbstractTrainer):
     def _create_optimizer(self) -> torch.optim.Optimizer:
         """
         Create optimizer for the model.
-        
+
         Can be overridden by subclasses for custom optimizer configuration.
         Default: Adam with learning rate from config.
-        
+
         Returns:
             PyTorch optimizer instance
         """
-        learning_rate = self.config.get("trainer_params", {}).get("learning_rate", 0.001)
+        learning_rate = self.config.get("trainer_params", {}).get(
+            "learning_rate", 0.001
+        )
         return torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
     @abstractmethod
@@ -128,11 +130,11 @@ class TensorTrainer(AbstractTrainer):
         Execute training for specified number of epochs with provided data.
 
         NEW SIGNATURE: Data is passed explicitly, not held internally.
-        
+
         Args:
             data_source: PyTorch DataLoader yielding (input, target) tuples
             num_epochs: Number of epochs to train
-        
+
         Returns:
             Dictionary with training results including losses and metrics
         """
@@ -144,23 +146,31 @@ class TensorTrainer(AbstractTrainer):
             "epochs": [],
             "num_epochs": num_epochs,
             "best_epoch": 0,
-            "best_val_loss": float("inf")
+            "best_val_loss": float("inf"),
         }
 
         # Only log if not suppressed in config
-        if not self.config.get("trainer_params", {}).get("suppress_training_logs", False):
+        if not self.config.get("trainer_params", {}).get(
+            "suppress_training_logs", False
+        ):
             logger.info(f"Training on {self.device} for {num_epochs} epochs")
 
         # Get checkpoint configuration (save_best_only is always true - hardcoded)
-        checkpoint_freq = self.config.get("trainer_params", {}).get("checkpoint_freq", 10)
+        checkpoint_freq = self.config.get("trainer_params", {}).get(
+            "checkpoint_freq", 10
+        )
 
         # Create progress bar for epochs (disable if suppress_training_logs is True)
-        disable_tqdm = self.config.get("trainer_params", {}).get("suppress_training_logs", False)
-        pbar = tqdm(range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm)
+        disable_tqdm = self.config.get("trainer_params", {}).get(
+            "suppress_training_logs", False
+        )
+        pbar = tqdm(
+            range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
+        )
 
         for epoch in pbar:
             start_time = time.time()
-            
+
             # Training
             train_loss = self._train_epoch_with_data(data_source)
             results["train_losses"].append(train_loss)
@@ -172,36 +182,42 @@ class TensorTrainer(AbstractTrainer):
                 self.best_epoch = epoch + 1
                 results["best_epoch"] = self.best_epoch
                 results["best_val_loss"] = self.best_val_loss
-                
+
                 # Save best model (only if checkpoint_path is set)
                 if self.checkpoint_path is not None:
                     self.save_checkpoint(
                         epoch=epoch,
                         loss=train_loss,
-                        optimizer_state=self.optimizer.state_dict() if self.optimizer else None,
-                        is_best=True
+                        optimizer_state=(
+                            self.optimizer.state_dict() if self.optimizer else None
+                        ),
+                        is_best=True,
                     )
 
             epoch_time = time.time() - start_time
-            
+
             # Update progress bar
             postfix_dict = {
                 "train_loss": f"{train_loss:.6f}",
-                "time": f"{epoch_time:.2f}s"
+                "time": f"{epoch_time:.2f}s",
             }
-            
+
             if self.best_epoch > 0:
                 postfix_dict["best_epoch"] = self.best_epoch
-            
+
             pbar.set_postfix(postfix_dict)
 
             # Note: Periodic checkpoints disabled - save_best_only is hardcoded to True
 
         final_loss = results["train_losses"][-1]
-        
+
         # Only log if not suppressed in config
-        if not self.config.get("trainer_params", {}).get("suppress_training_logs", False):
-            logger.info(f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}")
+        if not self.config.get("trainer_params", {}).get(
+            "suppress_training_logs", False
+        ):
+            logger.info(
+                f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}"
+            )
 
         results["final_loss"] = final_loss
         return results

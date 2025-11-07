@@ -29,11 +29,11 @@ class ColoredFormatter(logging.Formatter):
 
     def format(self, record):
         # Shorten module name to last component
-        name_parts = record.name.split('.')
+        name_parts = record.name.split(".")
         if len(name_parts) > 2:
             # Keep only the last 2 parts (e.g., training.synthetic_trainer)
-            record.name = '.'.join(name_parts[-2:])
-        
+            record.name = ".".join(name_parts[-2:])
+
         log_color = self.COLORS.get(record.levelname, self.RESET)
         record.levelname = f"{log_color}{record.levelname}{self.RESET}"
         return super().format(record)
@@ -77,9 +77,7 @@ def setup_logger(
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         # Simplified format: just [module] LEVEL: message
-        console_format = ColoredFormatter(
-            "[%(name)s] %(levelname)s: %(message)s"
-        )
+        console_format = ColoredFormatter("[%(name)s] %(levelname)s: %(message)s")
         console_handler.setFormatter(console_format)
         logger.addHandler(console_handler)
 

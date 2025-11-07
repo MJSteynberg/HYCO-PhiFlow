@@ -24,7 +24,7 @@ def _burgers_physics_step(
     """
     # Advect velocity (self-advection: u * grad(u))
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
-    
+
     # Diffuse velocity (viscosity: nu * laplace(u))
     velocity = diffuse.explicit(velocity, nu, dt=dt)
 
@@ -69,11 +69,11 @@ class BurgersModel(PhysicalModel):
             extrapolation.PERIODIC,  # Use periodic boundaries
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
-            bounds=self.domain
+            bounds=self.domain,
         )
         velocity_0 = math.expand(velocity_0, b)
         return {"velocity": velocity_0}
-    
+
     def get_random_state(self) -> Dict[str, Field]:
         """
         Returns a random initial state of (noisy velocity).
@@ -92,7 +92,7 @@ class BurgersModel(PhysicalModel):
             extrapolation.PERIODIC,  # Use periodic boundaries
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
-            bounds=self.domain
+            bounds=self.domain,
         )
         return {"velocity": velocity_0}
 

@@ -145,7 +145,7 @@ class SmokeModel(PhysicalModel):
         # as inflow_0 (batch=1) will broadcast to batch=N
 
         return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
-    
+
     def get_random_state(self) -> Dict[str, Field]:
         """
         Returns an initial state of (zero velocity, zero density).

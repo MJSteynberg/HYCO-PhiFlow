@@ -7,4 +7,4 @@ synthetic and physical model training with cross-model data augmentation.
 
 from .trainer import HybridTrainer
 
-__all__ = ['HybridTrainer']
+__all__ = ["HybridTrainer"]

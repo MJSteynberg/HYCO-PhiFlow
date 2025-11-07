@@ -248,7 +248,9 @@ def track_memory(label: str = "operation", device: int = 0, print_output: bool =
         gpu_delta = end_gpu - start_gpu
 
         if print_output:
-            logger.info(f"[Memory] {label}: CPU {cpu_delta:+.1f} MB, GPU {gpu_delta:+.1f} MB")
+            logger.info(
+                f"[Memory] {label}: CPU {cpu_delta:+.1f} MB, GPU {gpu_delta:+.1f} MB"
+            )
             if torch.cuda.is_available():
                 peak_gpu = torch.cuda.max_memory_allocated(device) / 1024 / 1024
                 logger.info(f"         Peak GPU: {peak_gpu:.1f} MB")
