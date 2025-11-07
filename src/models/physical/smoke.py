@@ -1,18 +1,21 @@
 # src/models/physical/smoke_model.py
 
-import torch
-from phi.torch.flow import *
-from phi.math import jit_compile, batch
-from .base import PhysicalModel  # <-- Import our new base class
-from src.models.registry import ModelRegistry
-import random
 from typing import Dict, Any
+import numpy as np
+import random
+
+# --- PhiFlow Imports ---
+from phi.torch.flow import *
+from phi.math import Shape, Tensor, batch, math
+
+# --- Repo Imports ---
+from .base import PhysicalModel
+from src.models.registry import ModelRegistry
 
 
 # --- JIT-Compiled Physics Function ---
-# (This is kept separate for performance and clarity)
 @jit_compile
-def _smoke_physics_step(velocity, density, inflow, domain, dt, buoyancy_factor, nu):
+def _smoke_physics_step(velocity: StaggeredGrid, density: CenteredGrid, inflow: CenteredGrid, domain: Box, dt: float, buoyancy_factor: float, nu: float) -> tuple[Field, Field]:
     """
     Performs one physics-based smoke simulation step.
 
@@ -77,9 +80,17 @@ class SmokeModel(PhysicalModel):
             "type": float,
             "default": 0.1,
         },
+        "inflow_rand_x_range": {
+            "type": list,
+            "default": [0.2, 0.8],
+        },
+        "inflow_rand_y_range": {
+            "type": list,
+            "default": [0.15, 0.25],
+        },
     }
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict):
         """
         Initializes the smoke model.
 
@@ -88,28 +99,13 @@ class SmokeModel(PhysicalModel):
         # Call parent init to handle standard parameters
         super().__init__(config)
 
-        # Handle inflow center (special logic not in PDE_PARAMETERS)
-        pde_params = config.get("pde_params", {})
-        inflow_center = pde_params.get("inflow_center", None)
-        inflow_rand_x_range = pde_params.get("inflow_rand_x_range", [0.2, 0.8])
-        inflow_rand_y_range = pde_params.get("inflow_rand_y_range", [0.15, 0.25])
-
-        if inflow_center is None:
-            rand_x = self.domain.size[0] * (
-                inflow_rand_x_range[0] + inflow_rand_x_range[1] * random.random()
-            )
-            rand_y = self.domain.size[1] * (
-                inflow_rand_y_range[0] + inflow_rand_y_range[1] * random.random()
-            )
-            inflow_center = (rand_x, rand_y)
-            print(f"Generated new inflow position: ({rand_x:.1f}, {rand_y:.1f})")
-
-        self.inflow_center = math.tensor(inflow_center, channel(vector="x,y"))
-
     def get_initial_state(self) -> Dict[str, Field]:
         """
         Returns an initial state of (zero velocity, zero density).
         """
+        # Generate random inflow position within specified ranges
+        inflow_center = self._get_inflow_center()
+
         b = batch(batch=self.batch_size)
 
         velocity_0 = StaggeredGrid(
@@ -120,6 +116,7 @@ class SmokeModel(PhysicalModel):
             bounds=self.domain,
         )
         velocity_0 = math.expand(velocity_0, b)
+
         density_0 = CenteredGrid(
             0,
             extrapolation.BOUNDARY,
@@ -129,20 +126,15 @@ class SmokeModel(PhysicalModel):
         )
         density_0 = math.expand(density_0, b)
 
-        INFLOW_SHAPE = Sphere(center=self.inflow_center, radius=self.inflow_radius)
+        inflow_shape = Sphere(center=inflow_center, radius=self.inflow_radius)
         inflow_0 = self.inflow_rate * CenteredGrid(
-            INFLOW_SHAPE,
+            inflow_shape,
             extrapolation.BOUNDARY,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-
-        # Add a batch dimension for broadcasting
         inflow_0 = math.expand(inflow_0, b)
-
-        # No more batch size check against inflow,
-        # as inflow_0 (batch=1) will broadcast to batch=N
 
         return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
 
@@ -150,26 +142,28 @@ class SmokeModel(PhysicalModel):
         """
         Returns an initial state of (zero velocity, zero density).
         """
-        b = batch(batch=self.batch_size)
+        # Generate random inflow position within specified ranges
+        inflow_center = self._get_inflow_center()
 
         velocity_0 = StaggeredGrid(
-            Noise(scale=0.01),
+            0,
             extrapolation.ZERO,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
+
         density_0 = CenteredGrid(
-            Noise(scale=0.01),
+            0,
             extrapolation.BOUNDARY,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
 
-        INFLOW_SHAPE = Sphere(center=self.inflow_center, radius=self.inflow_radius)
+        inflow_shape = Sphere(center=inflow_center, radius=self.inflow_radius)
         inflow_0 = self.inflow_rate * CenteredGrid(
-            INFLOW_SHAPE,
+            inflow_shape,
             extrapolation.BOUNDARY,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
@@ -178,7 +172,7 @@ class SmokeModel(PhysicalModel):
 
         return {"velocity": velocity_0, "density": density_0, "inflow": inflow_0}
 
-    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
+    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """
@@ -197,3 +191,16 @@ class SmokeModel(PhysicalModel):
             "density": new_density,
             "inflow": current_state["inflow"],
         }
+    
+    def _get_inflow_center(self) -> Tensor:
+        """
+        Computes a random inflow center within the specified ranges.
+        """
+        rand_x = self.domain.size[0] * (
+            self._inflow_rand_x_range[0] + self._inflow_rand_x_range[1] * random.random()
+        )
+        rand_y = self.domain.size[1] * (
+            self._inflow_rand_y_range[0] + self._inflow_rand_y_range[1] * random.random()
+        )
+        inflow_center = (rand_x, rand_y)
+        return math.tensor(inflow_center, channel(vector="x,y"))

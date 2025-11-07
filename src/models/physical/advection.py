@@ -36,11 +36,9 @@ def _advection_step(
 @ModelRegistry.register_physical("AdvectionModel")
 class AdvectionModel(PhysicalModel):
     """
-    Physical model for pure advection with a random prescribed velocity field.
-    The density is transported by a random divergence-free velocity field,
+    Physical model for pure advection with a donut shaped velocity field.
+    The density is transported by a donut shaped velocity field,
     scaled by a learnable advection coefficient.
-
-    This is extremely stable (semi-Lagrangian advection) and perfect for testing.
     """
 
     # Declare PDE-specific parameters
@@ -60,13 +58,12 @@ class AdvectionModel(PhysicalModel):
         Returns a batched initial state with density and static velocity field.
 
         The velocity field is created once here and will be passed through
-        the state dictionary to each step (like smoke's inflow pattern).
+        the state dictionary to each step.
         """
         # Create a batch shape
         b = batch(batch=self.batch_size)
 
         # Create a nice swirling/rotating velocity field
-        # This creates a smooth divergence-free flow that produces interesting patterns
         def velocity_fn(x, y):
             # Vortex-like pattern: velocity vector depends on position
             center_x = self.domain.size[0] / 2
@@ -135,10 +132,7 @@ class AdvectionModel(PhysicalModel):
         The velocity field is created once here and will be passed through
         the state dictionary to each step (like smoke's inflow pattern).
         """
-        # Create a batch shape
-
         # Create a nice swirling/rotating velocity field
-        # This creates a smooth divergence-free flow that produces interesting patterns
         def velocity_fn(x, y):
             # Vortex-like pattern: velocity vector depends on position
             center_x = self.domain.size[0] / 2
@@ -174,12 +168,11 @@ class AdvectionModel(PhysicalModel):
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-        # Normalize density to [-1, 1]
         density_0 = math.tanh(2.0 * density_0)
 
         return {"density": density_0, "velocity": velocity_0}
 
-    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
+    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Performs a single simulation step using pure advection.
 
@@ -197,9 +190,3 @@ class AdvectionModel(PhysicalModel):
         )
         # Velocity field remains static (like smoke's inflow)
         return {"density": new_density, "velocity": current_state["velocity"]}
-
-    def __repr__(self):
-        return (
-            f"AdvectionModel(resolution={self.resolution}, "
-            f"dt={self.dt}, advection_coeff={self.advection_coeff})"
-        )

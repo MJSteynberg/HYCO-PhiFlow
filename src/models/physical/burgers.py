@@ -1,10 +1,15 @@
-import torch
-from phi.torch.flow import *
-from phi.math import batch
+# src/models/physical/burgers.py
 
-from .base import PhysicalModel  # <-- Assuming this base class exists
-from src.models.registry import ModelRegistry
 from typing import Dict
+import numpy as np
+
+# --- PhiFlow Imports ---
+from phi.torch.flow import *
+from phi.math import Shape, Tensor, batch, math
+
+# --- Repo Imports ---
+from .base import PhysicalModel
+from src.models.registry import ModelRegistry
 
 
 @jit_compile
@@ -17,7 +22,7 @@ def _burgers_physics_step(
     Args:
         velocity (CenteredGrid): Current velocity field.
         dt (float): Time step.
-        nu (Tensor): Viscosity parameter (must support gradient tracking).
+        nu (Tensor): Viscosity parameter.
 
     Returns:
         CenteredGrid: new_velocity
@@ -48,6 +53,10 @@ class BurgersModel(PhysicalModel):
             "default": 0.01,
         }
     }
+
+    def __init__(self, config: dict):
+        """Initialize the Burgers model."""
+        super().__init__(config)
 
     def get_initial_state(self) -> Dict[str, Field]:
         """
@@ -96,7 +105,7 @@ class BurgersModel(PhysicalModel):
         )
         return {"velocity": velocity_0}
 
-    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
+    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Performs a single simulation step.
         """

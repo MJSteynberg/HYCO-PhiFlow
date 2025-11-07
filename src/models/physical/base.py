@@ -3,8 +3,10 @@
 from abc import ABC, abstractmethod
 from phi.flow import Field, Box
 from phi.math import Shape, spatial
-
+from src.utils.logger import get_logger
 from typing import Dict, Any, Callable, Optional
+import torch
+import logging
 
 
 class PhysicalModel(ABC):
@@ -22,7 +24,7 @@ class PhysicalModel(ABC):
     Example:
         class BurgersModel(PhysicalModel):
             PDE_PARAMETERS = {
-                'nu': {'type': float, 'default': 0.01, 'validator': lambda x: x > 0}
+                'nu': {'type': float, 'default': 0.01}
             }
     """
 
@@ -41,36 +43,33 @@ class PhysicalModel(ABC):
                 - pde_params: Dict with model-specific parameters
         """
         # Parse common configuration
-        self.domain = self._parse_domain(config.get("domain", {}))
-        self.resolution = self._parse_resolution(config.get("resolution", {}))
-        self.dt = float(config.get("dt", 0.1))
+        self.domain = self._parse_domain(config["domain"])
+        self.resolution = self._parse_resolution(config["resolution"])
+        self.dt = float(config["dt"])
 
         # Parse batch_size from pde_params (default: 1)
-        pde_params = config.get("pde_params", {})
-        self.batch_size = int(pde_params.get("batch_size", 1))
+        pde_params = config["pde_params"]
+        self.batch_size = int(pde_params['batch_size'])
 
         # Parse and validate PDE-specific parameters
         self._parse_pde_parameters(pde_params)
 
-        # Use logger instead of print to avoid Unicode issues on Windows
-        from src.utils.logger import get_logger
-
-        logger = get_logger(__name__)
+        self.logger = get_logger(__name__)
         # Simple string representation to avoid Unicode superscript issues
-        logger.info(
+        self.logger.info(
             f"Initialized {self.__class__.__name__} with resolution={tuple(self.resolution.sizes)}, dt={self.dt}"
         )
 
     def _parse_domain(self, domain_config: Dict[str, Any]) -> Box:
         """Parse domain configuration into a Box object."""
-        size_x = domain_config.get("size_x", 100)
-        size_y = domain_config.get("size_y", 100)
+        size_x = domain_config["size_x"]
+        size_y = domain_config["size_y"]
         return Box(x=size_x, y=size_y)
 
     def _parse_resolution(self, resolution_config: Dict[str, Any]) -> Shape:
         """Parse resolution configuration into a Shape object."""
-        x = resolution_config.get("x", 64)
-        y = resolution_config.get("y", 64)
+        x = resolution_config["x"]
+        y = resolution_config["y"]
         return spatial(x=x, y=y)
 
     def _parse_pde_parameters(self, pde_params: Dict[str, Any]):
@@ -81,8 +80,8 @@ class PhysicalModel(ABC):
         """
         for param_name, param_spec in self.PDE_PARAMETERS.items():
             # Extract parameter specification
-            param_type = param_spec.get("type", float)
-            default_value = param_spec.get("default", None)
+            param_type = param_spec["type"]
+            default_value = param_spec["default"]
             # Get value from config or use default
             if param_name in pde_params:
                 value = pde_params[param_name]
@@ -92,8 +91,8 @@ class PhysicalModel(ABC):
             elif default_value is not None:
                 value = default_value
             else:
-                raise ValueError(
-                    f"Required parameter '{param_name}' not found in pde_params"
+                self.logger.error(
+                    f"Missing required PDE parameter '{param_name}'"
                 )
 
             # Store as private attribute
@@ -153,7 +152,7 @@ class PhysicalModel(ABC):
         pass
 
     @abstractmethod
-    def step(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
+    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Advances the simulation by one time step (dt).
 
@@ -169,8 +168,8 @@ class PhysicalModel(ABC):
         pass
 
     def __call__(self, *args) -> tuple[Field, ...]:
-        """Convenience wrapper for the step method."""
-        return self.step(*args)
+        """Convenience wrapper for the forward method."""
+        return self.forward(*args)
 
     def generate_predictions(
         self,
@@ -197,22 +196,18 @@ class PhysicalModel(ABC):
             - initial_fields_list: List of initial field states (Dict[str, Field])
             - target_fields_list: List of predicted rollout states (List[Dict[str, Field]])
         """
-        import torch
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # Calculate number of samples to generate
         num_real = len(real_dataset)
         num_generate = int(num_real * alpha)
 
-        logger.debug(
+        self.logger.debug(
             f"Generating {num_generate} physical predictions "
             f"(alpha={alpha:.2f} * {num_real} real samples)"
         )
 
         if num_generate == 0:
-            logger.warning("Alpha too small, no samples will be generated")
+            self.logger.warning("Alpha too small, no samples will be generated")
             return [], []
 
         # Select proportional indices
@@ -222,18 +217,18 @@ class PhysicalModel(ABC):
         initial_fields_list = []
         target_fields_list = []
 
-        with torch.no_grad():
-            for idx in indices:
-                # Get sample from dataset
-                initial_fields = self.get_random_state()
-                # Perform rollout prediction
-                predictions = self._perform_rollout(initial_fields, num_rollout_steps)
+        for idx in indices:
+            # Get sample from dataset
+            initial_fields = self.get_random_state()
 
-                # Store results
-                initial_fields_list.append(initial_fields)
-                target_fields_list.append(predictions)
+            # Perform rollout prediction
+            predictions = self._perform_rollout(initial_fields, num_rollout_steps)
 
-        logger.debug(f"Generated {len(initial_fields_list)} physical predictions")
+            # Store results
+            initial_fields_list.append(initial_fields)
+            target_fields_list.append(predictions)
+
+        self.logger.debug(f"Generated {len(initial_fields_list)} physical predictions")
 
         return initial_fields_list, target_fields_list
 
@@ -248,11 +243,8 @@ class PhysicalModel(ABC):
         Returns:
             List of predicted field states, one for each step (List[Dict[str, Field]])
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
-
-        logger.debug(f"Performing {num_steps}-step rollout with physical model")
+        self.logger.debug(f"Performing {num_steps}-step rollout with physical model")
 
         # Start from initial state
         current_state = initial_fields
@@ -262,16 +254,14 @@ class PhysicalModel(ABC):
 
         # Perform rollout steps
         for step_num in range(num_steps):
-            try:
-                # Call model's step method
-                current_state = self.step(current_state)
-                # Store the state at this step
-                rollout_states.append(current_state)
-            except Exception as e:
-                logger.warning(f"Rollout failed at step {step_num}/{num_steps}: {e}")
-                # Return states collected so far
-                return rollout_states if rollout_states else [current_state]
+            self.logger.debug(f" Rollout step {step_num + 1}/{num_steps}")
 
+            # Call model's forward method
+            current_state = self.forward(current_state)
+            
+            # Store the state at this step
+            rollout_states.append(current_state)
+    
         return rollout_states
 
     @staticmethod
