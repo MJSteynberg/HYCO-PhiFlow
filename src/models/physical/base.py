@@ -273,6 +273,8 @@ class PhysicalModel(ABC):
         """
         if sample_count >= total_count:
             return list(range(total_count))
+        elif sample_count <= 0:
+            return []
 
         # Calculate step size for proportional sampling
         step = total_count / sample_count

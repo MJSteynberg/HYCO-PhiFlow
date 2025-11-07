@@ -15,12 +15,12 @@ from src.models.registry import ModelRegistry
 
 # --- JIT-Compiled Physics Function ---
 @jit_compile
-def _smoke_physics_step(velocity: StaggeredGrid, density: CenteredGrid, inflow: CenteredGrid, domain: Box, dt: float, buoyancy_factor: float, nu: float) -> tuple[Field, Field]:
+def _smoke_physics_step(velocity: CenteredGrid, density: CenteredGrid, inflow: CenteredGrid, domain: Box, dt: float, buoyancy_factor: float, nu: float) -> tuple[Field, Field]:
     """
     Performs one physics-based smoke simulation step.
 
     Args:
-        velocity (StaggeredGrid): Current velocity field.
+        velocity (CenteredGrid): Current velocity field.
         density (CenteredGrid): Current density field.
         inflow (CenteredGrid): Inflow mask.
         domain (Box): Simulation domain.
@@ -108,8 +108,8 @@ class SmokeModel(PhysicalModel):
 
         b = batch(batch=self.batch_size)
 
-        velocity_0 = StaggeredGrid(
-            0,
+        velocity_0 = CenteredGrid(
+            (0, 0),
             extrapolation.ZERO,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
@@ -145,13 +145,14 @@ class SmokeModel(PhysicalModel):
         # Generate random inflow position within specified ranges
         inflow_center = self._get_inflow_center()
 
-        velocity_0 = StaggeredGrid(
-            0,
+        velocity_0 = CenteredGrid(
+            (0, 0),
             extrapolation.ZERO,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
+
 
         density_0 = CenteredGrid(
             0,
