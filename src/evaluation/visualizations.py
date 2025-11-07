@@ -829,6 +829,179 @@ def plot_keyframe_comparison(
     return fig
 
 
+def plot_keyframes_as_svgs(
+    prediction: torch.Tensor,
+    ground_truth: torch.Tensor,
+    field_name: str,
+    save_dir: Union[str, Path],
+    num_keyframes: int = 5,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    show_difference: bool = True,
+) -> None:
+    """
+    Plot evenly-spaced keyframes as individual SVG files.
+
+    Creates separate SVG files for ground truth, prediction, and optionally
+    the absolute difference for a selection of evenly-spaced keyframes.
+
+    Args:
+        prediction: Model prediction tensor, shape [T, C, H, W]
+        ground_truth: Ground truth tensor, shape [T, C, H, W]
+        field_name: Name of the field being visualized
+        save_dir: Directory where the SVG files will be saved
+        num_keyframes: Number of evenly-spaced frames to save (default: 5)
+        vmin: Minimum value for color scale (auto-computed if None)
+        vmax: Maximum value for color scale (auto-computed if None)
+        show_difference: Whether to save difference plots
+    """
+    # Validate inputs
+    if prediction.shape != ground_truth.shape:
+        raise ValueError(
+            f"Shape mismatch: prediction {prediction.shape} != ground_truth {ground_truth.shape}"
+        )
+
+    # Convert to numpy and move to CPU
+    pred_np = prediction.detach().cpu().numpy()
+    gt_np = ground_truth.detach().cpu().numpy()
+
+    # Handle different tensor shapes
+    if pred_np.ndim == 4:  # [T, C, H, W]
+        # For multi-channel data (e.g., 2D velocity), compute magnitude
+        if pred_np.shape[1] == 2:
+            pred_np = np.sqrt(pred_np[:, 0] ** 2 + pred_np[:, 1] ** 2)
+            gt_np = np.sqrt(gt_np[:, 0] ** 2 + gt_np[:, 1] ** 2)
+            field_label = f"{field_name.capitalize()} Magnitude"
+        elif pred_np.shape[1] == 1:
+            pred_np = pred_np[:, 0]
+            gt_np = gt_np[:, 0]
+            field_label = field_name.capitalize()
+        else:
+            raise ValueError(f"Unsupported channel count: {pred_np.shape[1]}")
+    elif pred_np.ndim != 3:  # Should be [T, H, W]
+        raise ValueError(f"Expected 3 or 4 dimensions, got {pred_np.ndim}")
+    else:
+        field_label = field_name.capitalize()
+
+    # Transpose spatial dimensions: PhiFlow uses [x, y] but matplotlib expects [y, x]
+    pred_np = np.transpose(pred_np, (0, 2, 1))  # [T, H, W] -> [T, W, H]
+    gt_np = np.transpose(gt_np, (0, 2, 1))
+
+    num_frames = pred_np.shape[0]
+
+    # Select evenly-spaced keyframe indices
+    if num_frames < num_keyframes:
+        keyframe_indices = list(range(num_frames))
+    else:
+        keyframe_indices = np.linspace(0, num_frames - 1, num_keyframes, dtype=int)
+
+    # Compute global min/max for consistent color scale
+    if vmin is None:
+        vmin = min(gt_np.min(), pred_np.min())
+    if vmax is None:
+        vmax = max(gt_np.max(), pred_np.max())
+
+    # Compute difference
+    diff_np = np.abs(gt_np - pred_np)
+    diff_vmax = diff_np.max()
+
+    # Create save directory
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # Plot and save each keyframe
+    for frame_idx in keyframe_indices:
+        # Plot Ground Truth
+        fig_gt, ax_gt = plt.subplots(figsize=(6, 4))
+        im_gt = ax_gt.imshow(gt_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
+        ax_gt.set_title(f"Ground Truth: {field_label} at t={frame_idx}")
+        ax_gt.set_xticks([])
+        ax_gt.set_yticks([])
+        plt.colorbar(im_gt, ax=ax_gt)
+        gt_save_path = save_dir / f"frame_{frame_idx:04d}_gt.svg"
+        plt.savefig(gt_save_path, format="svg", bbox_inches="tight")
+        plt.close(fig_gt)
+
+        # Plot Prediction
+        fig_pred, ax_pred = plt.subplots(figsize=(6, 4))
+        im_pred = ax_pred.imshow(pred_np[frame_idx], cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
+        ax_pred.set_title(f"Prediction: {field_label} at t={frame_idx}")
+        ax_pred.set_xticks([])
+        ax_pred.set_yticks([])
+        plt.colorbar(im_pred, ax=ax_pred)
+        pred_save_path = save_dir / f"frame_{frame_idx:04d}_pred.svg"
+        plt.savefig(pred_save_path, format="svg", bbox_inches="tight")
+        plt.close(fig_pred)
+
+        # Plot Difference
+        if show_difference:
+            fig_diff, ax_diff = plt.subplots(figsize=(6, 4))
+            im_diff = ax_diff.imshow(diff_np[frame_idx], cmap="hot", vmin=0, vmax=diff_vmax, origin="lower")
+            ax_diff.set_title(f"Difference: {field_label} at t={frame_idx}")
+            ax_diff.set_xticks([])
+            ax_diff.set_yticks([])
+            plt.colorbar(im_diff, ax=ax_diff)
+            diff_save_path = save_dir / f"frame_{frame_idx:04d}_diff.svg"
+            plt.savefig(diff_save_path, format="svg", bbox_inches="tight")
+            plt.close(fig_diff)
+
+    logger.debug(f"{len(keyframe_indices)} keyframe SVGs saved to {save_dir}")
+
+
+def plot_keyframes_as_svgs_multi_field(
+    prediction: torch.Tensor,
+    ground_truth: torch.Tensor,
+    field_specs: Dict[str, int],
+    save_dir: Union[str, Path],
+    num_keyframes: int = 5,
+    show_difference: bool = True,
+) -> Dict[str, Path]:
+    """
+    Create keyframe SVGs for multiple fields.
+
+    Args:
+        prediction: Model prediction tensor, shape [T, C_total, H, W]
+        ground_truth: Ground truth tensor, shape [T, C_total, H, W]
+        field_specs: Dictionary mapping field names to channel counts
+        save_dir: Directory where SVG subdirectories will be created
+        num_keyframes: Number of evenly-spaced frames to show
+        show_difference: Whether to generate difference plots
+
+    Returns:
+        Dictionary mapping field names to saved directory paths
+    """
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = {}
+    channel_idx = 0
+
+    for field_name, num_channels in field_specs.items():
+        logger.debug(f"Creating keyframe SVGs for '{field_name}'...")
+
+        # Extract field data
+        pred_field = prediction[:, channel_idx : channel_idx + num_channels, :, :]
+        gt_field = ground_truth[:, channel_idx : channel_idx + num_channels, :, :]
+
+        # Create subdirectory for this field's SVGs
+        field_save_dir = save_dir / f"{field_name}_keyframes_svg"
+        
+        # Create plot
+        plot_keyframes_as_svgs(
+            pred_field,
+            gt_field,
+            field_name,
+            field_save_dir,
+            num_keyframes=num_keyframes,
+            show_difference=show_difference,
+        )
+
+        saved_paths[field_name] = field_save_dir
+        channel_idx += num_channels
+
+    return saved_paths
+
+
 def plot_keyframe_comparison_multi_field(
     prediction: torch.Tensor,
     ground_truth: torch.Tensor,

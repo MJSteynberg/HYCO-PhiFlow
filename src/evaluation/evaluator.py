@@ -26,8 +26,10 @@ from .visualizations import (
     plot_error_vs_time_multi_field,
     plot_keyframe_comparison,
     plot_keyframe_comparison_multi_field,
+    plot_keyframes_as_svgs_multi_field,
     plot_error_heatmap,
     create_evaluation_summary,
+    plot_keyframes_as_svgs
 )
 from src.utils.logger import get_logger
 
@@ -376,6 +378,15 @@ class Evaluator:
                 show_metrics=True,
             )
             saved_paths["keyframes"] = paths
+            svg_paths = plot_keyframes_as_svgs_multi_field(
+                prediction,
+                ground_truth,
+                field_specs,
+                keyframe_dir,
+                num_keyframes=self.num_keyframes,
+                show_difference=True,
+            )
+            saved_paths["keyframes_svg"] = svg_paths
 
         # 4. Error heatmaps (for multi-channel fields)
         if self.save_plots:

@@ -14,14 +14,14 @@ defaults:
   - _self_
 
 run_params:
-  experiment_name: 'advection_experiment'
+  experiment_name: 'advection_experiment_2'
   notes: 'Hybrid training with synthetic model learning from real data only'
   mode: ['train', 'evaluate']  # Options: generate, train, evaluate
   model_type: 'hybrid'  # Options: synthetic, physical, hybrid
 
 model:
   synthetic:
-    model_save_name: 'hybrid_advection_unet_128'
+    model_save_name: 'hybrid_advection_unet_128_2'
 
 generation_params:
   num_simulations: 1
@@ -47,7 +47,7 @@ trainer_params:
   # Physical model learnable parameters (for physical/hybrid)
   learnable_parameters:
     - name: 'advection_coeff'
-      initial_guess: 0.3  # Starting value for optimization
+      initial_guess: 0.9  # Starting value for optimization
   
   # Validation
   validate_every: 10
@@ -66,16 +66,16 @@ trainer_params:
 
   # Hybrid config
   hybrid:
-    num_cycles: 200
-    synthetic_epochs_per_cycle: 1 # More synthetic training
-    physical_epochs_per_cycle: 10   # Physical learns from synthetic
-    warmup_synthetic_epochs: 1000    # Establish synthetic baseline
+    num_cycles: 100
+    synthetic_epochs_per_cycle: 10 # More synthetic training
+    physical_epochs_per_cycle: 1   # Physical learns from synthetic
+    warmup_synthetic_epochs: 1   # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
     real_data_access: 'synthetic_only'
 
   augmentation:
-    alpha: 1.0  # More physics-based augmentation
+    alpha: 3.0  # More physics-based augmentation
 
 evaluation_params:
   test_sim: [0, 1]

@@ -207,8 +207,10 @@ class PhysicalTrainer(FieldTrainer):
                 estimated_tensors = math.minimize(loss_function, solve_params)
             
         except Exception as e:
-            logger.error(f"Optimization failed: {e}")
             estimated_tensors = tuple(self.learnable_params)
+            logger.error(f"Optimization failed: {e}, estimated_tensors {estimated_tensors}")
+            
+
 
         # Compute final loss and return as float
         final_loss = loss_function(*estimated_tensors)

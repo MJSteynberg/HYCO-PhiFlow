@@ -162,12 +162,14 @@ class AdvectionModel(PhysicalModel):
         
         # Create density field with smooth tanh transition
         density_0 = CenteredGrid(
-            Noise(scale=10),
+            Noise(scale=20, smoothness=10.0),
             extrapolation=extrapolation.ZERO_GRADIENT,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
+        # Normalize density to [-1, 1]
+        density_0 = math.tanh(2.0 * density_0)
         
         
         return {"density": density_0, "velocity": velocity_0}
