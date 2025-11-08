@@ -316,7 +316,6 @@ class HybridTrainer(AbstractTrainer):
         Returns:
             List of (input_tensor, target_tensor) tuples
         """
-        t1 = time.time()
         # Create field dataset for physical model (returns PhiFlow Fields)
         field_dataset = self._create_hybrid_dataset(
             self.trainer_config["train_sim"],
@@ -325,21 +324,18 @@ class HybridTrainer(AbstractTrainer):
 
         num_predict_steps = self.trainer_config["num_predict_steps"]
 
-        t3 = time.time()
         # === 1. Batched rollout (already tested above) ===
         initial_fields, predictions = self.physical_model.generate_predictions(
             real_dataset=field_dataset,
             alpha=self.alpha,
             num_rollout_steps=num_predict_steps,
         )
-        t4 = time.time()
 
 
         cfg = ConfigHelper(self.config)
         field_names_input = field_dataset.field_names  # e.g. ['density', 'velocity']
         field_names_target = cfg.get_field_names()     # same order for targets
 
-        t5 = time.time()
         # Pre-create converters for all input and target fields
         input_converters = {name: make_converter(initial_fields[name]) for name in field_names_input}
         target_converters = {name: make_converter(predictions[0][name]) for name in field_names_target}
@@ -368,13 +364,6 @@ class HybridTrainer(AbstractTrainer):
             target_tensor = batched_targets[i].cpu()         # [T, C_all, H, W]
             tensor_predictions.append((input_tensor, target_tensor))
 
-        t6 = time.time()
-
-        t2 = time.time()
-        print("Time taken for one run: ", t2 - t1)
-        print("Time taken for batched rollout: ", t4 - t3)
-        print("Time taken for tensor conversion: ", t6 - t5)
-        input("Pausing here...")
         return tensor_predictions
 
 

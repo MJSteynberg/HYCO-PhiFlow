@@ -58,12 +58,12 @@ class BurgersModel(PhysicalModel):
         """Initialize the Burgers model."""
         super().__init__(config)
 
-    def get_initial_state(self) -> Dict[str, Field]:
+    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Returns an initial state of (noisy velocity).
         We use periodic boundaries as they are common for Burgers.
         """
-        b = batch(batch=self.batch_size)
+        b = batch(batch=batch_size)
 
         temp = StaggeredGrid(
             Noise(scale=20),  # Initialize with noise

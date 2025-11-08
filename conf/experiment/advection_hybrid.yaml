@@ -75,7 +75,7 @@ trainer_params:
     real_data_access: 'synthetic_only'
 
   augmentation:
-    alpha: 3.0  # More physics-based augmentation
+    alpha: 1.0  # More physics-based augmentation
 
 evaluation_params:
   test_sim: [0, 1]

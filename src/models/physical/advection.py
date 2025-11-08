@@ -53,7 +53,7 @@ class AdvectionModel(PhysicalModel):
         """Initialize the advection model."""
         super().__init__(config)
 
-    def get_initial_state(self) -> Dict[str, Field]:
+    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Returns a batched initial state with density and static velocity field.
 
@@ -61,7 +61,7 @@ class AdvectionModel(PhysicalModel):
         the state dictionary to each step.
         """
         # Create a batch shape
-        b = batch(batch=self.batch_size)
+        b = batch(batch=batch_size)
 
         # Create a nice swirling/rotating velocity field
         def velocity_fn(x, y):

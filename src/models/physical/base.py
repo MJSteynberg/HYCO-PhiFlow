@@ -49,7 +49,6 @@ class PhysicalModel(ABC):
 
         # Parse batch_size from pde_params (default: 1)
         pde_params = config["pde_params"]
-        self.batch_size = 1
         # Parse and validate PDE-specific parameters
         self._parse_pde_parameters(pde_params)
 
@@ -122,7 +121,7 @@ class PhysicalModel(ABC):
         setattr(self.__class__, param_name, prop)
 
     @abstractmethod
-    def get_initial_state(self) -> Dict[str, Field]:
+    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Generates a batched initial state (t=0) for the simulation.
 

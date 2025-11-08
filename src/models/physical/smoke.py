@@ -99,14 +99,14 @@ class SmokeModel(PhysicalModel):
         # Call parent init to handle standard parameters
         super().__init__(config)
 
-    def get_initial_state(self) -> Dict[str, Field]:
+    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Returns an initial state of (zero velocity, zero density).
         """
         # Generate random inflow position within specified ranges
         inflow_center = self._get_inflow_center()
 
-        b = batch(batch=self.batch_size)
+        b = batch(batch=batch_size)
 
         velocity_0 = CenteredGrid(
             (0, 0),
