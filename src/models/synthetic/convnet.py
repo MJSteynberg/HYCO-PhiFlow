@@ -1,17 +1,17 @@
-# src/models/synthetic/unet.py
+# src/models/synthetic/convnet.py
 
 from typing import Dict, Any
 import torch
 import torch.nn as nn
-from phiml.nn import u_net
+from phiml.nn import conv_net
 from src.models.registry import ModelRegistry
 from src.models.synthetic.base import SyntheticModel
 
 
-@ModelRegistry.register_synthetic("UNet")
-class UNet(SyntheticModel):
+@ModelRegistry.register_synthetic("ConvNet")
+class ConvNet(SyntheticModel):
     """
-    Tensor-based U-Net for efficient training.
+    Tensor-based ConvNet for efficient training.
 
     Works directly with PyTorch tensors in [batch, channels, height, width] format.
     All Field conversions are handled by DataManager before training.
@@ -24,7 +24,7 @@ class UNet(SyntheticModel):
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initializes the U-Net model.
+        Initializes the ConvNet model.
 
         Args:
             config: Model configuration containing:
@@ -36,14 +36,12 @@ class UNet(SyntheticModel):
         super().__init__(config)
 
         # Get architecture params (with defaults for backwards compatibility)
-        levels = config["synthetic"]['architecture']["levels"]
-        filters = config["synthetic"]['architecture']["filters"]
+        layers = config["synthetic"]['architecture']['layers']
 
-        # Build the U-Net using PhiML's u_net
-        self.net = u_net(
+        # Build the ConvNet using PhiML's conv_net
+        self.net = conv_net(
             in_channels=sum(self.input_specs.values()),
             out_channels=sum(self.output_specs.values()),
-            levels=levels,
-            filters=filters,
+            layers=layers,
             batch_norm=True,
         )

@@ -8,3 +8,6 @@ resolution:
 dt: 0.5
 pde_params:
   advection_coeff: 1.0
+fields: ['density', 'velocity']
+fields_scheme: 'dvv' # d: density, v: velocity
+fields_type: 'DSS' # D: Dynamic, S: Static 

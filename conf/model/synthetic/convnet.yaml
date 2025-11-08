@@ -1,8 +1,7 @@
-name: 'UNet'
+name: 'ConvNet'
 model_path: 'results/models'
 model_save_name: ???  # Must be specified
 
 architecture:
-  levels: 4
-  filters: 64
+  layers: [64]
   batch_norm: true

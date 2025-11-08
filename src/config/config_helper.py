@@ -189,6 +189,17 @@ class ConfigHelper:
             input_specs = synthetic_config.get("input_specs", {})
             output_specs = synthetic_config.get("output_specs", {})
 
+            input_specs = {
+                field: self.model_config['physical']['fields_scheme'].lower().count(field[0].lower())
+                for i, field in enumerate(self.model_config['physical']['fields'])
+                if field
+            }
+            output_specs = {
+            field: self.model_config['physical']['fields_scheme'].lower().count(field[0].lower())
+            for i, field in enumerate(self.model_config['physical']['fields'])
+            if field and self.model_config['physical']['fields_type'][i].upper() == 'D'
+            }
+
             # Dynamic = output fields
             dynamic_fields = list(output_specs.keys())
 
@@ -196,6 +207,8 @@ class ConfigHelper:
             static_fields = [
                 field for field in input_specs.keys() if field not in output_specs
             ]
+
+            print(dynamic_fields, static_fields)
 
             return dynamic_fields, static_fields
 

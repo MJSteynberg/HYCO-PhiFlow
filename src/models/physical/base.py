@@ -49,7 +49,7 @@ class PhysicalModel(ABC):
 
         # Parse batch_size from pde_params (default: 1)
         pde_params = config["pde_params"]
-        self.batch_size = int(pde_params['batch_size'])
+        self.batch_size = 1
 
         # Parse and validate PDE-specific parameters
         self._parse_pde_parameters(pde_params)

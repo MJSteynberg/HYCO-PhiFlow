@@ -420,7 +420,6 @@ class HybridTrainer(AbstractTrainer):
             alpha=self.alpha,
             device=str(self.device),
             batch_size=batch_size,
-            num_workers=0,
         )
 
         # Convert to list of tuples: [(input1, target1), (input2, target2), ...]

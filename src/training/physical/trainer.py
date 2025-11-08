@@ -169,7 +169,7 @@ class PhysicalTrainer(FieldTrainer):
             current_state = initial_fields
 
             for step in range(self.num_predict_steps):
-                current_state = self.model.step(current_state)
+                current_state = self.model.forward(current_state)
 
                 # 3. Calculate L2 loss for this step
                 step_loss = 0.0

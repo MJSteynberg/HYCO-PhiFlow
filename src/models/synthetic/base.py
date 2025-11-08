@@ -1,13 +1,13 @@
 # In src/models/synthetic/base.py
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from abc import ABC
+from typing import Dict, Any
 
 import torch.nn as nn
-from phi.field import Field, StaggeredGrid, CenteredGrid, stack, native_call
-from phi.math import math, channel
-from phi import field as phi_field
-from phi.field import native_call
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+import logging
 
 
 class SyntheticModel(nn.Module, ABC):
@@ -35,25 +35,47 @@ class SyntheticModel(nn.Module, ABC):
         """
         super().__init__()
         self.config = config
+        self.logger = logging.getLogger(__name__)
 
-        # Get specs from config, default to empty dict if not provided
-        self.INPUT_SPECS: Dict[str, int] = config.get("input_specs", {})
-        self.OUTPUT_SPECS: Dict[str, int] = config.get("output_specs", {})
+        self.input_specs = {
+        field: config['physical']['fields_scheme'].lower().count(field[0].lower())
+        for field in config['physical']['fields']
+        if field
+        }
+        self.output_specs = {
+        field: config['physical']['fields_scheme'].lower().count(field[0].lower())
+        for i, field in enumerate(config['physical']['fields'])
+        if field and config['physical']['fields_type'][i].upper() == 'D'
+        }
+        # Calculate channel counts for padding
+        self.num_dynamic_channels = sum(self.output_specs.values())
+        self.num_static_channels = sum(self.input_specs.values()) - self.num_dynamic_channels
+        
 
-        # Derive the field lists directly from the specs
-        self.INPUT_FIELDS: List[str] = list(self.INPUT_SPECS.keys())
-        self.OUTPUT_FIELDS: List[str] = list(self.OUTPUT_SPECS.keys())
 
-    @abstractmethod
-    def forward(self, *args, **kwargs):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through the model.
+        Forward pass through the synthetic model using an additive residual.
 
-        Subclasses should implement this to handle their specific input/output formats.
-        For tensor-based models: forward(x: torch.Tensor) -> torch.Tensor
-        For field-based models: forward(state: Dict[str, Field], dt: float) -> Dict[str, Field]
+        This implementation assumes that dynamic fields are ordered first in the
+        channel dimension, followed by static fields.
+
+        It predicts the residual for dynamic fields, pads it with zeros for the
+        static fields, and adds the result to the input tensor `x`.
+
+        Args:
+            x: Input tensor of shape [B, C, H, W], where C is the total
+               number of channels (dynamic and static).
+
+        Returns:
+            Output tensor of the same shape [B, C, H, W], representing the
+            next state.
         """
-        raise NotImplementedError("Subclasses must implement the forward method.")
+        dynamic_out = self.net(x)
+        out = x.clone()
+        out[:, :self.num_dynamic_channels, :, :] = dynamic_out
+        return out
+
 
     def generate_predictions(
         self,
@@ -61,7 +83,6 @@ class SyntheticModel(nn.Module, ABC):
         alpha: float,
         device: str = "cpu",
         batch_size: int = 32,
-        num_workers: int = 0,
     ):
         """
         Generate predictions for data augmentation.
@@ -75,18 +96,14 @@ class SyntheticModel(nn.Module, ABC):
             alpha: Proportion of generated samples (e.g., 0.1 = 10%)
             device: Device to run model on ('cpu' or 'cuda')
             batch_size: Batch size for generation
-            num_workers: Number of DataLoader workers
 
         Returns:
             Tuple of (inputs_list, targets_list) where:
             - inputs_list: List of input tensors [C_all, H, W]
             - targets_list: List of predicted target tensors [T, C_all, H, W]
         """
-        import torch
-        from torch.utils.data import DataLoader
-        import logging
 
-        logger = logging.getLogger(__name__)
+        
 
         self.eval()
         self.to(device)
@@ -95,13 +112,13 @@ class SyntheticModel(nn.Module, ABC):
         num_real = len(real_dataset)
         num_generate = int(num_real * alpha)
 
-        logger.debug(
+        self.logger.debug(
             f"Generating {num_generate} synthetic predictions "
             f"(alpha={alpha:.2f} * {num_real} real samples)"
         )
 
         if num_generate == 0:
-            logger.warning("Alpha too small, no samples will be generated")
+            self.logger.warning("Alpha too small, no samples will be generated")
             return [], []
 
         # Select proportional indices for diverse sampling
@@ -110,41 +127,37 @@ class SyntheticModel(nn.Module, ABC):
 
         # Create DataLoader
         loader = DataLoader(
-            subset, batch_size=batch_size, shuffle=False, num_workers=num_workers
+            subset, batch_size=batch_size, shuffle=False
         )
 
-        # Generate predictions
-        inputs_list = []
-        targets_list = []
+        # Get sample to determine shape
+        sample_input, _ = real_dataset[0]
+        input_shape = sample_input.shape  # [C, H, W]
+
+        # PRE-ALLOCATE full tensors (FASTEST!)
+        all_inputs = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype)
+        all_predictions = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype)
+
+        idx = 0  # Track current position
 
         with torch.no_grad():
-            for batch_inputs, _ in loader:
+            for (batch_inputs, _) in loader:
+                batch_size_actual = batch_inputs.size(0)
+                
                 # Move to device
-                batch_inputs = batch_inputs.to(device)
+                batch_inputs = batch_inputs.to(device, non_blocking=True)
 
                 # Generate predictions
                 batch_predictions = self(batch_inputs)
 
-                # Debug: log shapes
-                if len(inputs_list) == 0:  # Log only for first batch
-                    logger.debug(f"  Batch inputs shape: {batch_inputs.shape}")
-                    logger.debug(
-                        f"  Batch predictions shape: {batch_predictions.shape}"
-                    )
+                # Direct copy to pre-allocated tensor
+                all_inputs[idx:idx + batch_size_actual] = batch_inputs
+                all_predictions[idx:idx + batch_size_actual] = batch_predictions
+                
+                idx += batch_size_actual
 
-                # Store results (move back to CPU for storage)
-                for i in range(batch_inputs.shape[0]):
-                    inputs_list.append(batch_inputs[i].cpu())
-                    targets_list.append(batch_predictions[i].cpu())
 
-        logger.debug(f"Generated {len(inputs_list)} synthetic predictions")
-
-        # Debug: log sample shapes
-        if len(inputs_list) > 0:
-            logger.debug(f"  Sample input shape: {inputs_list[0].shape}")
-            logger.debug(f"  Sample target shape: {targets_list[0].shape}")
-
-        return inputs_list, targets_list
+        return all_inputs, all_predictions
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

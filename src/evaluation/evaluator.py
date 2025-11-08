@@ -82,10 +82,18 @@ class Evaluator:
         self.model_config = config["model"]["synthetic"]
         self.eval_config = config.get("evaluation_params", {})
 
-        # Field specifications
-        self.input_specs = self.model_config["input_specs"]
-        self.output_specs = self.model_config["output_specs"]
         self.field_names = self.data_config["fields"]
+        self.input_specs = {
+        field: config['model']['physical']['fields_scheme'].lower().count(field[0].lower())
+        for field in config['model']['physical']['fields']
+        if field
+        }
+        self.output_specs = {
+        field: config['model']['physical']['fields_scheme'].lower().count(field[0].lower())
+        for i, field in enumerate(config['model']['physical']['fields'])
+        if field and config['model']['physical']['fields_type'][i].upper() == 'D'
+        }
+
 
         # Evaluation parameters
         self.test_sim = self.eval_config.get("test_sim", [0])
@@ -134,7 +142,7 @@ class Evaluator:
         model_name = self.model_config["name"]
         logger.debug(f"Creating model: {model_name}")
 
-        model = ModelRegistry.get_synthetic_model(model_name, config=self.model_config)
+        model = ModelRegistry.get_synthetic_model(model_name, config=self.config['model'])
 
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=self.device)

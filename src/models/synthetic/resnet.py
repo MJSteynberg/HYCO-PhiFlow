@@ -1,17 +1,17 @@
-# src/models/synthetic/unet.py
+# src/models/synthetic/resnet.py
 
 from typing import Dict, Any
 import torch
 import torch.nn as nn
-from phiml.nn import u_net
+from phiml.nn import res_net
 from src.models.registry import ModelRegistry
 from src.models.synthetic.base import SyntheticModel
 
 
-@ModelRegistry.register_synthetic("UNet")
-class UNet(SyntheticModel):
+@ModelRegistry.register_synthetic("ResNet")
+class ResNet(SyntheticModel):
     """
-    Tensor-based U-Net for efficient training.
+    Tensor-based ResNet for efficient training.
 
     Works directly with PyTorch tensors in [batch, channels, height, width] format.
     All Field conversions are handled by DataManager before training.
@@ -24,7 +24,7 @@ class UNet(SyntheticModel):
 
     def __init__(self, config: Dict[str, Any]):
         """
-        Initializes the U-Net model.
+        Initializes the ResNet model.
 
         Args:
             config: Model configuration containing:
@@ -35,15 +35,15 @@ class UNet(SyntheticModel):
         # Call parent constructor to set up base attributes
         super().__init__(config)
 
-        # Get architecture params (with defaults for backwards compatibility)
-        levels = config["synthetic"]['architecture']["levels"]
-        filters = config["synthetic"]['architecture']["filters"]
+        # Get architecture params
+        layers = config["synthetic"]['architecture']["layers"]
 
-        # Build the U-Net using PhiML's u_net
-        self.net = u_net(
+        # Build the ResNet using PhiML's res_net
+        self.net = res_net(
             in_channels=sum(self.input_specs.values()),
             out_channels=sum(self.output_specs.values()),
-            levels=levels,
-            filters=filters,
+            layers=layers,
             batch_norm=True,
         )
+
+    

@@ -55,18 +55,6 @@ class SyntheticTrainer(TensorTrainer):
         self.dset_name = self.data_config["dset_name"]
         self.data_dir = self.data_config["data_dir"]
 
-        self.input_specs = self.model_config["input_specs"]
-        self.output_specs = self.model_config["output_specs"]
-
-        # --- Define field types from specs ---
-        self.dynamic_fields: List[str] = list(self.output_specs.keys())
-        self.static_fields: List[str] = [
-            f for f in self.input_specs.keys() if f not in self.output_specs
-        ]
-
-        # Calculate channel indices for unpacking
-        self._build_channel_map()
-
         # --- Checkpoint path ---
         model_save_name = self.model_config["model_save_name"]
         model_path_dir = self.model_config["model_path"]
@@ -114,28 +102,6 @@ class SyntheticTrainer(TensorTrainer):
                 self.memory_monitor = None
         else:
             self.memory_monitor = None
-
-    def _build_channel_map(self):
-        """Build channel indices for slicing concatenated tensors."""
-        self.channel_map = {}
-        channel_offset = 0
-
-        for field_name in self.field_names:
-            # Get channel count from input or output specs
-            if field_name in self.input_specs:
-                num_channels = self.input_specs[field_name]
-            elif field_name in self.output_specs:
-                num_channels = self.output_specs[field_name]
-            else:
-                raise ValueError(f"Field '{field_name}' not found in specs")
-
-            self.channel_map[field_name] = (
-                channel_offset,
-                channel_offset + num_channels,
-            )
-            channel_offset += num_channels
-
-        self.total_channels = channel_offset
 
     def _train_epoch_with_data(self, data_source):
         """
@@ -211,33 +177,9 @@ class SyntheticTrainer(TensorTrainer):
             # Predict next state (model returns all fields)
             prediction = self.model(current_state)  # [B, C_all, H, W]
 
-            # Extract only dynamic fields from prediction for loss computation
-            pred_dynamic_tensors = []
-            for field_name in self.field_names:
-                if field_name in self.dynamic_fields:
-                    start, end = self.channel_map[field_name]
-                    pred_dynamic_tensors.append(prediction[:, start:end, :, :])
-
-            pred_dynamic = torch.cat(
-                pred_dynamic_tensors, dim=1
-            )  # [B, C_dynamic, H, W]
-
-            # Get ground truth for this timestep (now contains all fields)
             target_all = rollout_targets[:, t, :, :, :]  # [B, C_all, H, W]
 
-            # Extract only dynamic fields from target for loss computation
-            target_dynamic_tensors = []
-            for field_name in self.field_names:
-                if field_name in self.dynamic_fields:
-                    start, end = self.channel_map[field_name]
-                    target_dynamic_tensors.append(target_all[:, start:end, :, :])
-
-            target_dynamic = torch.cat(
-                target_dynamic_tensors, dim=1
-            )  # [B, C_dynamic, H, W]
-
-            # Compute loss on dynamic fields only
-            step_loss = self.loss_fn(pred_dynamic, target_dynamic)
+            step_loss = self.loss_fn(prediction, target_all)
             total_step_loss += step_loss
 
             # Use full prediction (all fields) as input for next timestep

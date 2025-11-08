@@ -7,3 +7,5 @@ from .base import SyntheticModel
 
 # Import your concrete model classes
 from .unet import UNet
+from .resnet import ResNet
+from .convnet import ConvNet

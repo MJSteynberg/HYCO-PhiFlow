@@ -34,8 +34,8 @@ class ModelFactory:
         Returns:
             Synthetic model instance
         """
-        model_config = config["model"]["synthetic"]
-        model_name = model_config["name"]
+        model_config = config["model"]
+        model_name = model_config['synthetic']['name']
         return ModelRegistry.get_synthetic_model(model_name, model_config)
 
     @staticmethod

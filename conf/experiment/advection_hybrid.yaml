@@ -7,7 +7,7 @@
 defaults:
   - override /data: advection_128
   - override /model/physical: advection
-  - override /model/synthetic: unet_advection
+  - override /model/synthetic: unet
   - override /trainer: hybrid
   - override /generation: default
   - override /evaluation: default
