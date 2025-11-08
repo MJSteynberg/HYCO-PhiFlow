@@ -135,8 +135,8 @@ class SyntheticModel(nn.Module, ABC):
         input_shape = sample_input.shape  # [C, H, W]
 
         # PRE-ALLOCATE full tensors (FASTEST!)
-        all_inputs = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype)
-        all_predictions = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype)
+        all_inputs = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype, device=device)
+        all_predictions = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype, device=device)
 
         idx = 0  # Track current position
 

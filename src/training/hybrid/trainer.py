@@ -26,6 +26,10 @@ from src.training.physical.trainer import PhysicalTrainer
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.data import TensorDataset, FieldDataset
 from src.utils.logger import get_logger
+# === 2. Batched conversion ===
+from src.utils.field_conversion import make_converter
+from src.config import ConfigHelper
+import torch
 
 logger = get_logger(__name__)
 
@@ -318,89 +322,50 @@ class HybridTrainer(AbstractTrainer):
             return_fields=True,  # Physical model needs Fields not tensors
         )
 
-        # Generate predictions using the physical model's method
-        # Use num_predict_steps to match dataset format
         num_predict_steps = self.trainer_config["num_predict_steps"]
 
-        initial_fields_list, target_fields_list = (
-            self.physical_model.generate_predictions(
-                real_dataset=field_dataset,
-                alpha=self.alpha,
-                device=str(self.device),
-                num_rollout_steps=num_predict_steps,
-            )
+        # === 1. Batched rollout (already tested above) ===
+        initial_fields, predictions = self.physical_model.generate_predictions(
+            real_dataset=field_dataset,
+            alpha=self.alpha,
+            num_rollout_steps=num_predict_steps,
         )
 
-        # Convert Fields to tensors for synthetic model training
-        # Need to convert each Field dict to tensor format matching TensorDataset output
-        from src.utils.field_conversion import make_converter
-        from src.config import ConfigHelper
-        import torch
 
-        # Get dynamic fields from config (for synthetic model training)
         cfg = ConfigHelper(self.config)
-        dynamic_fields, static_fields = cfg.get_field_types()
+        field_names_input = field_dataset.field_names  # e.g. ['density', 'velocity']
+        field_names_target = cfg.get_field_names()     # same order for targets
 
+        # Pre-create converters for all input and target fields
+        input_converters = {name: make_converter(initial_fields[name]) for name in field_names_input}
+        target_converters = {name: make_converter(predictions[0][name]) for name in field_names_target}
+
+        # Batched input tensor: [B, C_all, H, W]
+        batched_input = torch.cat(
+            [input_converters[name].field_to_tensor(initial_fields[name], ensure_cpu=False)
+            for name in field_names_input],
+            dim=1
+        )
+
+        # Batched targets: [B, T, C_all, H, W]
+        batched_targets = torch.stack([
+            torch.cat([
+                target_converters[name].field_to_tensor(pred_t[name], ensure_cpu=False)
+                for name in field_names_target
+            ], dim=1)
+            for pred_t in predictions
+        ], dim=1)
+
+        # === 3. Split batch into individual samples for return ===
+        B = batched_input.shape[0]
         tensor_predictions = []
-        for initial_fields, target_fields_list in zip(
-            initial_fields_list, target_fields_list
-        ):
-            # Convert initial fields to input tensor
-            # Format: [C_all, H, W] - concatenate all fields
-            input_tensors = []
-            for field_name in field_dataset.field_names:
-                converter = make_converter(initial_fields[field_name])
-                field_tensor = converter.field_to_tensor(
-                    initial_fields[field_name], ensure_cpu=False
-                )
-                # Move to correct device
-                field_tensor = field_tensor.to(self.device)
-                # Remove batch dimension if present [B, C, H, W] -> [C, H, W]
-                while field_tensor.dim() > 3:
-                    field_tensor = field_tensor.squeeze(0)
-                # Ensure minimum 3 dimensions [C, H, W]
-                if field_tensor.dim() == 2:  # [H, W] -> [1, H, W]
-                    field_tensor = field_tensor.unsqueeze(0)
-                input_tensors.append(field_tensor)
-
-            input_tensor = torch.cat(input_tensors, dim=0)  # [C_all, H, W]
-
-            # Convert target fields to output tensor
-            # Format: [T, C_all, H, W] - ALL fields to match UNet output structure
-            # This ensures consistency between synthetic and physical training
-            timestep_tensors = []
-            for target_fields in target_fields_list:
-                # For each timestep, concatenate ALL fields in the same order as input
-                field_tensors = []
-                for field_name in cfg.get_field_names():
-                    converter = make_converter(target_fields[field_name])
-                    field_tensor = converter.field_to_tensor(
-                        target_fields[field_name], ensure_cpu=False
-                    )
-                    # Move to correct device
-                    field_tensor = field_tensor.to(self.device)
-                    # Remove batch dimension if present [B, C, H, W] -> [C, H, W]
-                    while field_tensor.dim() > 3:
-                        field_tensor = field_tensor.squeeze(0)
-                    # Ensure minimum 3 dimensions [C, H, W]
-                    if field_tensor.dim() == 2:  # [H, W] -> [1, H, W]
-                        field_tensor = field_tensor.unsqueeze(0)
-                    field_tensors.append(field_tensor)
-
-                # Concatenate all fields for this timestep [C_all, H, W]
-                timestep_tensor = torch.cat(field_tensors, dim=0)
-                timestep_tensors.append(timestep_tensor)
-
-            # Stack timesteps to create [T, C_all, H, W]
-            target_tensor = torch.stack(timestep_tensors, dim=0)
-
-            # Move tensors to CPU for storage (DataLoader will handle device placement)
-            input_tensor = input_tensor.cpu()
-            target_tensor = target_tensor.cpu()
-
+        for i in range(B):
+            input_tensor = batched_input[i].cpu()            # [C_all, H, W]
+            target_tensor = batched_targets[i].cpu()         # [T, C_all, H, W]
             tensor_predictions.append((input_tensor, target_tensor))
 
         return tensor_predictions
+
 
     def _generate_synthetic_predictions(self) -> List[Tuple]:
         """

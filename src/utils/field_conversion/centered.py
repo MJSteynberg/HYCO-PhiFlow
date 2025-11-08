@@ -37,42 +37,12 @@ class CenteredConverter(SingleFieldConverter):
 
         Returns:
             PyTorch tensor with shape:
-            - [H, W] for scalar fields without batch
-            - [C, H, W] for vector fields without batch
             - [B, 1, H, W] for scalar fields with batch
             - [B, C, H, W] for vector fields with batch
         """
         self.validate_field(field)
-
         # Get the native tensor
-        tensor = field.values._native
-
-        # Determine field properties
-        has_batch = field.shape.batch.rank > 0
-        is_vector = field.shape.channel.rank > 0
-
-        # PhiFlow native layout:
-        # - Scalar no batch: [x, y]
-        # - Scalar with batch: [batch, x, y]
-        # - Vector no batch: [x, y, vector]
-        # - Vector with batch: [batch, x, y, vector]
-
-        # Target layout: [batch, channels, x, y] or [channels, x, y]
-
-        if not has_batch and not is_vector:
-            # Scalar field, no batch: [x, y] -> no change needed
-            pass
-        elif not has_batch and is_vector:
-            # Vector field, no batch: [x, y, vector] -> [vector, x, y]
-            tensor = tensor.permute(2, 0, 1)
-        elif has_batch and not is_vector:
-            # Scalar field with batch: [batch, x, y] -> [batch, 1, x, y]
-            tensor = tensor.unsqueeze(1)
-        elif has_batch and is_vector:
-            # Vector field with batch: [batch, x, y, vector] -> [batch, vector, x, y]
-            perm = [0, len(tensor.shape) - 1] + list(range(1, len(tensor.shape) - 1))
-            tensor = tensor.permute(*perm)
-
+        tensor = field.values.native('batch,vector,x,y')
         return self._ensure_device(tensor, ensure_cpu)
 
     def tensor_to_field(

@@ -139,11 +139,14 @@ class PhysicalModel(ABC):
         pass
 
     @abstractmethod
-    def get_random_state(self) -> Dict[str, Field]:
+    def get_random_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Generates a random state for the simulation.
 
         The batch dimension should be named 'batch'.
+
+        Args:
+            batch_size (int): The number of parallel simulations.
 
         Returns:
             Dict[str, Field]: A dictionary mapping field names to their
@@ -175,7 +178,6 @@ class PhysicalModel(ABC):
         self,
         real_dataset,
         alpha: float,
-        device: str = "cpu",
         num_rollout_steps: int = 10,
     ):
         """
@@ -210,27 +212,12 @@ class PhysicalModel(ABC):
             self.logger.warning("Alpha too small, no samples will be generated")
             return [], []
 
-        # Select proportional indices
-        indices = self._select_proportional_indices(num_real, num_generate)
 
-        # Generate predictions
-        initial_fields_list = []
-        target_fields_list = []
+        initial_fields = self.get_random_state(num_generate)
+        predictions = self._perform_rollout(initial_fields, num_rollout_steps)
+        
 
-        for idx in indices:
-            # Get sample from dataset
-            initial_fields = self.get_random_state()
-
-            # Perform rollout prediction
-            predictions = self._perform_rollout(initial_fields, num_rollout_steps)
-
-            # Store results
-            initial_fields_list.append(initial_fields)
-            target_fields_list.append(predictions)
-
-        self.logger.debug(f"Generated {len(initial_fields_list)} physical predictions")
-
-        return initial_fields_list, target_fields_list
+        return initial_fields, predictions
 
     def _perform_rollout(self, initial_fields: Dict[str, Field], num_steps: int):
         """

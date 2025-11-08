@@ -125,13 +125,14 @@ class AdvectionModel(PhysicalModel):
 
         return {"density": density_0, "velocity": velocity_0}
 
-    def get_random_state(self) -> Dict[str, Field]:
+    def get_random_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Returns a batched initial state with density and static velocity field.
 
         The velocity field is created once here and will be passed through
         the state dictionary to each step (like smoke's inflow pattern).
         """
+        b = batch(batch=batch_size)
         # Create a nice swirling/rotating velocity field
         def velocity_fn(x, y):
             # Vortex-like pattern: velocity vector depends on position
@@ -159,7 +160,7 @@ class AdvectionModel(PhysicalModel):
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-
+        velocity_0 = math.expand(velocity_0, b)
         # Create density field with smooth tanh transition
         density_0 = CenteredGrid(
             Noise(scale=20, smoothness=10.0),
@@ -169,6 +170,7 @@ class AdvectionModel(PhysicalModel):
             bounds=self.domain,
         )
         density_0 = math.tanh(2.0 * density_0)
+        density_0 = math.expand(density_0, b)
 
         return {"density": density_0, "velocity": velocity_0}
 
