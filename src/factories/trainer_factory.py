@@ -94,7 +94,7 @@ class TrainerFactory:
 
         return trainer
 
-    @staticmethod
+    # @staticmethod
     def _create_physical_trainer(config: Dict[str, Any]) -> PhysicalTrainer:
         """
         Create PhysicalTrainer with external model and learnable parameters.
@@ -109,23 +109,14 @@ class TrainerFactory:
         model = ModelFactory.create_physical_model(config)
 
         # Extract learnable parameters from config
-        learnable_params_config = config["trainer_params"].get(
+        learnable_params = config["trainer_params"].get(
             "learnable_parameters", []
         )
 
-        if not learnable_params_config:
+        if not learnable_params:
             raise ValueError(
                 "No 'learnable_parameters' defined in trainer_params for physical training."
             )
-
-        # Create learnable parameter tensors
-        learnable_params: List[Tensor] = []
-        for param in learnable_params_config:
-            name = param["name"]
-            initial_guess = param["initial_guess"]
-            # Wrap in PhiFlow Tensor
-            learnable_params.append(math.tensor(initial_guess))
-
         # Create trainer with model and params
         trainer = PhysicalTrainer(config, model, learnable_params)
 
@@ -265,17 +256,10 @@ class TrainerFactory:
         physical_model = ModelFactory.create_physical_model(config)
 
         # Extract learnable parameters from config (same as _create_physical_trainer)
-        learnable_params_config = config["trainer_params"].get(
-            "learnable_parameters", []
+        learnable_params = config["trainer_params"].get(
+            "learnable_parameters", {}
         )
-
         # Create learnable parameter tensors (empty list if none defined, e.g., for advection)
-        learnable_params: List[Tensor] = []
-        for param in learnable_params_config:
-            name = param["name"]
-            initial_guess = param["initial_guess"]
-            # Wrap in PhiFlow Tensor
-            learnable_params.append(math.tensor(initial_guess))
 
         # Create hybrid trainer
         hybrid_trainer = HybridTrainer(

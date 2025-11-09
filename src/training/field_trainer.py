@@ -16,10 +16,13 @@ from abc import abstractmethod
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import torch
-
+from torch.utils.data import DataLoader
 from phi.field import Field
 from phi.math import Solve, Tensor, minimize
-
+from tqdm import tqdm
+import time
+import os
+from phi.torch.flow import *
 from src.training.abstract_trainer import AbstractTrainer
 from src.models.physical.base import PhysicalModel
 from src.utils.logger import get_logger
@@ -62,7 +65,7 @@ class FieldTrainer(AbstractTrainer):
         self,
         config: Dict[str, Any],
         model: Any,  # PhysicalModel instance
-        learnable_params: List[torch.nn.Parameter],
+        learnable_params: List[Dict[str, Tensor]],
     ):
         """
         Initialize field trainer with model and learnable parameters.
@@ -74,17 +77,63 @@ class FieldTrainer(AbstractTrainer):
         """
         super().__init__(config)
 
-        # Store model and parameters
-        self.model = model
-        self.learnable_params = learnable_params
+        # --- Derive all parameters from config ---
+        self.data_config = config["data"]
+        self.model_config = config["model"]["physical"]
+        self.trainer_config = config["trainer_params"]
 
+        # --- Data specifications ---
+        self.field_names: List[str] = self.data_config["fields"]
+        self.dset_name = self.data_config["dset_name"]
+        self.data_dir = self.data_config["data_dir"]
+
+        # # --- Checkpoint path ---
+        # model_save_name = self.model_config["model_save_name"]
+        # model_path_dir = self.model_config["model_path"]
+        # self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
+        # os.makedirs(model_path_dir, exist_ok=True)
+
+        # -- Store model and parameters ---
+        self.model = model
+        self.learnable_params = [p['initial_guess'] for p in learnable_params]
+        self.param_names = [p["name"] for p in learnable_params]
+
+        # Create optimizer
+        self.optimizer = self._create_optimizer()
+ 
         # Results storage
         self.final_loss: float = 0.0
         self.training_history: List[float] = []
 
+        self.best_val_loss = float("inf")
+        self.best_epoch = 0
+
+        # --- Get parameters ---
+        self.num_predict_steps= self.trainer_config["num_predict_steps"]
+
+    def _create_optimizer(self):
+        """
+        Create optimizer for learnable parameters.
+
+        Returns:
+            PhiFlow optimizer instance
+        """
+        method = self.trainer_config['method']
+        abs_tol = self.trainer_config['abs_tol']
+        max_iterations = self.trainer_config['max_iterations']
+
+        optimizer = math.Solve(
+            method=method,
+            abs_tol=abs_tol,
+            x0=self.learnable_params,
+            max_iterations=max_iterations,
+            suppress=(math.NotConverged,),
+        )
+        return optimizer
+
     @abstractmethod
-    def _train_sample(
-        self, initial_fields: Dict[str, Field], target_fields: Dict[str, Field]
+    def _train_epoch(
+        self, data_source: DataLoader
     ) -> float:
         """
         Train on a single sample.
@@ -104,7 +153,7 @@ class FieldTrainer(AbstractTrainer):
         """
         pass
 
-    def train(self, data_source, num_epochs: int) -> Dict[str, Any]:
+    def train(self, data_source: DataLoader, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """
         Execute training for specified number of epochs with provided data.
 
@@ -118,45 +167,55 @@ class FieldTrainer(AbstractTrainer):
         Returns:
             Dictionary with training results including losses and metrics
         """
-        if self.model is None:
-            raise RuntimeError("Model must be initialized before training")
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Starting Physical Model Training")
-        logger.info(f"Epochs: {num_epochs}")
-        logger.info(f"{'='*60}\n")
+        results = {
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs,
+            "best_epoch": 0,
+            "best_val_loss": float("inf"),
+        }
 
-        results = {"train_losses": [], "epochs": [], "num_epochs": num_epochs}
-        for epoch in range(num_epochs):
-            epoch_loss = 0.0
-            num_samples = 0
+        disable_tqdm = not verbose
+        pbar = tqdm(
+            range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
+        )
 
-            # Iterate through data source
-            sample = data_source[0]  # For now only use sample 0.
-            # Unpack sample (2-tuple: no weights!)
-            initial_fields, target_fields = sample
+        for epoch in pbar:
+            start_time = time.time()
+            train_loss = self._train_epoch(data_source)
 
-            # Train on this sample
-            loss = self._train_sample(initial_fields, target_fields)
-
-            epoch_loss += loss
-            num_samples += 1
-
-            # Compute average loss for epoch
-            avg_loss = epoch_loss / num_samples if num_samples > 0 else float("inf")
-            results["train_losses"].append(avg_loss)
+            results["train_losses"].append(train_loss)
             results["epochs"].append(epoch + 1)
-            self.training_history.append(avg_loss)
 
-            logger.info(f"Epoch {epoch + 1}/{num_epochs} - Loss: {avg_loss:.6f}")
+            if train_loss < self.best_val_loss:
+                self.best_val_loss = train_loss
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
 
-        self.final_loss = results["train_losses"][-1]
-        results["final_loss"] = self.final_loss
+                # self.save_checkpoint(
+                #     epoch=epoch,
+                #     loss=train_loss,
+                #     optimizer_state=(
+                #         self.optimizer.state_dict() if self.optimizer else None
+                #     )
+                # )
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"Training Complete!")
-        logger.info(f"Final Loss: {self.final_loss:.6f}")
-        logger.info(f"{'='*60}\n")
+            epoch_time = time.time() - start_time
+
+            # Update progress bar
+            postfix_dict = {
+                "train_loss": f"{train_loss:.6f}",
+                "time": f"{epoch_time:.2f}s",
+            }
+
+            postfix_dict["best_epoch"] = self.best_epoch
+
+            pbar.set_postfix(postfix_dict)
+
+        final_loss = results["train_losses"][-1]
+        results["final_loss"] = final_loss
 
         return results
 
@@ -164,39 +223,41 @@ class FieldTrainer(AbstractTrainer):
     # PhiFlow-Specific Utilities (kept for backward compatibility)
     # =========================================================================
 
-    def save_results(self, path: Path, results: Dict[str, Any]):
+    def update_optimizer_params(self, new_params: List[Tensor]):
         """
-        Save optimization results to file.
+        Update optimizer with new parameter values.
 
-        Unlike PyTorch models, we don't save a state_dict.
-        Instead, we save the optimized parameter values and loss history.
+        This is useful for continuing optimization with updated initial guesses.
 
         Args:
-            path: Path to save results
-            results: Results dictionary from train()
+            new_params: New parameter values
         """
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self.learnable_params = new_params
+        self.optimizer.x0 = new_params
 
-        # Save as PyTorch file for consistency, but content is different
-        torch.save(results, path)
-        logger.info(f"Saved training results to {path}")
-
-    def load_results(self, path: Path) -> Dict[str, Any]:
+    def get_current_params(self) -> Dict[str, float]:
         """
-        Load training results from file.
-
-        Args:
-            path: Path to results file
+        Get current parameter values.
 
         Returns:
-            Results dictionary
+            Dictionary mapping parameter names to values
         """
-        path = Path(path)
-        if not path.exists():
-            raise FileNotFoundError(f"Results file not found: {path}")
+        return {
+            name: self._tensor_to_float(param)
+            for name, param in zip(self.param_names, self.learnable_params)
+        }
+    
+    @staticmethod
+    def _tensor_to_float(tensor: Tensor) -> float:
+        """
+        Extract Python float from PhiFlow tensor.
 
-        results = torch.load(path)
-        logger.info(f"Loaded training results from {path}")
+        Args:
+            tensor: PhiFlow Tensor
 
-        return results
+        Returns:
+            Python float value
+        """
+        if hasattr(tensor, "numpy"):
+            return float(tensor.numpy())
+        return float(tensor)

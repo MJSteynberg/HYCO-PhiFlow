@@ -10,13 +10,14 @@ All PyTorch-specific functionality lives here, including:
 """
 
 from abc import abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import time
+import os
 
 from src.training.abstract_trainer import AbstractTrainer
 from src.utils.logger import get_logger
@@ -67,6 +68,22 @@ class TensorTrainer(AbstractTrainer):
         """
         super().__init__(config)
 
+        # --- Derive all parameters from config ---
+        self.data_config = config["data"]
+        self.model_config = config["model"]["synthetic"]
+        self.trainer_config = config["trainer_params"]
+
+        # --- Data specifications ---
+        self.field_names: List[str] = self.data_config["fields"]
+        self.dset_name = self.data_config["dset_name"]
+        self.data_dir = self.data_config["data_dir"]
+
+        # --- Checkpoint path ---
+        model_save_name = self.model_config["model_save_name"]
+        model_path_dir = self.model_config["model_path"]
+        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
+        os.makedirs(model_path_dir, exist_ok=True)
+
         # PyTorch-specific initialization
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -76,8 +93,12 @@ class TensorTrainer(AbstractTrainer):
         # Create optimizer for the model
         self.optimizer = self._create_optimizer()
 
-        # Checkpoint path (can be set by subclass)
-        self.checkpoint_path: Optional[Path] = None
+        # --- AMP ---
+        self._setup_amp_scaler(enabled=True)
+
+        # --- Scheduler ---
+        epochs = self.trainer_config["epochs"]
+        self._setup_scheduler('cosine', T_max=epochs)
 
         # Validation state tracking
         self.best_val_loss = float("inf")
@@ -190,6 +211,44 @@ class TensorTrainer(AbstractTrainer):
 
         results["final_loss"] = final_loss
         return results
+    
+    # In TensorTrainer, add these methods:
+
+    def _validate_epoch(self, data_source: DataLoader) -> float:
+        """
+        Run validation on provided data source.
+        Subclasses must implement _compute_batch_loss().
+        """
+        self.model.eval()
+        total_loss = 0.0
+        
+        with torch.no_grad():
+            for batch in data_source:
+                loss = self._compute_batch_loss(batch)
+                total_loss += loss.item()
+        
+        self.model.train()
+        return total_loss / len(data_source)
+
+    @abstractmethod
+    def _compute_batch_loss(self, batch) -> torch.Tensor:
+        """
+        Compute loss for a single batch.
+        Must be implemented by subclasses.
+        """
+        pass
+
+    def _setup_amp_scaler(self, enabled: bool = True):
+        """Setup automatic mixed precision scaler."""
+        self.scaler = torch.amp.GradScaler(enabled=enabled)
+        
+    def _setup_scheduler(self, scheduler_type: str = 'cosine', **kwargs):
+        """Setup learning rate scheduler."""
+        if scheduler_type == 'cosine':
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, **kwargs
+            )
+        # Add other scheduler types as needed
 
     # =========================================================================
     # PyTorch-Specific Utilities

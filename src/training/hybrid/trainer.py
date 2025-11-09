@@ -30,6 +30,14 @@ from src.utils.logger import get_logger
 from src.utils.field_conversion import make_converter
 from src.config import ConfigHelper
 import torch
+from phi.math import math, Tensor
+import logging
+# Create dataloader
+from torch.utils.data import DataLoader
+# Setup dataset creation
+from torch.utils.data import DataLoader
+from src.config import ConfigHelper
+from src.data import DataManager
 
 logger = get_logger(__name__)
 
@@ -57,7 +65,7 @@ class HybridTrainer(AbstractTrainer):
         config: Dict[str, Any],
         synthetic_model: nn.Module,
         physical_model,
-        learnable_params: List,
+        learnable_params: Dict[str, Tensor],
     ):
         """Initialize hybrid trainer with both models."""
         super().__init__(config)
@@ -68,26 +76,20 @@ class HybridTrainer(AbstractTrainer):
         self.learnable_params = learnable_params
 
         # Parse configuration
-        self.trainer_config = config.get("trainer_params", {})
-        self.hybrid_config = self.trainer_config.get("hybrid", {})
-        self.aug_config = self.trainer_config.get("augmentation", {})
+        self.trainer_config = config["trainer_params"]
+        self.hybrid_config = self.trainer_config["hybrid"]
+        self.aug_config = self.trainer_config["augmentation"]
 
         # Hybrid training parameters
-        self.num_cycles = self.hybrid_config.get("num_cycles", 10)
-        self.synthetic_epochs_per_cycle = self.hybrid_config.get(
-            "synthetic_epochs_per_cycle", 5
-        )
-        self.physical_epochs_per_cycle = self.hybrid_config.get(
-            "physical_epochs_per_cycle", 3
-        )
-        self.alpha = self.aug_config.get("alpha", 0.1)
-        self.warmup_synthetic_epochs = self.hybrid_config.get(
-            "warmup_synthetic_epochs", 10
-        )
+        self.num_cycles = self.hybrid_config["num_cycles"]
+        self.synthetic_epochs_per_cycle = self.hybrid_config["synthetic_epochs_per_cycle"]
+        self.physical_epochs_per_cycle = self.hybrid_config["physical_epochs_per_cycle"]
+        self.alpha = self.aug_config["alpha"]
+        self.warmup_synthetic_epochs = self.hybrid_config["warmup_synthetic_epochs"]
 
         # Data access control: which models are allowed to see real data
         # Options: 'both', 'synthetic_only', 'physical_only', 'neither'
-        self.real_data_access = self.hybrid_config.get("real_data_access", "both")
+        self.real_data_access = self.hybrid_config["real_data_access"]
 
         # Validate real_data_access parameter
         valid_options = ["both", "synthetic_only", "physical_only", "neither"]
@@ -99,18 +101,6 @@ class HybridTrainer(AbstractTrainer):
 
         # Device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Hybrid trainer using device: {self.device}")
-
-        # Suppress sub-trainer logging during hybrid training
-        # Save original setting and set suppression flag
-        self._original_suppress_logs = config.get("trainer_params", {}).get(
-            "suppress_training_logs", False
-        )
-        config["trainer_params"]["suppress_training_logs"] = True
-
-        # Reduce logging verbosity for data/model modules during hybrid training
-        # This needs to be done early to suppress warmup logs
-        import logging
 
         logging.getLogger("data.abstract_dataset").setLevel(logging.WARNING)
         logging.getLogger("factories.dataloader_factory").setLevel(logging.WARNING)
@@ -123,22 +113,18 @@ class HybridTrainer(AbstractTrainer):
             config, physical_model, learnable_params
         )
 
-        # Note: CacheManager removed in new architecture
-        # Augmentation is now handled directly by TensorDataset/FieldDataset
-        # via augmentation_config parameter
-
         # Training state
         self.current_cycle = 0
         self.best_synthetic_loss = float("inf")
         self.best_physical_loss = float("inf")
 
-        logger.info("=" * 60)
+        logger.info("=" * 20)
         logger.info("HYBRID TRAINER INITIALIZED")
         logger.info(
             f"  Cycles: {self.num_cycles}, Synthetic: {self.synthetic_epochs_per_cycle}e/c, Physical: {self.physical_epochs_per_cycle}e/c, Warmup: {self.warmup_synthetic_epochs}e"
         )
         logger.info(f"  Alpha: {self.alpha}, Real data access: {self.real_data_access}")
-        logger.info("=" * 60)
+        logger.info("=" * 20)
 
     def train(self):
         """
@@ -153,9 +139,6 @@ class HybridTrainer(AbstractTrainer):
            d. Train physical model with augmented data
            e. Evaluate and checkpoint
         """
-        logger.info("=" * 60)
-        logger.info("HYBRID TRAINING")
-        logger.info("=" * 60)
 
         # Optional warmup phase
         if self.warmup_synthetic_epochs > 0:
@@ -187,92 +170,26 @@ class HybridTrainer(AbstractTrainer):
             # Save checkpoints if improved
             self._save_if_best(synthetic_loss, physical_loss)
 
-        # Print final summary
-        self._print_training_summary()
-
-    def _print_training_summary(self):
-        """Print comprehensive training summary including optimized parameters."""
-        logger.info("\n" + "=" * 60)
-        logger.info("HYBRID TRAINING COMPLETE")
-        logger.info("=" * 60)
-
-        # Loss summary
-        logger.info("Loss Summary:")
-        logger.info(f"  Best Synthetic Loss: {self.best_synthetic_loss:.6f}")
-        logger.info(f"  Best Physical Loss:  {self.best_physical_loss:.6f}")
-
-        # Physical model parameters summary
-        if len(self.physical_trainer.learnable_params) > 0:
-            logger.info("\nOptimized Physical Parameters:")
-            param_names = self.physical_trainer.param_names
-
-            for i, name in enumerate(param_names):
-                final_val = float(self.physical_trainer.learnable_params[i])
-
-                # Get initial value from config
-                learnable_params_config = self.trainer_config.get(
-                    "learnable_parameters", []
-                )
-                initial_val = None
-                for param_config in learnable_params_config:
-                    if param_config["name"] == name:
-                        initial_val = param_config.get("initial_guess", 1.0)
-                        break
-
-                if initial_val is not None:
-                    change = final_val - initial_val
-                    change_pct = (
-                        (change / abs(initial_val) * 100)
-                        if abs(initial_val) > 1e-10
-                        else 0
-                    )
-                    logger.info(f"  {name}:")
-                    logger.info(f"    Initial:  {initial_val:.6f}")
-                    logger.info(f"    Final:    {final_val:.6f}")
-                    logger.info(f"    Change:   {change:+.6f} ({change_pct:+.2f}%)")
-                else:
-                    logger.info(f"  {name}: {final_val:.6f}")
-
-                # Show true value if available (for validation/debugging)
-                if hasattr(self.physical_trainer.model, f"_true_{name}"):
-                    true_val = float(
-                        getattr(self.physical_trainer.model, f"_true_{name}")
-                    )
-                    error = abs(final_val - true_val)
-                    rel_error = (
-                        (error / abs(true_val) * 100) if abs(true_val) > 1e-10 else 0
-                    )
-                    logger.info(f"    True:     {true_val:.6f}")
-                    logger.info(f"    Error:    {error:.6f} ({rel_error:.2f}%)")
-
-        logger.info("=" * 60)
-
     def _warmup_synthetic(self):
         """
         Warm up the synthetic model with standard training (no augmentation).
 
         This gives the synthetic model a head start before hybrid training begins.
         """
-        logger.debug(
-            f"Warmup: training synthetic model ({self.warmup_synthetic_epochs} epochs)"
-        )
 
         # Create standard dataset (no augmentation)
         # Use TensorDataset directly for the base data
         base_dataset = self._create_hybrid_dataset(self.trainer_config["train_sim"])
 
-        # Create dataloader
-        from torch.utils.data import DataLoader
-
         dataloader = DataLoader(
             base_dataset,
-            batch_size=self.trainer_config.get("batch_size", 16),
+            batch_size=self.trainer_config["batch_size"],
             shuffle=True,
         )
 
         # Train synthetic model
         self.synthetic_trainer.train(
-            data_source=dataloader, num_epochs=self.warmup_synthetic_epochs
+            data_source=dataloader, num_epochs=self.warmup_synthetic_epochs, verbose=True
         )
 
     def _create_hybrid_dataset(
@@ -297,7 +214,7 @@ class HybridTrainer(AbstractTrainer):
             use_sliding_window=True,
             enable_augmentation=False,  # We handle augmentation separately in hybrid training
             batch_size=(
-                None if return_fields else self.trainer_config.get("batch_size", 16)
+                None if return_fields else self.trainer_config["batch_size"]
             ),
         )
 
@@ -378,7 +295,7 @@ class HybridTrainer(AbstractTrainer):
         tensor_dataset = self._create_hybrid_dataset(self.trainer_config["train_sim"])
 
         # Generate predictions using the synthetic model's method
-        batch_size = self.trainer_config.get("batch_size", 32)
+        batch_size = self.trainer_config["batch_size"]
 
         inputs_list, targets_list = self.synthetic_model.generate_predictions(
             real_dataset=tensor_dataset,
@@ -420,10 +337,7 @@ class HybridTrainer(AbstractTrainer):
             "data": generated_data,  # Pre-loaded augmented data
         }
 
-        # Setup dataset creation
-        from torch.utils.data import DataLoader
-        from src.config import ConfigHelper
-        from src.data import DataManager
+
 
         cfg = ConfigHelper(self.config)
 
@@ -458,18 +372,18 @@ class HybridTrainer(AbstractTrainer):
         # Create dataloader
         train_loader = DataLoader(
             augmented_dataset,
-            batch_size=self.trainer_config.get("batch_size", 16),
+            batch_size=self.trainer_config["batch_size"],
             shuffle=True,
             num_workers=0,
         )
 
         # Train using synthetic trainer's train method
         result = self.synthetic_trainer.train(
-            data_source=train_loader, num_epochs=self.synthetic_epochs_per_cycle
+            data_source=train_loader, num_epochs=self.synthetic_epochs_per_cycle, verbose=False
         )
 
         # Get final loss from training result
-        final_loss = result.get("final_loss", 0.0)
+        final_loss = result['final_loss']
 
         return final_loss
 
@@ -506,9 +420,6 @@ class HybridTrainer(AbstractTrainer):
         }
 
         # Create FieldDataset with augmentation and access policy
-        from src.config import ConfigHelper
-        from src.data import DataManager
-
         cfg = ConfigHelper(self.config)
 
         # Create DataManager
@@ -533,65 +444,13 @@ class HybridTrainer(AbstractTrainer):
             augmentation_config=augmentation_config,
             access_policy=access_policy,  # Dataset controls data access
         )
+        
+        sample_loss = self.physical_trainer.train(
+            data_source=augmented_dataset, num_epochs=self.physical_epochs_per_cycle, verbose=False
+        )
 
-        # Physical trainer doesn't have a high-level train method yet
-        # For now, manually iterate through samples
-        total_loss = 0.0
-        num_samples = min(
-            len(augmented_dataset), self.physical_epochs_per_cycle * 10
-        )  # Limit samples
-
-        # Track initial and final parameter values for summary
-        initial_params = {}
-        if len(self.physical_trainer.learnable_params) > 0:
-            param_names = self.physical_trainer.param_names
-            for i, name in enumerate(param_names):
-                initial_params[name] = float(self.physical_trainer.learnable_params[i])
-
-        logger.debug(f"Training on {num_samples} samples...")
-        for i, (initial_fields, target_fields) in enumerate(augmented_dataset):
-            if i >= num_samples:
-                break
-            sample_loss = self.physical_trainer._train_sample(
-                initial_fields, target_fields
-            )
-            total_loss += sample_loss
-
-        avg_loss = total_loss / num_samples if num_samples > 0 else 0.0
-
-        # Log parameter summary at DEBUG level
-        if len(self.physical_trainer.learnable_params) > 0:
-            logger.debug(f"\n{'='*60}")
-            logger.debug(f"PHYSICAL TRAINING SUMMARY ({num_samples} samples)")
-            logger.debug(f"{'='*60}")
-            logger.debug(f"Average loss: {avg_loss:.6f}")
-            logger.debug(f"\nLearned Parameters:")
-            for i, name in enumerate(param_names):
-                initial_val = initial_params[name]
-                final_val = float(self.physical_trainer.learnable_params[i])
-                change = final_val - initial_val
-                change_pct = (
-                    (change / abs(initial_val) * 100) if abs(initial_val) > 1e-10 else 0
-                )
-                logger.debug(
-                    f"  {name}: {initial_val:.6f} -> {final_val:.6f} ({change:+.6f}, {change_pct:+.2f}%)"
-                )
-
-                # Show true value if available
-                if hasattr(self.physical_trainer.model, f"_true_{name}"):
-                    true_val = float(
-                        getattr(self.physical_trainer.model, f"_true_{name}")
-                    )
-                    error = abs(final_val - true_val)
-                    rel_error = (
-                        (error / abs(true_val) * 100) if abs(true_val) > 1e-10 else 0
-                    )
-                    logger.debug(
-                        f"    True: {true_val:.6f}, Error: {error:.6f} ({rel_error:.2f}%)"
-                    )
-            logger.debug(f"{'='*60}\n")
-
-        return avg_loss
+        avg_loss = sample_loss['final_loss']
+        return float(avg_loss)
 
     def _save_if_best(self, synthetic_loss: float, physical_loss: float):
         """
@@ -615,18 +474,3 @@ class HybridTrainer(AbstractTrainer):
         if physical_loss < self.best_physical_loss:
             self.best_physical_loss = physical_loss
 
-    def evaluate(self):
-        """
-        Evaluate both models on validation/test data.
-
-        This can be called after training to assess final performance.
-        """
-        logger.info("\n" + "=" * 60)
-        logger.info("HYBRID TRAINER EVALUATION")
-        logger.info("=" * 60)
-
-        # TODO: Implement evaluation logic
-        # Could call evaluate() on both component trainers
-
-        logger.info("Evaluation not yet fully implemented")
-        pass

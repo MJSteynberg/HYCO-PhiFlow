@@ -50,6 +50,7 @@ class SyntheticModel(nn.Module, ABC):
         # Calculate channel counts for padding
         self.num_dynamic_channels = sum(self.output_specs.values())
         self.num_static_channels = sum(self.input_specs.values()) - self.num_dynamic_channels
+        self._dynamic_slice = slice(0, self.num_dynamic_channels)
         
 
 
@@ -72,11 +73,13 @@ class SyntheticModel(nn.Module, ABC):
             next state.
         """
         dynamic_out = self.net(x)
-        out = x.clone()
-        out[:, :self.num_dynamic_channels, :, :] = dynamic_out
+        out = torch.empty_like(x)
+        out[:, self._dynamic_slice] = dynamic_out
+        out[:, self.num_dynamic_channels:] = x[:, self.num_dynamic_channels:]
         return out
 
 
+    @torch.no_grad()
     def generate_predictions(
         self,
         real_dataset,
@@ -85,77 +88,60 @@ class SyntheticModel(nn.Module, ABC):
         batch_size: int = 32,
     ):
         """
-        Generate predictions for data augmentation.
-
-        This method generates predictions on real data samples for use in
-        hybrid training augmentation. The number of predictions is proportional
-        to alpha.
-
-        Args:
-            real_dataset: Dataset of real samples (TensorDataset)
-            alpha: Proportion of generated samples (e.g., 0.1 = 10%)
-            device: Device to run model on ('cpu' or 'cuda')
-            batch_size: Batch size for generation
-
-        Returns:
-            Tuple of (inputs_list, targets_list) where:
-            - inputs_list: List of input tensors [C_all, H, W]
-            - targets_list: List of predicted target tensors [T, C_all, H, W]
+        OPTIMIZED: Pre-allocate tensors, avoid list appends.
         """
-
-        
-
         self.eval()
         self.to(device)
 
-        # Calculate number of samples to generate
         num_real = len(real_dataset)
         num_generate = int(num_real * alpha)
 
-        self.logger.debug(
-            f"Generating {num_generate} synthetic predictions "
-            f"(alpha={alpha:.2f} * {num_real} real samples)"
-        )
-
         if num_generate == 0:
             self.logger.warning("Alpha too small, no samples will be generated")
-            return [], []
+            return torch.empty(0), torch.empty(0)
 
-        # Select proportional indices for diverse sampling
-        indices = self._select_proportional_indices(num_real, num_generate)
-        subset = torch.utils.data.Subset(real_dataset, indices)
+        # Get sample shape
+        sample_input, _ = real_dataset[0]
+        input_shape = sample_input.shape
 
-        # Create DataLoader
-        loader = DataLoader(
-            subset, batch_size=batch_size, shuffle=False
+        # PRE-ALLOCATE full tensors (MUCH FASTER!)
+        all_inputs = torch.empty(
+            num_generate, *input_shape, 
+            dtype=sample_input.dtype, 
+            device=device
+        )
+        all_predictions = torch.empty(
+            num_generate, *input_shape,
+            dtype=sample_input.dtype,
+            device=device
         )
 
-        # Get sample to determine shape
-        sample_input, _ = real_dataset[0]
-        input_shape = sample_input.shape  # [C, H, W]
+        # Select diverse indices
+        indices = self._select_proportional_indices(num_real, num_generate)
+        subset = torch.utils.data.Subset(real_dataset, indices)
+        
+        # Enable pin_memory for faster transfer
+        loader = DataLoader(
+            subset, 
+            batch_size=batch_size, 
+            shuffle=False,
+            pin_memory=(device != 'cpu'),
+            num_workers=0  # Can be increased if data loading is bottleneck
+        )
 
-        # PRE-ALLOCATE full tensors (FASTEST!)
-        all_inputs = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype, device=device)
-        all_predictions = torch.empty(num_generate, *input_shape, dtype=sample_input.dtype, device=device)
+        idx = 0
+        for batch_inputs, _ in loader:
+            batch_size_actual = batch_inputs.size(0)
+            
+            # Non-blocking transfer for async GPU copy
+            batch_inputs = batch_inputs.to(device, non_blocking=True)
+            batch_predictions = self(batch_inputs)
 
-        idx = 0  # Track current position
-
-        with torch.no_grad():
-            for (batch_inputs, _) in loader:
-                batch_size_actual = batch_inputs.size(0)
-                
-                # Move to device
-                batch_inputs = batch_inputs.to(device, non_blocking=True)
-
-                # Generate predictions
-                batch_predictions = self(batch_inputs)
-
-                # Direct copy to pre-allocated tensor
-                all_inputs[idx:idx + batch_size_actual] = batch_inputs
-                all_predictions[idx:idx + batch_size_actual] = batch_predictions
-                
-                idx += batch_size_actual
-
+            # Direct copy to pre-allocated tensor
+            all_inputs[idx:idx + batch_size_actual] = batch_inputs
+            all_predictions[idx:idx + batch_size_actual] = batch_predictions
+            
+            idx += batch_size_actual
 
         return all_inputs, all_predictions
 

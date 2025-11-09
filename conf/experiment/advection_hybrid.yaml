@@ -54,20 +54,19 @@ trainer_params:
   validation_rollout_steps: 75
   
   # Checkpointing
-  checkpoint_freq: 10
   print_freq: 10
 
   # Physical model optimization settings
   method: 'L-BFGS-B'  # Gradient descent
   abs_tol: 1e-3
-  max_iterations: 10  # Maximum optimization iterations
+  max_iterations: 5 # Maximum optimization iterations
 
 
 
   # Hybrid config
   hybrid:
     num_cycles: 100
-    synthetic_epochs_per_cycle: 10 # More synthetic training
+    synthetic_epochs_per_cycle: 1 # More synthetic training
     physical_epochs_per_cycle: 1   # Physical learns from synthetic
     warmup_synthetic_epochs: 1   # Establish synthetic baseline
     
