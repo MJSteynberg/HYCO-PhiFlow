@@ -5,16 +5,12 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from pathlib import Path
 from typing import Dict, Any, List
-from tqdm import tqdm
 
 # Import tensor trainer (new hierarchy)
 from src.training.tensor_trainer import TensorTrainer
 
-# Import the model registry
-from src.models import ModelRegistry
 
 # Import logging
 from src.utils.logger import get_logger
@@ -60,10 +56,12 @@ class SyntheticTrainer(TensorTrainer):
         model_path_dir = self.model_config["model_path"]
         self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
         os.makedirs(model_path_dir, exist_ok=True)
-        logger.debug(f"Checkpoint path set to: {self.checkpoint_path}")
 
         # --- Loss function ---
         self.loss_fn = nn.MSELoss()  # Simple MSE for tensor-based training
+
+        # --- AMP ---
+        self.scaler = torch.amp.GradScaler(enabled=True)
 
         # --- Learning rate scheduler (optional, updates per epoch) ---
         use_scheduler = self.trainer_config.get("use_scheduler", True)
@@ -78,32 +76,7 @@ class SyntheticTrainer(TensorTrainer):
         else:
             self.scheduler = None
 
-        # --- Memory monitoring (optional, enabled by config) ---
-        enable_memory_monitoring = self.trainer_config.get(
-            "enable_memory_monitoring", False
-        )
-        if enable_memory_monitoring:
-            try:
-                from src.utils.memory_monitor import EpochPerformanceMonitor
-
-                verbose_batches = self.trainer_config["memory_monitor_batches"]
-                self.memory_monitor = EpochPerformanceMonitor(
-                    enabled=True,
-                    verbose_batches=verbose_batches,
-                    device=0 if torch.cuda.is_available() else -1,
-                )
-                logger.info(
-                    f"Performance monitoring enabled (verbose for first {verbose_batches} batches)"
-                )
-            except ImportError:
-                logger.warning(
-                    "Could not import EpochPerformanceMonitor. Monitoring disabled."
-                )
-                self.memory_monitor = None
-        else:
-            self.memory_monitor = None
-
-    def _train_epoch_with_data(self, data_source):
+    def _train_epoch(self, data_source):
         """
         Runs one epoch of autoregressive training using provided data source.
 
@@ -116,32 +89,20 @@ class SyntheticTrainer(TensorTrainer):
         self.model.train()
         total_loss = 0.0
 
-        # Use memory monitor if available
-        if self.memory_monitor is not None:
-            self.memory_monitor.on_epoch_start()
 
         for batch_idx, batch in enumerate(data_source):
             # Track batch start time
-            if self.memory_monitor is not None:
-                self.memory_monitor.on_batch_start(batch_idx)
 
             self.optimizer.zero_grad()
 
             # Compute loss using shared method
             avg_rollout_loss = self._compute_batch_loss(batch)
-            avg_rollout_loss.backward()
 
-            self.optimizer.step()
-
-            # Track batch completion with memory monitor
-            if self.memory_monitor is not None:
-                self.memory_monitor.on_batch_end(batch_idx, avg_rollout_loss.item())
+            self.scaler.scale(avg_rollout_loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
             total_loss += avg_rollout_loss.item()
-
-        # Track epoch completion
-        if self.memory_monitor is not None:
-            self.memory_monitor.on_epoch_end()
 
         # Update learning rate scheduler once per epoch (outside batch loop)
         if self.scheduler is not None:
@@ -162,48 +123,48 @@ class SyntheticTrainer(TensorTrainer):
         Returns:
             Loss tensor for the batch
         """
-        initial_state, rollout_targets = batch
-        initial_state = initial_state.to(self.device)
-        rollout_targets = rollout_targets.to(self.device)
+        with torch.amp.autocast(enabled=True, device_type=self.device.type):
+            initial_state, rollout_targets = batch
+            initial_state = initial_state.to(self.device, non_blocking=True)
+            rollout_targets = rollout_targets.to(self.device, non_blocking=True)
 
-        # Autoregressive rollout
-        batch_size = initial_state.shape[0]
-        num_steps = rollout_targets.shape[1]
+            # Autoregressive rollout
+            num_steps = rollout_targets.shape[1]
 
-        current_state = initial_state  # [B, C_all, H, W] - all fields
-        total_step_loss = 0.0
+            current_state = initial_state  # [B, C_all, H, W] - all fields
+            total_step_loss = 0.0
 
-        for t in range(num_steps):
-            # Predict next state (model returns all fields)
-            prediction = self.model(current_state)  # [B, C_all, H, W]
+            for t in range(num_steps):
+                # Predict next state (model returns all fields)
+                prediction = self.model(current_state)  # [B, C_all, H, W]
 
-            target_all = rollout_targets[:, t, :, :, :]  # [B, C_all, H, W]
+                target_all = rollout_targets[:, t, :, :, :]  # [B, C_all, H, W]
 
-            step_loss = self.loss_fn(prediction, target_all)
-            total_step_loss += step_loss
+                step_loss = self.loss_fn(prediction, target_all)
+                total_step_loss += step_loss
 
-            # Use full prediction (all fields) as input for next timestep
-            current_state = prediction
+                # Use full prediction (all fields) as input for next timestep
+                current_state = prediction
 
-        # Average loss over timesteps
-        avg_rollout_loss = total_step_loss / num_steps
+            # Average loss over timesteps
+            avg_rollout_loss = total_step_loss / num_steps
         return avg_rollout_loss
 
-    def _unpack_tensor_to_dict(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Slice a concatenated tensor into individual field tensors.
+    # def _unpack_tensor_to_dict(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+    #     """
+    #     Slice a concatenated tensor into individual field tensors.
 
-        Args:
-            tensor: Tensor with all fields concatenated on channel dimension
-                   Shape: [B, C, H, W] or [B, T, C, H, W]
+    #     Args:
+    #         tensor: Tensor with all fields concatenated on channel dimension
+    #                Shape: [B, C, H, W] or [B, T, C, H, W]
 
-        Returns:
-            Dictionary mapping field names to their tensor slices
-        """
-        output_dict = {}
-        for field_name, (start_ch, end_ch) in self.channel_map.items():
-            if tensor.dim() == 4:  # [B, C, H, W]
-                output_dict[field_name] = tensor[:, start_ch:end_ch, :, :]
-            elif tensor.dim() == 5:  # [B, T, C, H, W]
-                output_dict[field_name] = tensor[:, :, start_ch:end_ch, :, :]
-        return output_dict
+    #     Returns:
+    #         Dictionary mapping field names to their tensor slices
+    #     """
+    #     output_dict = {}
+    #     for field_name, (start_ch, end_ch) in self.channel_map.items():
+    #         if tensor.dim() == 4:  # [B, C, H, W]
+    #             output_dict[field_name] = tensor[:, start_ch:end_ch, :, :]
+    #         elif tensor.dim() == 5:  # [B, T, C, H, W]
+    #             output_dict[field_name] = tensor[:, :, start_ch:end_ch, :, :]
+    #     return output_dict

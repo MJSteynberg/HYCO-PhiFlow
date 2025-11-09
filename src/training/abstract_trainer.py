@@ -9,10 +9,6 @@ Key Principle:
 - Only includes functionality that ALL trainers need
 - No PyTorch-specific code (that goes in TensorTrainer)
 - No PhiFlow-specific code (that goes in FieldTrainer)
-- Provides clear extension points for hybrid trainers
-
-This replaces the overly-prescriptive BaseTrainer that forced incompatible
-interfaces together.
 """
 
 from abc import ABC, abstractmethod
@@ -50,8 +46,8 @@ class AbstractTrainer(ABC):
             config: Full configuration dictionary containing all settings.
                    This should include data, model, and trainer parameters.
         """
-        self.config = config
-        self.project_root = config.get("project_root", ".")
+        self._config = config
+        self._project_root = config.get("project_root", ".")
 
     @abstractmethod
     def train(self) -> Dict[str, Any]:
@@ -74,7 +70,8 @@ class AbstractTrainer(ABC):
         """
         pass
 
-    def get_config(self) -> Dict[str, Any]:
+    @property
+    def config(self) -> Dict[str, Any]:
         """
         Return configuration used for this trainer.
 
@@ -83,13 +80,34 @@ class AbstractTrainer(ABC):
         Returns:
             Configuration dictionary
         """
-        return self.config
+        return self._config
+    
+    @config.setter
+    def config(self, new_config: Dict[str, Any]):
+        """
+        Set a new configuration for the trainer.
 
-    def get_project_root(self) -> str:
+        Args:
+            new_config: New configuration dictionary to replace the existing one.
+        """
+        self._config = new_config
+
+    @property
+    def project_root(self) -> str:
         """
         Get the project root directory.
 
         Returns:
             Project root path as string
         """
-        return self.project_root
+        return self._project_root
+    
+    @project_root.setter
+    def project_root(self, new_root: str):
+        """
+        Set a new project root directory.
+
+        Args:
+            new_root: New project root path as string
+        """
+        self._project_root = new_root

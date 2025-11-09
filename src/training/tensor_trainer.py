@@ -7,9 +7,6 @@ All PyTorch-specific functionality lives here, including:
 - Model checkpointing
 - Parameter counting
 - Epoch-based training loop structure
-
-This separates tensor-based concerns from field-based concerns,
-providing a cleaner architecture than the previous BaseTrainer.
 """
 
 from abc import abstractmethod
@@ -73,14 +70,11 @@ class TensorTrainer(AbstractTrainer):
         # PyTorch-specific initialization
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Store model and move to device (allow None for testing)
-        if model is not None:
-            self.model = model.to(self.device)
-        else:
-            self.model = None
+        # Store model and move to device
+        self.model = model.to(self.device)
 
-        # Create optimizer for the model (only if model exists)
-        self.optimizer = self._create_optimizer() if model is not None else None
+        # Create optimizer for the model
+        self.optimizer = self._create_optimizer()
 
         # Checkpoint path (can be set by subclass)
         self.checkpoint_path: Optional[Path] = None
@@ -99,13 +93,11 @@ class TensorTrainer(AbstractTrainer):
         Returns:
             PyTorch optimizer instance
         """
-        learning_rate = self.config.get("trainer_params", {}).get(
-            "learning_rate", 0.001
-        )
+        learning_rate = self.config['trainer_params']['learning_rate']
         return torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
     @abstractmethod
-    def _train_epoch_with_data(self, data_source: DataLoader) -> float:
+    def _train_epoch(self, data_source: DataLoader) -> float:
         """
         Train for one epoch using provided data source.
 
@@ -118,18 +110,15 @@ class TensorTrainer(AbstractTrainer):
 
         Args:
             data_source: DataLoader yielding (input, target) tuples
-                        Note: NO weights - all samples treated equally!
 
         Returns:
             Average loss for the epoch
         """
         pass
 
-    def train(self, data_source: DataLoader, num_epochs: int) -> Dict[str, Any]:
+    def train(self, data_source: DataLoader, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """
         Execute training for specified number of epochs with provided data.
-
-        NEW SIGNATURE: Data is passed explicitly, not held internally.
 
         Args:
             data_source: PyTorch DataLoader yielding (input, target) tuples
@@ -138,9 +127,6 @@ class TensorTrainer(AbstractTrainer):
         Returns:
             Dictionary with training results including losses and metrics
         """
-        if self.model is None:
-            raise RuntimeError("Model must be initialized before training")
-
         results = {
             "train_losses": [],
             "epochs": [],
@@ -150,20 +136,11 @@ class TensorTrainer(AbstractTrainer):
         }
 
         # Only log if not suppressed in config
-        if not self.config.get("trainer_params", {}).get(
-            "suppress_training_logs", False
-        ):
+        if verbose:
             logger.info(f"Training on {self.device} for {num_epochs} epochs")
 
-        # Get checkpoint configuration (save_best_only is always true - hardcoded)
-        checkpoint_freq = self.config.get("trainer_params", {}).get(
-            "checkpoint_freq", 10
-        )
-
         # Create progress bar for epochs (disable if suppress_training_logs is True)
-        disable_tqdm = self.config.get("trainer_params", {}).get(
-            "suppress_training_logs", False
-        )
+        disable_tqdm = not verbose
         pbar = tqdm(
             range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
         )
@@ -172,7 +149,7 @@ class TensorTrainer(AbstractTrainer):
             start_time = time.time()
 
             # Training
-            train_loss = self._train_epoch_with_data(data_source)
+            train_loss = self._train_epoch(data_source)
             results["train_losses"].append(train_loss)
             results["epochs"].append(epoch + 1)
 
@@ -183,16 +160,13 @@ class TensorTrainer(AbstractTrainer):
                 results["best_epoch"] = self.best_epoch
                 results["best_val_loss"] = self.best_val_loss
 
-                # Save best model (only if checkpoint_path is set)
-                if self.checkpoint_path is not None:
-                    self.save_checkpoint(
-                        epoch=epoch,
-                        loss=train_loss,
-                        optimizer_state=(
-                            self.optimizer.state_dict() if self.optimizer else None
-                        ),
-                        is_best=True,
+                self.save_checkpoint(
+                    epoch=epoch,
+                    loss=train_loss,
+                    optimizer_state=(
+                        self.optimizer.state_dict() if self.optimizer else None
                     )
+                )
 
             epoch_time = time.time() - start_time
 
@@ -202,19 +176,14 @@ class TensorTrainer(AbstractTrainer):
                 "time": f"{epoch_time:.2f}s",
             }
 
-            if self.best_epoch > 0:
-                postfix_dict["best_epoch"] = self.best_epoch
+            postfix_dict["best_epoch"] = self.best_epoch
 
             pbar.set_postfix(postfix_dict)
-
-            # Note: Periodic checkpoints disabled - save_best_only is hardcoded to True
 
         final_loss = results["train_losses"][-1]
 
         # Only log if not suppressed in config
-        if not self.config.get("trainer_params", {}).get(
-            "suppress_training_logs", False
-        ):
+        if verbose:
             logger.info(
                 f"Training Complete! Best Epoch: {results['best_epoch']}, Final Loss: {final_loss:.6f}"
             )
@@ -232,7 +201,6 @@ class TensorTrainer(AbstractTrainer):
         loss: float,
         optimizer_state: Optional[Dict] = None,
         additional_info: Optional[Dict] = None,
-        is_best: bool = False,
     ):
         """
         Save PyTorch model checkpoint.
@@ -248,11 +216,6 @@ class TensorTrainer(AbstractTrainer):
             ValueError: If checkpoint_path is not set
             RuntimeError: If model is not initialized
         """
-        if self.checkpoint_path is None:
-            raise ValueError("checkpoint_path not set")
-
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
 
         # Build checkpoint dictionary
         checkpoint = {
@@ -271,12 +234,6 @@ class TensorTrainer(AbstractTrainer):
         # Save regular checkpoint
         torch.save(checkpoint, self.checkpoint_path)
         logger.debug(f"Saved checkpoint to {self.checkpoint_path}")
-
-        # Save best checkpoint if specified
-        if is_best:
-            best_path = Path(self.checkpoint_path).parent / "best.pth"
-            torch.save(checkpoint, best_path)
-            logger.debug(f"Saved best checkpoint to {best_path}")
 
     def load_checkpoint(
         self, path: Optional[Path] = None, strict: bool = True
@@ -297,26 +254,15 @@ class TensorTrainer(AbstractTrainer):
             FileNotFoundError: If checkpoint file doesn't exist
             RuntimeError: If model is not initialized
         """
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
 
         if path is None:
             path = self.checkpoint_path
-
-        if path is None:
-            raise ValueError("No checkpoint path provided")
 
         if not Path(path).exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
 
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
-
-        logger.debug(f"Loaded checkpoint from {path}")
-        if "epoch" in checkpoint:
-            logger.debug(f"  Epoch: {checkpoint['epoch']}")
-        if "loss" in checkpoint:
-            logger.debug(f"  Loss: {checkpoint['loss']:.6f}")
 
         return checkpoint
 
