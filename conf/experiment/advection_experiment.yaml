@@ -52,7 +52,7 @@ trainer_params:
   
   # Training hyperparameters
   epochs: 100
-  batch_size: 16
+  batch_size: 128
   num_predict_steps: 4
   max_iterations: 10
   

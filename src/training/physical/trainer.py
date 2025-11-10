@@ -47,7 +47,7 @@ class PhysicalTrainer(FieldTrainer):
         super().__init__(config, model, learnable_params)
 
         # Placeholder
-        self.batch_size = config.get("batch_size", 32)
+        self.batch_size = 1000
 
 
     def _train_epoch(self, data_source: DataLoader) -> float:

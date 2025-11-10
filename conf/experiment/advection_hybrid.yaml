@@ -71,7 +71,7 @@ trainer_params:
     warmup_synthetic_epochs: 1   # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
-    real_data_access: 'synthetic_only'
+    real_data_access: 'synthetic_only'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'
 
   augmentation:
     alpha: 1.0  # More physics-based augmentation

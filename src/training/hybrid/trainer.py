@@ -19,7 +19,8 @@ import torch.nn as nn
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from tqdm import tqdm
-
+import gc
+from contextlib import contextmanager
 from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
@@ -76,22 +77,50 @@ class HybridTrainer(AbstractTrainer):
         self.learnable_params = learnable_params
 
         # Parse configuration
-        self.trainer_config = config["trainer_params"]
+        self._parse_config()
+
+        # Setup device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Pre-create base datasets (created once, reused)
+        self._base_tensor_dataset = None
+        self._base_field_dataset = None
+        self._initialize_datasets()
+
+        # Create component trainers
+        self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
+        self.physical_trainer = PhysicalTrainer(config, physical_model, learnable_params)
+
+        # Training state
+        self.current_cycle = 0
+        self.best_synthetic_loss = float("inf")
+        self.best_physical_loss = float("inf")
+
+    # =======================================
+    # INITIALIZATION
+    # =======================================
+
+    def _parse_config(self):
+        """Extract all configuration parameters."""
+        self.trainer_config = self.config["trainer_params"]
         self.hybrid_config = self.trainer_config["hybrid"]
         self.aug_config = self.trainer_config["augmentation"]
-
-        # Hybrid training parameters
+        
+        # Training parameters
         self.num_cycles = self.hybrid_config["num_cycles"]
         self.synthetic_epochs_per_cycle = self.hybrid_config["synthetic_epochs_per_cycle"]
         self.physical_epochs_per_cycle = self.hybrid_config["physical_epochs_per_cycle"]
-        self.alpha = self.aug_config["alpha"]
         self.warmup_synthetic_epochs = self.hybrid_config["warmup_synthetic_epochs"]
-
-        # Data access control: which models are allowed to see real data
-        # Options: 'both', 'synthetic_only', 'physical_only', 'neither'
+        
+        # Augmentation parameters
+        self.alpha = self.aug_config["alpha"]
+        
+        # Data access control
         self.real_data_access = self.hybrid_config["real_data_access"]
+        self._validate_real_data_access()
 
-        # Validate real_data_access parameter
+    def _validate_real_data_access(self):
+        """Validate real_data_access parameter."""
         valid_options = ["both", "synthetic_only", "physical_only", "neither"]
         if self.real_data_access not in valid_options:
             raise ValueError(
@@ -99,100 +128,313 @@ class HybridTrainer(AbstractTrainer):
                 f"Must be one of {valid_options}"
             )
 
-        # Device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def _initialize_datasets(self):
+        """
+        Pre-create base datasets that will be reused throughout training.
+        These are created ONCE and then updated in-place.
+        """
+        logger.info("Initializing reusable datasets...")
 
-        logging.getLogger("data.abstract_dataset").setLevel(logging.WARNING)
-        logging.getLogger("factories.dataloader_factory").setLevel(logging.WARNING)
-        logging.getLogger("physical.base").setLevel(logging.WARNING)
-        logging.getLogger("src.models.synthetic.base").setLevel(logging.WARNING)
-
-        # Create component trainers
-        self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
-        self.physical_trainer = PhysicalTrainer(
-            config, physical_model, learnable_params
+        train_sim_indices = self.trainer_config["train_sim"]
+        
+        # Create base tensor dataset (for synthetic training)
+        self._base_tensor_dataset = self._create_dataset(
+            train_sim_indices,
+            return_fields=False
+        )
+        
+        # Create base field dataset (for physical training)  
+        self._base_field_dataset = self._create_dataset(
+            train_sim_indices,
+            return_fields=True
         )
 
-        # Training state
-        self.current_cycle = 0
-        self.best_synthetic_loss = float("inf")
-        self.best_physical_loss = float("inf")
-
-        logger.info("=" * 20)
-        logger.info("HYBRID TRAINER INITIALIZED")
-        logger.info(
-            f"  Cycles: {self.num_cycles}, Synthetic: {self.synthetic_epochs_per_cycle}e/c, Physical: {self.physical_epochs_per_cycle}e/c, Warmup: {self.warmup_synthetic_epochs}e"
-        )
-        logger.info(f"  Alpha: {self.alpha}, Real data access: {self.real_data_access}")
-        logger.info("=" * 20)
+    # =======================================
+    # MAIN TRAINING LOOP
+    # =======================================
 
     def train(self):
         """
-        Execute hybrid training for specified number of cycles.
-
-        Training flow:
-        1. Optional warmup: Train synthetic model without augmentation
-        2. For each cycle:
-           a. Generate physical predictions
-           b. Train synthetic model with augmented data
-           c. Generate synthetic predictions
-           d. Train physical model with augmented data
-           e. Evaluate and checkpoint
+        FULLY OPTIMIZED training loop with all improvements:
+        - Step 1: Batched physical predictions
+        - Step 2: Optimized synthetic predictions  
+        - Step 3: Dataset reuse
+        - Step 4: Memory management
+        
+        Replace train() with this method.
         """
-
         # Optional warmup phase
         if self.warmup_synthetic_epochs > 0:
-            logger.info(f"Warmup: {self.warmup_synthetic_epochs} epoch(s)")
-            self._warmup_synthetic()
-
-        # Main hybrid training loop with tqdm progress bar
+            self._run_warmup()
+        
+        # Main hybrid training loop
         pbar = tqdm(range(self.num_cycles), desc="Hybrid Cycles", unit="cycle")
-
+        
         for cycle in pbar:
             self.current_cycle = cycle
-
-            # Phase 1: Synthetic training with physical predictions
-            physical_preds = self._generate_physical_predictions()
-            synthetic_loss = self._train_synthetic_with_augmentation(physical_preds)
-
-            # Phase 2: Physical training with synthetic predictions
-            synthetic_preds = self._generate_synthetic_predictions()
-            physical_loss = self._train_physical_with_augmentation(synthetic_preds)
-
-            # Update progress bar with losses
-            pbar.set_postfix(
-                {
-                    "syn_loss": f"{synthetic_loss:.6f}",
-                    "phy_loss": f"{physical_loss:.6f}",
-                }
-            )
-
-            # Save checkpoints if improved
+            
+            synthetic_loss, physical_loss = self._run_cycle()
+            
+            # Update progress bar and save checkpoints
+            pbar.set_postfix({
+                'syn_loss': f"{synthetic_loss:.6f}",
+                'phy_loss': f"{physical_loss:.6f}",
+            })
             self._save_if_best(synthetic_loss, physical_loss)
 
-    def _warmup_synthetic(self):
+    def _run_warmup(self):
         """
-        Warm up the synthetic model with standard training (no augmentation).
-
-        This gives the synthetic model a head start before hybrid training begins.
+        OPTIMIZED warmup using pre-created dataset.
         """
-
-        # Create standard dataset (no augmentation)
-        # Use TensorDataset directly for the base data
-        base_dataset = self._create_hybrid_dataset(self.trainer_config["train_sim"])
-
+        # Use base dataset directly (no augmentation)
+        self._base_tensor_dataset.access_policy = "real_only"
+        
         dataloader = DataLoader(
-            base_dataset,
+            self._base_tensor_dataset,
             batch_size=self.trainer_config["batch_size"],
             shuffle=True,
+            pin_memory=True,
         )
-
-        # Train synthetic model
+        
         self.synthetic_trainer.train(
-            data_source=dataloader, num_epochs=self.warmup_synthetic_epochs, verbose=True
+            data_source=dataloader,
+            num_epochs=self.warmup_synthetic_epochs,
+            verbose=True
         )
 
-    def _create_hybrid_dataset(
+        # Clean GPU memory after warmup
+        self._clear_gpu_memory()
+
+    def _run_cycle(self) -> Tuple[float, float]:
+        """
+        Execute one complete hybrid training cycle.
+        
+        Returns:
+            Tuple of (synthetic_loss, physical_loss)
+        """
+        # Phase 1: Generate physical predictions
+        physical_preds = self._generate_physical_predictions()
+        
+        # Phase 2: Train synthetic model with augmentation
+        synthetic_loss = self._train_synthetic_model(physical_preds)
+        
+        # Clean up
+        del physical_preds
+        
+        # Phase 3: Generate synthetic predictions
+        synthetic_preds = self._generate_synthetic_predictions()
+        
+        # Phase 4: Train physical model with augmentation
+        physical_loss = self._train_physical_model(synthetic_preds)
+        
+        # Clean up
+        del synthetic_preds
+        self._clear_gpu_memory()
+        
+        return synthetic_loss, physical_loss
+    
+    # =======================================
+    # Prediction Generation
+    # =======================================
+
+    def _generate_physical_predictions(self) -> List[Tuple]:
+        """
+        OPTIMIZED: Generate predictions using batched physical model operations.
+        
+        Key improvements:
+        1. Pre-create converters once (not per sample)
+        2. Use batched rollout from physical model
+        3. Single batched tensor conversion at the end
+        4. Minimize intermediate allocations
+        
+        Returns:
+            List of (input_tensor, target_tensor) tuples
+        """
+        with self.managed_memory_phase("Physical Prediction"):
+            # Move physical model to GPU if not already there
+            if hasattr(self.physical_model, 'to'):
+                self.physical_model.to(self.device)
+            
+            
+            # Create field dataset (unchanged)
+            field_dataset = self._base_field_dataset
+            num_predict_steps = self.trainer_config["num_predict_steps"]
+            
+            # === OPTIMIZATION 1: Generate all predictions at once (batched) ===
+            initial_fields, predictions = self.physical_model.generate_predictions(
+                real_dataset=field_dataset,
+                alpha=self.alpha,
+                num_rollout_steps=num_predict_steps,
+            )
+
+            # Convert fields to tensors (batched for efficiency)
+            tensor_predictions = self._convert_fields_to_tensors(
+                initial_fields, predictions, field_dataset
+            )
+            
+            return tensor_predictions
+        
+    def _generate_synthetic_predictions(self) -> List[Tuple]:
+        """
+        Generate predictions using synthetic model for physical augmentation.
+        
+        Returns:
+            List of (input_tensor, target_tensor) tuples
+        """
+        with self.managed_memory_phase("Synthetic Prediction"):
+            # Move model to GPU
+            self.synthetic_model.to(self.device)
+            self.synthetic_model.eval()
+            
+            # Use synthetic model's optimized generation method
+            tensor_dataset =  self._create_dataset(self.trainer_config["train_sim"])
+            batch_size = self.trainer_config["batch_size"]
+            
+            inputs_tensor, targets_tensor = self.synthetic_model.generate_predictions(
+                real_dataset=tensor_dataset,
+                alpha=self.alpha,
+                device=str(self.device),
+                batch_size=batch_size,
+            )
+            
+            # Convert to list of tuples
+            tensor_predictions = list(zip(inputs_tensor, targets_tensor))
+            
+            return tensor_predictions
+        
+    def _convert_fields_to_tensors(
+        self, 
+        initial_fields, 
+        predictions, 
+        field_dataset
+    ) -> List[Tuple]:
+        """
+        Convert PhiFlow fields to PyTorch tensors (batched for efficiency).
+        
+        Args:
+            initial_fields: Initial field states
+            predictions: Predicted field trajectories
+            field_dataset: Field dataset (for field names)
+        
+        Returns:
+            List of (input_tensor, target_tensor) tuples
+        """
+        cfg = ConfigHelper(self.config)
+        field_names_input = field_dataset.field_names
+        field_names_target = cfg.get_field_names()
+        
+        # Pre-create converters (reused for all samples)
+        input_converters = {
+            name: make_converter(initial_fields[name]) 
+            for name in field_names_input
+        }
+        target_converters = {
+            name: make_converter(predictions[0][name]) 
+            for name in field_names_target
+        }
+        
+        # Batched conversion: all inputs at once
+        batched_input = torch.cat([
+            input_converters[name].field_to_tensor(
+                initial_fields[name], 
+                ensure_cpu=False
+            )
+            for name in field_names_input
+        ], dim=1)
+        
+        # Batched conversion: all targets at once
+        batched_targets = torch.stack([
+            torch.cat([
+                target_converters[name].field_to_tensor(
+                    pred_t[name], 
+                    ensure_cpu=False
+                )
+                for name in field_names_target
+            ], dim=1)
+            for pred_t in predictions
+        ], dim=1)
+        
+        # Move to CPU once (not per-sample)
+        batched_input_cpu = batched_input.cpu()
+        batched_targets_cpu = batched_targets.cpu()
+        
+        # Split into list of tuples
+        B = batched_input.shape[0]
+        tensor_predictions = [
+            (batched_input_cpu[i], batched_targets_cpu[i])
+            for i in range(B)
+        ]
+        
+        return tensor_predictions
+    
+
+    # =======================================
+    # MODEL TRAINING
+    # =======================================
+
+    def _train_synthetic_model(self, generated_data: List[Tuple]) -> float:
+        """
+        OPTIMIZED: Synthetic training with memory management.
+        """
+        with self.managed_memory_phase("Synthetic Training", clear_cache=False):
+            # Update dataset (from Step 3)
+            access_policy = self._get_access_policy(for_synthetic=True)
+            
+            self._update_dataset_augmentation(
+                self._base_tensor_dataset,
+                generated_data,
+                access_policy
+            )
+            
+            # Create DataLoader
+            train_loader = DataLoader(
+                self._base_tensor_dataset,
+                batch_size=self.trainer_config["batch_size"],
+                shuffle=True,
+                num_workers=0,
+                pin_memory=True,
+            )
+            
+            # Train
+            result = self.synthetic_trainer.train(
+                data_source=train_loader,
+                num_epochs=self.synthetic_epochs_per_cycle,
+                verbose=False
+            )
+            
+            return result['final_loss']
+        
+    def _train_physical_model(self, generated_data: List[Tuple]) -> float:
+        """
+        OPTIMIZED: Physical training with memory management.
+        """
+        if len(self.physical_trainer.learnable_params) == 0:
+            return 0.0
+        
+        with self.managed_memory_phase("Physical Training", clear_cache=False):
+            # Update dataset (from Step 3)
+            access_policy = self._get_access_policy(for_synthetic=False)
+            
+            self._update_dataset_augmentation(
+                self._base_field_dataset,
+                generated_data,
+                access_policy
+            )
+            
+            # Train
+            sample_loss = self.physical_trainer.train(
+                data_source=self._base_field_dataset,
+                num_epochs=self.physical_epochs_per_cycle,
+                verbose=False
+            )
+            
+            return float(sample_loss['final_loss'])
+        
+    # =======================================
+    # DATASET MANAGEMENT
+    # =======================================
+
+    def _create_dataset(
         self, sim_indices: List[int], return_fields: bool = False
     ):
         """Create dataset for training using new DataLoaderFactory.
@@ -218,240 +460,86 @@ class HybridTrainer(AbstractTrainer):
             ),
         )
 
-        # Extract dataset if we got a DataLoader
-        if return_fields:
-            # Field mode returns FieldDataset directly
-            return result
-        else:
-            # Tensor mode returns DataLoader, extract the dataset
-            return result.dataset
+        return result if return_fields else result.dataset
 
-    def _generate_physical_predictions(self) -> List[Tuple]:
+    
+    def _update_dataset_augmentation(
+        self, 
+        dataset, 
+        augmented_data: List[Tuple],
+        access_policy: str
+    ):
         """
-        Generate predictions using physical model for synthetic training.
-
-        Returns:
-            List of (input_tensor, target_tensor) tuples
-        """
-        # Create field dataset for physical model (returns PhiFlow Fields)
-        field_dataset = self._create_hybrid_dataset(
-            self.trainer_config["train_sim"],
-            return_fields=True,  # Physical model needs Fields not tensors
-        )
-
-        num_predict_steps = self.trainer_config["num_predict_steps"]
-
-        # === 1. Batched rollout (already tested above) ===
-        initial_fields, predictions = self.physical_model.generate_predictions(
-            real_dataset=field_dataset,
-            alpha=self.alpha,
-            num_rollout_steps=num_predict_steps,
-        )
-
-
-        cfg = ConfigHelper(self.config)
-        field_names_input = field_dataset.field_names  # e.g. ['density', 'velocity']
-        field_names_target = cfg.get_field_names()     # same order for targets
-
-        # Pre-create converters for all input and target fields
-        input_converters = {name: make_converter(initial_fields[name]) for name in field_names_input}
-        target_converters = {name: make_converter(predictions[0][name]) for name in field_names_target}
-
-        # Batched input tensor: [B, C_all, H, W]
-        batched_input = torch.cat(
-            [input_converters[name].field_to_tensor(initial_fields[name], ensure_cpu=False)
-            for name in field_names_input],
-            dim=1
-        )
-
-        # Batched targets: [B, T, C_all, H, W]
-        batched_targets = torch.stack([
-            torch.cat([
-                target_converters[name].field_to_tensor(pred_t[name], ensure_cpu=False)
-                for name in field_names_target
-            ], dim=1)
-            for pred_t in predictions
-        ], dim=1)
-
-        # === 3. Split batch into individual samples for return ===
-        B = batched_input.shape[0]
-        tensor_predictions = []
-        for i in range(B):
-            input_tensor = batched_input[i].cpu()            # [C_all, H, W]
-            target_tensor = batched_targets[i].cpu()         # [T, C_all, H, W]
-            tensor_predictions.append((input_tensor, target_tensor))
-
-        return tensor_predictions
-
-
-    def _generate_synthetic_predictions(self) -> List[Tuple]:
-        """
-        Generate predictions using synthetic model for physical training.
-
-        Returns:
-            List of (initial_fields, target_fields) tuples
-        """
-        # Create tensor dataset for synthetic model
-        tensor_dataset = self._create_hybrid_dataset(self.trainer_config["train_sim"])
-
-        # Generate predictions using the synthetic model's method
-        batch_size = self.trainer_config["batch_size"]
-
-        inputs_list, targets_list = self.synthetic_model.generate_predictions(
-            real_dataset=tensor_dataset,
-            alpha=self.alpha,
-            device=str(self.device),
-            batch_size=batch_size,
-        )
-
-        # Convert to list of tuples: [(input1, target1), (input2, target2), ...]
-        predictions = list(zip(inputs_list, targets_list))
-
-        return predictions
-
-    def _train_synthetic_with_augmentation(self, generated_data: List[Tuple]) -> float:
-        """
-        Train synthetic model with data access controlled by dataset.
-
-        The dataset's access_policy parameter controls whether the synthetic model
-        sees real data, generated data, or both.
-
-        Args:
-            generated_data: Physical model predictions as (input, target) tuples
-
-        Returns:
-            Final training loss
-        """
-        # Determine access policy based on real_data_access config
-        # 'both' or 'synthetic_only' -> synthetic sees both real and generated
-        # 'physical_only' or 'neither' -> synthetic sees only generated
-        if self.real_data_access in ["both", "synthetic_only"]:
-            access_policy = "both"
-        else:
-            access_policy = "generated_only"
-
-        # Prepare augmentation config
-        augmentation_config = {
-            "mode": "memory",
-            "alpha": self.alpha,
-            "data": generated_data,  # Pre-loaded augmented data
-        }
-
-
-
-        cfg = ConfigHelper(self.config)
-
-        # Create DataManager
-        project_root = cfg.get_project_root()
-        raw_data_dir = project_root / cfg.get_raw_data_dir()
-        cache_dir = project_root / cfg.get_cache_dir()
-
-        data_manager = DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
-            config=self.config,
-        )
-
-        # Get field specs
-        dynamic_fields, static_fields = cfg.get_field_types()
-
-        # Create TensorDataset with augmentation and access policy
-        augmented_dataset = TensorDataset(
-            data_manager=data_manager,
-            sim_indices=self.trainer_config["train_sim"],
-            field_names=cfg.get_field_names(),
-            num_frames=None,  # Load all frames for sliding window
-            num_predict_steps=cfg.get_num_predict_steps(),
-            dynamic_fields=dynamic_fields,
-            static_fields=static_fields,
-            use_sliding_window=True,
-            augmentation_config=augmentation_config,
-            access_policy=access_policy,  # Dataset controls data access
-        )
-
-        # Create dataloader
-        train_loader = DataLoader(
-            augmented_dataset,
-            batch_size=self.trainer_config["batch_size"],
-            shuffle=True,
-            num_workers=0,
-        )
-
-        # Train using synthetic trainer's train method
-        result = self.synthetic_trainer.train(
-            data_source=train_loader, num_epochs=self.synthetic_epochs_per_cycle, verbose=False
-        )
-
-        # Get final loss from training result
-        final_loss = result['final_loss']
-
-        return final_loss
-
-    def _train_physical_with_augmentation(self, generated_data: List[Tuple]) -> float:
-        """
-        Train physical model with data access controlled by dataset.
-
-        The dataset's access_policy parameter controls whether the physical model
-        sees real data, generated data, or both.
-
-        Args:
-            generated_data: Synthetic model predictions as (initial, target) tuples
-
-        Returns:
-            Final training loss
-        """
-        # Check if there are any learnable parameters
-        if len(self.physical_trainer.learnable_params) == 0:
-            return 0.0
-
-        # Determine access policy based on real_data_access config
-        # 'both' or 'physical_only' -> physical sees both real and generated
-        # 'synthetic_only' or 'neither' -> physical sees only generated
-        if self.real_data_access in ["both", "physical_only"]:
-            access_policy = "both"
-        else:
-            access_policy = "generated_only"
-
-        # Prepare augmentation config
-        augmentation_config = {
-            "mode": "memory",
-            "alpha": self.alpha,
-            "data": generated_data,  # Pre-loaded augmented data
-        }
-
-        # Create FieldDataset with augmentation and access policy
-        cfg = ConfigHelper(self.config)
-
-        # Create DataManager
-        project_root = cfg.get_project_root()
-        raw_data_dir = project_root / cfg.get_raw_data_dir()
-        cache_dir = project_root / cfg.get_cache_dir()
-
-        data_manager = DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
-            config=self.config,
-        )
-
-        # Create FieldDataset with augmentation and access policy
-        augmented_dataset = FieldDataset(
-            data_manager=data_manager,
-            sim_indices=self.trainer_config["train_sim"],
-            field_names=cfg.get_field_names(),
-            num_frames=None,  # Load all frames for sliding window
-            num_predict_steps=cfg.get_num_predict_steps(),
-            use_sliding_window=True,
-            augmentation_config=augmentation_config,
-            access_policy=access_policy,  # Dataset controls data access
-        )
+        OPTIMIZED: Update dataset's augmented samples in-place.
         
-        sample_loss = self.physical_trainer.train(
-            data_source=augmented_dataset, num_epochs=self.physical_epochs_per_cycle, verbose=False
-        )
+        This avoids recreating the entire dataset - we just swap out
+        the augmented_samples list and update counters.
+        
+        Args:
+            dataset: TensorDataset or FieldDataset to update
+            augmented_data: New augmented samples
+            access_policy: 'both', 'real_only', or 'generated_only'
+        """
+        # Process augmented samples through dataset's converter
+        # (this ensures format consistency)
+        processed_samples = [
+            dataset._process_augmented_sample(sample)
+            for sample in augmented_data
+        ]
+        
+        # Update in-place (no dataset recreation!)
+        dataset.augmented_samples = processed_samples
+        dataset.num_augmented = len(processed_samples)
+        dataset.access_policy = access_policy
+     
+    def _get_access_policy(self, for_synthetic: bool) -> str:
+        """
+        Determine data access policy based on configuration.
+        
+        Args:
+            for_synthetic: If True, get policy for synthetic model; else physical
+        
+        Returns:
+            Access policy string
+        """
+        if for_synthetic:
+            return "both" if self.real_data_access in ["both", "synthetic_only"] else "generated_only"
+        else:
+            return "both" if self.real_data_access in ["both", "physical_only"] else "generated_only"
 
-        avg_loss = sample_loss['final_loss']
-        return float(avg_loss)
+    # =======================================
+    # UTILITIES
+    # =======================================
 
+    @staticmethod
+    @contextmanager
+    def managed_memory_phase(phase_name: str, clear_cache: bool = True):
+        """
+        Context manager for memory-efficient training phases.
+        
+        Usage:
+            with self.managed_memory_phase("physical_prediction"):
+                predictions = self._generate_physical_predictions()
+        
+        Args:
+            phase_name: Name of the phase (for logging)
+            clear_cache: Whether to clear GPU cache after phase
+        """
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        try:
+            yield
+        finally:
+            if torch.cuda.is_available() and clear_cache:
+                gc.collect()
+                torch.cuda.empty_cache()
+
+    def _clear_gpu_memory(self):
+        """Force GPU memory cleanup."""
+        if torch.cuda.is_available():
+            gc.collect()
+            torch.cuda.empty_cache()
+     
     def _save_if_best(self, synthetic_loss: float, physical_loss: float):
         """
         Save checkpoints if losses improved.
@@ -473,4 +561,13 @@ class HybridTrainer(AbstractTrainer):
         # Save physical parameters if improved
         if physical_loss < self.best_physical_loss:
             self.best_physical_loss = physical_loss
+
+    
+
+    
+            
+    
+    
+    
+    
 
