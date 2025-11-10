@@ -80,7 +80,6 @@ class AbstractDataset(Dataset, ABC):
         field_names: List[str],
         num_frames: Optional[int],
         num_predict_steps: int,
-        use_sliding_window: bool = False,
         augmentation_config: Optional[Dict[str, Any]] = None,
         access_policy: str = "both",
         max_cached_sims: int = 5,
@@ -103,7 +102,6 @@ class AbstractDataset(Dataset, ABC):
         self.field_names = field_names
         self.num_frames = num_frames
         self.num_predict_steps = num_predict_steps
-        self.use_sliding_window = use_sliding_window
         self.max_cached_sims = max_cached_sims
 
         # Validate and store access policy
@@ -133,8 +131,7 @@ class AbstractDataset(Dataset, ABC):
 
         # Build sliding window index
         self.sample_index = []
-        if use_sliding_window:
-            self._build_sliding_window_index()
+        self._build_sliding_window_index()
 
         # Load augmentation if configured
         self.augmented_samples = []
@@ -148,9 +145,7 @@ class AbstractDataset(Dataset, ABC):
                 ]
 
         # Calculate sample counts
-        self.num_real = (
-            len(self.sample_index) if use_sliding_window else len(sim_indices)
-        )
+        self.num_real = len(self.sample_index) 
         self.num_augmented = len(self.augmented_samples)
 
         # Log dataset size based on access policy
@@ -506,10 +501,9 @@ class AbstractDataset(Dataset, ABC):
                 f"This method only works for real samples (idx < {self.num_real})"
             )
 
-        if self.use_sliding_window:
-            return self.sample_index[idx]
-        else:
-            return self.sim_indices[idx], 0
+        
+        return self.sample_index[idx]
+        
 
     def is_augmented_sample(self, idx: int) -> bool:
         """

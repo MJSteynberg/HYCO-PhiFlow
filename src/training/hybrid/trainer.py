@@ -453,7 +453,6 @@ class HybridTrainer(AbstractTrainer):
             config=self.config,
             mode=mode,
             sim_indices=sim_indices,
-            use_sliding_window=True,
             enable_augmentation=False,  # We handle augmentation separately in hybrid training
             batch_size=(
                 None if return_fields else self.trainer_config["batch_size"]

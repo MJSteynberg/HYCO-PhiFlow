@@ -59,7 +59,6 @@ class DataLoaderFactory:
         sim_indices: Optional[List[int]] = None,
         batch_size: Optional[int] = None,
         shuffle: bool = True,
-        use_sliding_window: Optional[bool] = None,
         enable_augmentation: Optional[bool] = None,
         num_workers: int = 0,
     ) -> Union[DataLoader, FieldDataset]:
@@ -134,23 +133,17 @@ class DataLoaderFactory:
             sim_indices if sim_indices is not None else cfg.get_train_sim_indices()
         )
         batch_size = batch_size if batch_size is not None else cfg.get_batch_size()
-        use_sliding_window = (
-            use_sliding_window
-            if use_sliding_window is not None
-            else cfg.should_use_sliding_window()
-        )
         enable_augmentation = (
             enable_augmentation
             if enable_augmentation is not None
             else cfg.is_augmentation_enabled()
         )
 
-        num_frames = cfg.get_num_frames(use_sliding_window)
+        num_frames = None
         num_predict_steps = cfg.get_num_predict_steps()
 
         logger.debug(f"  Simulations: {len(sim_indices)}")
         logger.debug(f"  Batch size: {batch_size}")
-        logger.debug(f"  Sliding window: {use_sliding_window}")
         logger.debug(f"  Augmentation: {enable_augmentation}")
 
         # === Step 2: Create DataManager ===
@@ -182,7 +175,6 @@ class DataLoaderFactory:
                 num_predict_steps=num_predict_steps,
                 dynamic_fields=dynamic_fields,
                 static_fields=static_fields,
-                use_sliding_window=use_sliding_window,
                 augmentation_config=augmentation_config,
             )
 
@@ -213,7 +205,6 @@ class DataLoaderFactory:
                 field_names=field_names,
                 num_frames=num_frames,
                 num_predict_steps=num_predict_steps,
-                use_sliding_window=use_sliding_window,
                 augmentation_config=augmentation_config,
             )
 

@@ -273,22 +273,6 @@ class ConfigHelper:
         """
         return self.trainer_config.get("num_predict_steps", 10)
 
-    def get_num_frames(self, use_sliding_window: bool) -> Optional[int]:
-        """
-        Get number of frames to load.
-
-        Args:
-            use_sliding_window: If True, return None (load all frames)
-
-        Returns:
-            Number of frames to load, or None to load all available frames
-        """
-        if use_sliding_window:
-            return None  # Load all available frames for sliding window
-        else:
-            # Load just enough for one rollout
-            return self.get_num_predict_steps() + 1
-
     def should_use_sliding_window(self) -> bool:
         """
         Check if sliding window should be used.
