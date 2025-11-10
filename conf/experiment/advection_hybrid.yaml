@@ -66,9 +66,9 @@ trainer_params:
   # Hybrid config
   hybrid:
     num_cycles: 100
-    synthetic_epochs_per_cycle: 1 # More synthetic training
+    synthetic_epochs_per_cycle: 10 # More synthetic training
     physical_epochs_per_cycle: 1   # Physical learns from synthetic
-    warmup_synthetic_epochs: 1   # Establish synthetic baseline
+    warmup_synthetic_epochs: 100   # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
     real_data_access: 'synthetic_only'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'

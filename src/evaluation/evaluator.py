@@ -157,11 +157,6 @@ class Evaluator:
         model = model.to(self.device)
         model.eval()
 
-        logger.debug(f"Model loaded from {checkpoint_path}")
-        logger.debug(
-            f"Model architecture: {model_name}, In: {model.in_channels}, Out: {model.out_channels}"
-        )
-
         self.model = model
         return model
 
