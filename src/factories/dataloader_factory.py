@@ -61,6 +61,7 @@ class DataLoaderFactory:
         shuffle: bool = True,
         enable_augmentation: Optional[bool] = None,
         num_workers: int = 0,
+        percentage_real_data: float = 1.0,
     ) -> Union[DataLoader, FieldDataset]:
         """
         Create a data loader or dataset for training.
@@ -176,6 +177,7 @@ class DataLoaderFactory:
                 dynamic_fields=dynamic_fields,
                 static_fields=static_fields,
                 augmentation_config=augmentation_config,
+                percentage_real_data=percentage_real_data,
             )
 
             # Wrap in DataLoader for batching
@@ -206,6 +208,7 @@ class DataLoaderFactory:
                 num_frames=num_frames,
                 num_predict_steps=num_predict_steps,
                 augmentation_config=augmentation_config,
+                percentage_real_data=percentage_real_data,
             )
 
             # Return dataset directly (no DataLoader for field mode)

@@ -85,6 +85,7 @@ class FieldDataset(AbstractDataset):
         access_policy: str = "both",
         max_cached_sims: int = 5,
         move_to_gpu: bool = True,
+        percentage_real_data: float = 1.0,
     ):
         """
         Initialize the FieldDataset.
@@ -108,6 +109,7 @@ class FieldDataset(AbstractDataset):
             augmentation_config=augmentation_config,
             access_policy=access_policy,
             max_cached_sims=max_cached_sims,
+            percentage_real_data=percentage_real_data,
         )
 
     # ==================== Implementation of Abstract Methods ====================
@@ -432,6 +434,38 @@ class FieldDataset(AbstractDataset):
                 else:
                     target_fields[name].append(field)
 
+        return initial_fields, target_fields
+    
+    def _convert_trajectory_window_to_sample(
+        self, 
+        window_states: List[Dict[str, Field]]
+    ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
+        """
+        Convert a trajectory window (Fields) into FieldDataset sample format.
+        
+        Args:
+            window_states: List of states spanning the prediction window
+                        Length = num_predict_steps + 1
+                        Each state is Dict[field_name, Field]
+        
+        Returns:
+            Tuple of (initial_fields, target_fields) where:
+                - initial_fields: Dict[field_name, Field] - t=0
+                - target_fields: Dict[field_name, List[Field]] - t=1 to t=T
+        """
+        # First state is initial condition
+        initial_fields = window_states[0]
+        
+        # Remaining states are targets
+        target_states = window_states[1:]
+        
+        # Reorganize from List[Dict] to Dict[List]
+        target_fields = {}
+        for field_name in self.field_names:
+            target_fields[field_name] = [
+                state[field_name] for state in target_states
+            ]
+        
         return initial_fields, target_fields
 
     # ==================== Additional Utility Methods ====================

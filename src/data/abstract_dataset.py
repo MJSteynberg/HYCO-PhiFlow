@@ -18,8 +18,10 @@ from typing import List, Optional, Dict, Any, Tuple, Union
 from abc import ABC, abstractmethod
 from pathlib import Path
 import torch
+from phi.flow import Field
 from torch.utils.data import Dataset
 from functools import lru_cache
+import random
 
 from .data_manager import DataManager
 from src.utils.logger import get_logger
@@ -43,7 +45,8 @@ class AbstractDataset(Dataset, ABC):
         'data_manager', 'sim_indices', 'field_names', 'num_frames',
         'num_predict_steps', 'max_cached_sims', 'access_policy',
         'samples_per_sim', 'num_real', 'augmented_samples', 'num_augmented',
-        '_cached_load_simulation', '_total_length'
+        '_cached_load_simulation', '_total_length', 'percentage_real_data',
+        '_active_real_indices'
     )
 
     def __init__(
@@ -56,6 +59,7 @@ class AbstractDataset(Dataset, ABC):
         augmentation_config: Optional[Dict[str, Any]] = None,
         access_policy: str = "both",
         max_cached_sims: int = 5,
+        percentage_real_data: float = 1.0,
     ):
         """Initialize the abstract dataset with optimizations."""
         
@@ -66,6 +70,7 @@ class AbstractDataset(Dataset, ABC):
         self.num_frames = num_frames
         self.num_predict_steps = num_predict_steps
         self.max_cached_sims = max_cached_sims
+        self.percentage_real_data = percentage_real_data
 
         # Validate access policy early
         if access_policy not in ("both", "real_only", "generated_only"):
@@ -85,6 +90,12 @@ class AbstractDataset(Dataset, ABC):
                 f"({num_predict_steps + 1})"
             )
 
+        # Validate percentage_real_data
+        if not 0.0 < percentage_real_data <= 1.0:
+            raise ValueError(
+                f"percentage_real_data must be in (0.0, 1.0], got {percentage_real_data}"
+            )
+
         # Validate cache and determine num_frames
         self._validate_and_setup_cache()
 
@@ -100,7 +111,24 @@ class AbstractDataset(Dataset, ABC):
                 f"num_predict_steps ({self.num_predict_steps})"
             )
         
-        self.num_real = len(self.sim_indices) * self.samples_per_sim
+        # Calculate total real samples before filtering
+        total_real_samples = len(self.sim_indices) * self.samples_per_sim
+        
+        # Apply percentage filtering to real data
+        if percentage_real_data < 1.0:
+            num_samples_to_use = int(total_real_samples * percentage_real_data)
+            # Randomly sample indices without replacement
+            all_indices = list(range(total_real_samples))
+            random.shuffle(all_indices)
+            self._active_real_indices = sorted(all_indices[:num_samples_to_use])
+            self.num_real = len(self._active_real_indices)
+            logger.debug(
+                f"  Filtered real data: using {self.num_real}/{total_real_samples} "
+                f"samples ({percentage_real_data*100:.1f}%)"
+            )
+        else:
+            self._active_real_indices = None
+            self.num_real = total_real_samples
 
         # Load augmentation if configured
         self.augmented_samples = []
@@ -195,8 +223,16 @@ class AbstractDataset(Dataset, ABC):
         if mode == "memory":
             if "data" not in config:
                 raise ValueError("Augmentation mode 'memory' requires 'data' key in config")
-            self.augmented_samples = config["data"]
-            logger.debug(f"    Loaded {len(self.augmented_samples)} pre-loaded augmented samples")
+            
+            # Check if data is raw trajectories or processed samples
+            if self._is_trajectory_data(config["data"]):
+                logger.debug("    Processing raw trajectory data...")
+                self.augmented_samples = self._process_trajectory_data(config["data"])
+            else:
+                # Legacy: pre-processed samples
+                self.augmented_samples = config["data"]
+            
+            logger.debug(f"    Loaded {len(self.augmented_samples)} augmented samples")
 
         elif mode == "cache":
             if "cache_dir" not in config:
@@ -273,7 +309,7 @@ class AbstractDataset(Dataset, ABC):
         if self.access_policy == "real_only":
             if idx >= self.num_real:
                 raise IndexError(f"Index {idx} out of range [0, {self.num_real})")
-            return self._get_real_sample(idx)
+            return self._get_real_sample_filtered(idx)
         
         elif self.access_policy == "generated_only":
             if idx >= self.num_augmented:
@@ -285,9 +321,67 @@ class AbstractDataset(Dataset, ABC):
                 raise IndexError(f"Index {idx} out of range [0, {self._total_length})")
             
             if idx < self.num_real:
-                return self._get_real_sample(idx)
+                return self._get_real_sample_filtered(idx)
             else:
                 return self.augmented_samples[idx - self.num_real]
+
+    def _get_real_sample_filtered(self, idx: int):
+        """
+        Get a real sample, applying filtering if percentage_real_data < 1.0.
+        
+        Args:
+            idx: Index into filtered dataset (0 to num_real-1)
+            
+        Returns:
+            Sample from the underlying _get_real_sample method
+        """
+        if self._active_real_indices is not None:
+            # Map filtered index to actual index
+            actual_idx = self._active_real_indices[idx]
+        else:
+            # No filtering, use index directly
+            actual_idx = idx
+        
+        return self._get_real_sample(actual_idx)
+
+    def resample_real_data(self, seed: Optional[int] = None):
+        """
+        Resample the subset of real data used when percentage_real_data < 1.0.
+        
+        This allows training with different random subsets each epoch by calling
+        this method at the start of each epoch.
+        
+        Args:
+            seed: Optional random seed for reproducibility. If None, uses current
+                  random state.
+        
+        Example:
+            >>> dataset = TensorDataset(..., percentage_real_data=0.5)
+            >>> for epoch in range(num_epochs):
+            ...     dataset.resample_real_data(seed=epoch)  # Different subset each epoch
+            ...     train_one_epoch(dataset)
+        """
+        if self._active_real_indices is None:
+            # No filtering active, nothing to resample
+            logger.debug("No resampling needed (percentage_real_data=1.0)")
+            return
+        
+        # Set seed if provided
+        if seed is not None:
+            random.seed(seed)
+        
+        # Resample indices
+        total_real_samples = len(self.sim_indices) * self.samples_per_sim
+        num_samples_to_use = int(total_real_samples * self.percentage_real_data)
+        
+        all_indices = list(range(total_real_samples))
+        random.shuffle(all_indices)
+        self._active_real_indices = sorted(all_indices[:num_samples_to_use])
+        
+        logger.debug(
+            f"Resampled real data: using {len(self._active_real_indices)}/{total_real_samples} "
+            f"samples ({self.percentage_real_data*100:.1f}%)"
+        )
 
     # ==================== Utility Methods (OPTIMIZED) ====================
 
@@ -298,11 +392,14 @@ class AbstractDataset(Dataset, ABC):
         Formula:
         - sim_idx = sim_indices[idx // samples_per_sim]
         - start_frame = idx % samples_per_sim
+        
+        Note: idx should be the actual (unfiltered) index.
         """
-        if idx >= self.num_real:
+        total_samples = len(self.sim_indices) * self.samples_per_sim
+        if idx >= total_samples:
             raise ValueError(
-                f"Index {idx} is an augmented sample. "
-                f"This method only works for real samples (idx < {self.num_real})"
+                f"Index {idx} is out of range. "
+                f"This method only works for real samples (idx < {total_samples})"
             )
         
         # OPTIMIZATION: Direct computation (no list lookup)
@@ -320,7 +417,7 @@ class AbstractDataset(Dataset, ABC):
         """Get comprehensive information about the dataset."""
         cache_info = self.get_cache_info()
 
-        return {
+        info = {
             "total_samples": len(self),
             "real_samples": self.num_real,
             "augmented_samples": self.num_augmented,
@@ -335,7 +432,17 @@ class AbstractDataset(Dataset, ABC):
             "lru_cache_current": cache_info.currsize,
             "lru_cache_hits": cache_info.hits,
             "lru_cache_misses": cache_info.misses,
+            "percentage_real_data": self.percentage_real_data,
         }
+        
+        if self._active_real_indices is not None:
+            total_possible = len(self.sim_indices) * self.samples_per_sim
+            info["real_samples_filtered"] = True
+            info["real_samples_total_available"] = total_possible
+        else:
+            info["real_samples_filtered"] = False
+        
+        return info
 
     def _process_augmented_sample(self, sample: Any) -> Any:
         """
@@ -343,6 +450,115 @@ class AbstractDataset(Dataset, ABC):
         Default: no conversion. Override in subclasses if needed.
         """
         return sample
+    
+    def _load_augmentation(self, config: Dict[str, Any]):
+        """Load augmented samples based on configuration."""
+        mode = config.get("mode", "cache")
+        alpha = config.get("alpha", 0.0)
+
+        logger.debug(f"  Loading augmentation (mode={mode}, alpha={alpha})...")
+
+        if mode == "memory":
+            if "data" not in config:
+                raise ValueError("Augmentation mode 'memory' requires 'data' key")
+            
+            # Check if data is raw trajectories or processed samples
+            if self._is_trajectory_data(config["data"]):
+                logger.debug("    Processing raw trajectory data...")
+                self.augmented_samples = self._process_trajectory_data(config["data"])
+            else:
+                # Legacy: pre-processed samples
+                self.augmented_samples = config["data"]
+            
+            logger.debug(f"    Loaded {len(self.augmented_samples)} augmented samples")
+
+        elif mode == "cache":
+            if "cache_dir" not in config:
+                raise ValueError("Augmentation mode 'cache' requires 'cache_dir'")
+
+            cache_dir = config["cache_dir"]
+            expected_count = int(self.num_real * alpha) if alpha > 0 else None
+            self.augmented_samples = self._load_from_cache(cache_dir, expected_count)
+            logger.debug(f"    Loaded {len(self.augmented_samples)} cached samples")
+        
+        else:
+            raise ValueError(f"Unknown augmentation mode: {mode}")
+
+    def _is_trajectory_data(self, data: Any) -> bool:
+        """
+        Check if data is raw trajectories vs processed samples.
+        
+        Trajectories: List[List[Dict[str, Field]]]
+        Processed: List[Tuple[input, target]]
+        """
+        if not isinstance(data, list) or len(data) == 0:
+            return False
+        
+        first_item = data[0]
+        
+        # Check if it's a list of dicts (trajectory)
+        if isinstance(first_item, list):
+            if len(first_item) > 0 and isinstance(first_item[0], dict):
+                return True
+        
+        return False
+
+    def _process_trajectory_data(
+        self, 
+        trajectories: List[List[Dict[str, Field]]]
+    ) -> List[Any]:
+        """
+        Convert raw trajectories into windowed samples.
+        
+        Applies same sliding window logic as real data:
+        - Each trajectory of length N produces (N - num_predict_steps) samples
+        - Each sample is (input_frames, target_frames) with appropriate format
+        
+        Args:
+            trajectories: List of trajectories, each is List[Dict[str, Field]]
+        
+        Returns:
+            List of processed samples in dataset-specific format
+        """
+        logger.debug(
+            f"    Windowing {len(trajectories)} trajectories with "
+            f"num_predict_steps={self.num_predict_steps}"
+        )
+        
+        all_samples = []
+        
+        for traj_idx, trajectory in enumerate(trajectories):
+            traj_length = len(trajectory)
+            
+            # Validate trajectory length
+            if traj_length < self.num_predict_steps + 1:
+                logger.warning(
+                    f"    Trajectory {traj_idx} too short ({traj_length} steps), "
+                    f"need at least {self.num_predict_steps + 1}. Skipping."
+                )
+                continue
+            
+            # Apply sliding window: same logic as real data
+            num_windows = traj_length - self.num_predict_steps
+            
+            for window_start in range(num_windows):
+                # Extract window: [window_start : window_start + num_predict_steps + 1]
+                window_states = trajectory[
+                    window_start : window_start + self.num_predict_steps + 1
+                ]
+                
+                # Convert to dataset-specific format
+                # This delegates to subclass (TensorDataset or FieldDataset)
+                sample = self._convert_trajectory_window_to_sample(window_states)
+                all_samples.append(sample)
+        
+        logger.debug(
+            f"    Created {len(all_samples)} windowed samples from "
+            f"{len(trajectories)} trajectories"
+        )
+        
+        return all_samples
+
 
     # ==================== Abstract Methods ====================
 

@@ -143,7 +143,7 @@ class Evaluator:
         logger.debug(f"Creating model: {model_name}")
 
         model = ModelRegistry.get_synthetic_model(model_name, config=self.config['model'])
-
+        model = torch.compile(model)
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 

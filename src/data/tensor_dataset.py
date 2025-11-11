@@ -14,7 +14,7 @@ operate on tensor data. It handles:
 
 from typing import List, Optional, Dict, Any, Tuple
 import torch
-
+from phi.flow import Field
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 
@@ -85,6 +85,7 @@ class TensorDataset(AbstractDataset):
         access_policy: str = "both",
         max_cached_sims: int = 5,
         pin_memory: bool = True,
+        percentage_real_data: float = 1.0,
     ):
         """
         Initialize the TensorDataset.
@@ -127,6 +128,7 @@ class TensorDataset(AbstractDataset):
             augmentation_config=augmentation_config,
             access_policy=access_policy,
             max_cached_sims=max_cached_sims,
+            percentage_real_data=percentage_real_data,
         )
 
     # ==================== Implementation of Abstract Methods ====================
@@ -202,6 +204,66 @@ class TensorDataset(AbstractDataset):
         target_end = start_frame + 1 + self.num_predict_steps
         rollout_targets = all_data[target_start:target_end]  # [T, C_all, H, W]
 
+        return initial_state, rollout_targets
+    
+    def _convert_trajectory_window_to_sample(
+        self, 
+        window_states: List[Dict[str, Field]]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Convert a trajectory window (Fields) into TensorDataset sample format.
+        
+        Args:
+            window_states: List of states spanning the prediction window
+                        Length = num_predict_steps + 1
+                        Each state is Dict[field_name, Field]
+        
+        Returns:
+            Tuple of (initial_state, rollout_targets) where:
+                - initial_state: [C_all, H, W] - concatenated tensor of all fields at t=0
+                - rollout_targets: [T, C_all, H, W] - concatenated tensors for t=1 to t=T
+        """
+        from src.utils.field_conversion import make_converter
+        
+        # First state is initial condition
+        initial_state_fields = window_states[0]
+        
+        # Remaining states are targets
+        target_states = window_states[1:]
+        
+        # Convert initial state fields to tensors and concatenate
+        initial_tensors = []
+        for field_name in self.field_names:
+            field = initial_state_fields[field_name]
+            converter = make_converter(field)
+            tensor = converter.field_to_tensor(field, ensure_cpu=True)
+            # Remove batch dimension if present (trajectory fields should not have batch)
+            if tensor.dim() == 4:  # [1, C, H, W]
+                tensor = tensor.squeeze(0)  # [C, H, W]
+            initial_tensors.append(tensor)
+        
+        initial_state = torch.cat(initial_tensors, dim=0)  # [C_all, H, W]
+        
+        # Convert target states to tensors
+        target_tensors_list = []
+        for state in target_states:
+            state_tensors = []
+            for field_name in self.field_names:
+                field = state[field_name]
+                converter = make_converter(field)
+                tensor = converter.field_to_tensor(field, ensure_cpu=True)
+                # Remove batch dimension if present
+                if tensor.dim() == 4:  # [1, C, H, W]
+                    tensor = tensor.squeeze(0)  # [C, H, W]
+                state_tensors.append(tensor)
+            
+            # Concatenate all fields for this timestep
+            state_tensor = torch.cat(state_tensors, dim=0)  # [C_all, H, W]
+            target_tensors_list.append(state_tensor)
+        
+        # Stack timesteps
+        rollout_targets = torch.stack(target_tensors_list, dim=0)  # [T, C_all, H, W]
+        
         return initial_state, rollout_targets
 
     # ==================== Additional Utility Methods ====================

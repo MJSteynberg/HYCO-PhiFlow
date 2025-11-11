@@ -258,6 +258,4 @@ class FieldTrainer(AbstractTrainer):
         Returns:
             Python float value
         """
-        if hasattr(tensor, "numpy"):
-            return float(tensor.numpy())
         return float(tensor)

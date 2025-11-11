@@ -105,6 +105,7 @@ class HybridTrainer(AbstractTrainer):
         self.trainer_config = self.config["trainer_params"]
         self.hybrid_config = self.trainer_config["hybrid"]
         self.aug_config = self.trainer_config["augmentation"]
+        self.generation_config = self.config["generation_params"]
         
         # Training parameters
         self.num_cycles = self.hybrid_config["num_cycles"]
@@ -136,17 +137,19 @@ class HybridTrainer(AbstractTrainer):
         logger.info("Initializing reusable datasets...")
 
         train_sim_indices = self.trainer_config["train_sim"]
-        
+        percentage_real_data = self.trainer_config["percentage_real_data"]
         # Create base tensor dataset (for synthetic training)
         self._base_tensor_dataset = self._create_dataset(
             train_sim_indices,
-            return_fields=False
+            return_fields=False,
+            percentage_real_data=percentage_real_data
         )
         
         # Create base field dataset (for physical training)  
         self._base_field_dataset = self._create_dataset(
             train_sim_indices,
-            return_fields=True
+            return_fields=True,
+            percentage_real_data=percentage_real_data
         )
 
     # =======================================
@@ -179,6 +182,7 @@ class HybridTrainer(AbstractTrainer):
             pbar.set_postfix({
                 'syn_loss': f"{synthetic_loss:.6f}",
                 'phy_loss': f"{physical_loss:.6f}",
+                'params': f"{self.physical_trainer.get_current_params()}"
             })
             self._save_if_best(synthetic_loss, physical_loss)
 
@@ -230,6 +234,8 @@ class HybridTrainer(AbstractTrainer):
         # Clean up
         del synthetic_preds
         self._clear_gpu_memory()
+
+        
         
         return synthetic_loss, physical_loss
     
@@ -239,13 +245,12 @@ class HybridTrainer(AbstractTrainer):
 
     def _generate_physical_predictions(self) -> List[Tuple]:
         """
-        OPTIMIZED: Generate predictions using batched physical model operations.
+        Generate predictions using physical model with SYNTHETIC trajectories.
         
-        Key improvements:
-        1. Pre-create converters once (not per sample)
-        2. Use batched rollout from physical model
-        3. Single batched tensor conversion at the end
-        4. Minimize intermediate allocations
+        NEW APPROACH:
+        1. Physical model generates complete trajectories from random ICs
+        2. Trajectories are passed to dataset for windowing
+        3. Dataset handles conversion to appropriate format (tensors)
         
         Returns:
             List of (input_tensor, target_tensor) tuples
@@ -255,24 +260,45 @@ class HybridTrainer(AbstractTrainer):
             if hasattr(self.physical_model, 'to'):
                 self.physical_model.to(self.device)
             
+            # Calculate how many trajectories to generate based on alpha
+            num_real = len(self._base_tensor_dataset.sim_indices) * \
+                    self._base_tensor_dataset.samples_per_sim
+            num_samples_needed = int(num_real * self.alpha)
             
-            # Create field dataset (unchanged)
-            field_dataset = self._base_field_dataset
-            num_predict_steps = self.trainer_config["num_predict_steps"]
+            # Calculate trajectory parameters
+            # We need enough trajectory length to create sliding windows
+            trajectory_length = self.generation_config["total_steps"] # Extra for windowing
             
-            # === OPTIMIZATION 1: Generate all predictions at once (batched) ===
-            initial_fields, predictions = self.physical_model.generate_predictions(
-                real_dataset=field_dataset,
-                alpha=self.alpha,
-                num_rollout_steps=num_predict_steps,
+            # Calculate how many trajectories we need
+            # Each trajectory produces (trajectory_length - num_predict_steps) samples
+            samples_per_trajectory = trajectory_length - self.trainer_config["num_predict_steps"]
+            num_trajectories = max(1, (num_samples_needed + samples_per_trajectory - 1) // samples_per_trajectory)
+            
+            
+            # Generate synthetic trajectories from random ICs
+            trajectories = self.physical_model.generate_synthetic_trajectories(
+                num_trajectories=num_trajectories,
+                trajectory_length=trajectory_length,
+                warmup_steps=5,  # Let physics settle
             )
-
-            # Convert fields to tensors (batched for efficiency)
-            tensor_predictions = self._convert_fields_to_tensors(
-                initial_fields, predictions, field_dataset
-            )
             
-            return tensor_predictions
+            # Convert trajectories to tensor format using dataset's windowing logic
+            # Create a temporary config for trajectory processing
+            augmentation_config = {
+                "mode": "memory",
+                "data": trajectories,
+                "alpha": self.alpha
+            }
+            
+            # Use the base tensor dataset to process trajectories
+            # This will call _process_trajectory_data internally
+            processed_samples = self._base_tensor_dataset._process_trajectory_data(trajectories)
+            
+            # Truncate to exact number needed (if we generated too many)
+            if len(processed_samples) > num_samples_needed:
+                processed_samples = processed_samples[:num_samples_needed]
+            
+            return processed_samples
         
     def _generate_synthetic_predictions(self) -> List[Tuple]:
         """
@@ -435,7 +461,7 @@ class HybridTrainer(AbstractTrainer):
     # =======================================
 
     def _create_dataset(
-        self, sim_indices: List[int], return_fields: bool = False
+        self, sim_indices: List[int], return_fields: bool = False, percentage_real_data: float = 1.0
     ):
         """Create dataset for training using new DataLoaderFactory.
 
@@ -457,6 +483,7 @@ class HybridTrainer(AbstractTrainer):
             batch_size=(
                 None if return_fields else self.trainer_config["batch_size"]
             ),
+            percentage_real_data=percentage_real_data
         )
 
         return result if return_fields else result.dataset
