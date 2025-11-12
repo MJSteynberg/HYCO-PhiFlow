@@ -585,18 +585,85 @@ class HybridTrainer(AbstractTrainer):
             synthetic_sims: List of synthetic simulation dicts
             access_policy: 'both', 'real_only', or 'generated_only'
         """
-        # Clear old synthetic data
+        # Clear old synthetic data and add new synthetic simulations
         dataset.augmented_samples.clear()
-        
-        # Add new synthetic simulations
+
         if len(synthetic_sims) > 0:
-            dataset.augmented_samples.extend(synthetic_sims)
-        
-        # Update access policy
+            # If the synthetic_sims look like full cached-simulation dicts
+            # (i.e., {'tensor_data': {field: Tensor[T,C,H,W], ...}}), convert
+            # them into (initial, targets) tuples using the dataset helper so
+            # SyntheticTrainer receives the expected format.
+            try:
+                first = synthetic_sims[0]
+                if isinstance(first, dict) and 'tensor_data' in first and hasattr(dataset, '_process_augmented_sample'):
+                    processed = []
+                    for sim in synthetic_sims:
+                        try:
+                            # Build concatenated tensor [T, C_all, H, W] using dataset.field_names
+                            fields = [sim['tensor_data'][name] for name in dataset.field_names]
+                            all_data = torch.cat(fields, dim=1)  # [T, C_all, H, W]
+                            batched = all_data.unsqueeze(0)  # [1, T, C_all, H, W]
+                            samples = dataset._process_augmented_sample(batched)
+                            if samples:
+                                processed.extend(samples)
+                        except Exception:
+                            logger.debug("Failed to process one synthetic sim into tuples; skipping it")
+                    dataset.augmented_samples.extend(processed)
+                # If synthetic_sims are tuples of tensors (initial, targets) and
+                # the dataset can convert tensor samples to Fields, perform that
+                # conversion so the FieldDataset yields Fields to the physical trainer.
+                elif isinstance(first, tuple) and isinstance(first[0], torch.Tensor) and hasattr(dataset, '_convert_tensor_sample'):
+                    processed = []
+                    for tup in synthetic_sims:
+                        try:
+                            converted = dataset._process_augmented_sample(tup)
+                            # _process_augmented_sample may return a tuple (initial_fields, target_fields)
+                            if isinstance(converted, list):
+                                processed.extend(converted)
+                            else:
+                                processed.append(converted)
+                        except Exception:
+                            logger.debug("Failed to convert tensor tuple to Fields; skipping it")
+                    dataset.augmented_samples.extend(processed)
+                else:
+                    dataset.augmented_samples.extend(synthetic_sims)
+            except Exception:
+                # Fallback: extend raw list
+                dataset.augmented_samples.extend(synthetic_sims)
+
+        # Update access policy first (used by length computation)
         dataset.access_policy = access_policy
-        
+
+        # Keep internal counters consistent so __getitem__/DataLoader don't break
+        try:
+            dataset.num_augmented = len(dataset.augmented_samples)
+        except Exception:
+            # Best-effort: if attribute can't be set, continue (non-fatal)
+            logger.debug("Could not set dataset.num_augmented")
+
+        # Recompute total length using dataset helper if available
+        if hasattr(dataset, '_compute_length'):
+            try:
+                dataset._total_length = dataset._compute_length()
+            except Exception:
+                # Fallback to basic sum
+                dataset._total_length = getattr(dataset, 'num_real', 0) + getattr(dataset, 'num_augmented', 0)
+        else:
+            dataset._total_length = getattr(dataset, 'num_real', 0) + getattr(dataset, 'num_augmented', 0)
+
+        # If the augmented entries look like full cached-sim dicts (have 'tensor_data')
+        # warn the user because SyntheticTrainer expects (initial, targets) tuples.
+        if len(dataset.augmented_samples) > 0:
+            first = dataset.augmented_samples[0]
+            if isinstance(first, dict) and 'tensor_data' in first:
+                logger.warning(
+                    "Updated dataset.augmented_samples contains full-simulation dicts (key 'tensor_data'). "
+                    "SyntheticTrainer expects processed (initial, targets) tuples or use add_synthetic_simulations()."
+                )
+
         logger.debug(
-            f"Updated dataset: {dataset.num_real} samples "
+            f"Updated dataset: real={getattr(dataset, 'num_real', None)} "
+            f"aug={getattr(dataset, 'num_augmented', None)} total={getattr(dataset, '_total_length', None)} "
             f"(policy: {access_policy})"
         )
      

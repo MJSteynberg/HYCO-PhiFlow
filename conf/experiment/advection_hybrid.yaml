@@ -66,10 +66,10 @@ trainer_params:
 
   # Hybrid config
   hybrid:
-    num_cycles: 1000
-    synthetic_epochs_per_cycle: 1 # More synthetic training
+    num_cycles: 50
+    synthetic_epochs_per_cycle: 10 # More synthetic training
     physical_epochs_per_cycle: 1   # Physical learns from synthetic
-    warmup_synthetic_epochs: 1  # Establish synthetic baseline
+    warmup_synthetic_epochs: 10  # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
     real_data_access: 'both'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'
@@ -78,7 +78,7 @@ trainer_params:
     alpha: 1.0  # More physics-based augmentation
 
 evaluation_params:
-  test_sim: [0, 1]
+  test_sim: [2, 1]
   num_frames: 75
   metrics: ['mse', 'mae', 'rmse']
   save_animations: true
