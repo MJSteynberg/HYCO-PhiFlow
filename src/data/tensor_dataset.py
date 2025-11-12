@@ -151,6 +151,8 @@ class TensorDataset(AbstractDataset):
     
     # ==================== Implementation of Abstract Methods ====================
     
+    # In tensor_dataset.py, replace _load_simulation (around line 165):
+
     def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
         Load simulation data (handles both real and synthetic).
@@ -159,17 +161,27 @@ class TensorDataset(AbstractDataset):
         if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
             synthetic_idx = sim_idx - len(self.sim_indices)
             if synthetic_idx < len(self._synthetic_sims):
-                return self._synthetic_sims[synthetic_idx]['tensor_data']
+                # Return tensor_data directly from synthetic sim
+                sim_data = self._synthetic_sims[synthetic_idx]['tensor_data']
+                
+                # Pin memory if configured
+                if self.pin_memory:
+                    sim_data = {
+                        field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
+                        for field, tensor in sim_data.items()
+                    }
+                return sim_data
         
         # Otherwise load real simulation from cache
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
+        # Extract tensor_data from the full cache structure
         sim_data = full_data["tensor_data"]
         
-        # Pin memory if configured (for TensorDataset)
-        if hasattr(self, 'pin_memory') and self.pin_memory:
+        # Pin memory if configured
+        if self.pin_memory:
             sim_data = {
                 field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
                 for field, tensor in sim_data.items()

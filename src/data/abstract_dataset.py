@@ -195,33 +195,17 @@ class AbstractDataset(Dataset, ABC):
         if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
             synthetic_idx = sim_idx - len(self.sim_indices)
             if synthetic_idx < len(self._synthetic_sims):
-                sim_data = self._synthetic_sims[synthetic_idx]['tensor_data']
-                
-                # Pin memory if configured (for TensorDataset)
-                if hasattr(self, 'pin_memory') and self.pin_memory:
-                    sim_data = {
-                        field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
-                        for field, tensor in sim_data.items()
-                    }
-                
-                return sim_data
+                # Synthetic sims are stored as {'tensor_data': {...}}
+                # Return the tensor_data dict directly
+                return self._synthetic_sims[synthetic_idx]['tensor_data']
         
         # Otherwise load real simulation from cache
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
-        # Extract tensor data
-        sim_data = full_data["tensor_data"]
-        
-        # Pin memory if configured (for TensorDataset)
-        if hasattr(self, 'pin_memory') and self.pin_memory:
-            sim_data = {
-                field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
-                for field, tensor in sim_data.items()
-            }
-        
-        return sim_data
+        # Extract tensor data for consistent return type
+        return full_data["tensor_data"]
 
     def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
         """
