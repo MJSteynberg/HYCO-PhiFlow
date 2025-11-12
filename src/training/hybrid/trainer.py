@@ -33,6 +33,7 @@ from src.utils.field_conversion import make_converter
 from src.config import ConfigHelper
 import torch
 from phi.math import math, Tensor
+from phi.flow import Field
 import logging
 # Setup dataset creation
 from torch.utils.data import DataLoader
@@ -237,47 +238,161 @@ class HybridTrainer(AbstractTrainer):
     # Prediction Generation
     # =======================================
 
-    def _generate_physical_predictions(self) -> List[Tuple]:
+    def _generate_physical_predictions(self) -> Dict[str, torch.Tensor]:
         """
         Generate predictions using physical model with SYNTHETIC trajectories.
         
-        NEW APPROACH:
-        1. Physical model generates complete trajectories from random ICs
-        2. Trajectories are passed to dataset for windowing
-        3. Dataset handles conversion to appropriate format (tensors)
+        Returns rollout in the SAME format as cached data:
+            Dict[field_name -> Tensor[T, C, H, W]] for each batch member
         
         Returns:
-            List of (input_tensor, target_tensor) tuples
+            Dict with 'tensor_data' key containing field tensors
         """
         with self.managed_memory_phase("Physical Prediction"):
-            # Move physical model to GPU if not already there
             if hasattr(self.physical_model, 'to'):
                 self.physical_model.to(self.device)
             
-            # Calculate how many trajectories to generate based on alpha
+            # Calculate how many trajectories needed
             num_real = len(self._base_tensor_dataloader.dataset.sim_indices) * \
-                    (self._base_tensor_dataloader.dataset.num_frames - self._base_tensor_dataloader.dataset.num_predict_steps)
+                    (self._base_tensor_dataloader.dataset.num_frames - 
+                    self._base_tensor_dataloader.dataset.num_predict_steps)
             num_samples_needed = int(num_real * self.alpha)
             
-            # Calculate trajectory parameters
-            # We need enough trajectory length to create sliding windows
-            trajectory_length = self.generation_config["total_steps"] # Extra for windowing
-            
-            # Calculate how many trajectories we need
-            # Each trajectory produces (trajectory_length - num_predict_steps) samples
+            trajectory_length = self.generation_config["total_steps"]
             samples_per_trajectory = trajectory_length - self.trainer_config["num_predict_steps"]
             num_trajectories = max(1, (num_samples_needed + samples_per_trajectory - 1) // samples_per_trajectory)
             
+            # Generate initial states (batch of random ICs)
+            initial_state = self.physical_model.get_initial_state(batch_size=num_trajectories)
             
-            # Generate synthetic trajectories from random ICs
-            trajectories, rollout = self.physical_model.generate_synthetic_trajectories(
-                num_trajectories=num_trajectories,
-                trajectory_length=trajectory_length,
-                warmup_steps=5,  # Let physics settle
-            )
+            # Generate rollout
+            rollout = self.physical_model.rollout(initial_state, num_steps=trajectory_length)
             
-            print(rollout)
-            return trajectories
+            # Convert to tensor format (same as cached data)
+            tensor_rollouts = self._convert_rollout_to_cached_format(rollout)
+            
+            return tensor_rollouts
+
+    def _convert_rollout_to_cached_format(
+        self, 
+        rollout: Dict[str, Field]
+    ) -> List[Dict[str, torch.Tensor]]:
+        """
+        Convert batched rollout to list of "synthetic simulations".
+        
+        Each item in the list represents one synthetic trajectory in the
+        SAME format as DataManager.load_from_cache() returns.
+        
+        Args:
+            rollout: Dict of Fields with shape (time, batch, x, y, [vector])
+        
+        Returns:
+            List of dicts, each containing:
+                {'tensor_data': {field_name: Tensor[T, C, H, W]}}
+        """
+        cfg = ConfigHelper(self.config)
+        field_names = cfg.get_field_names()
+        
+        # Get batch size
+        first_field = rollout[field_names[0]]
+        batch_size = first_field.shape.get_size('batch')
+        
+        # Create converters
+        converters = {
+            name: make_converter(rollout[name].batch[0].time[0])
+            for name in field_names
+        }
+        
+        synthetic_simulations = []
+        
+        # Process each trajectory in the batch
+        for b in range(batch_size):
+            tensor_data = {}
+            
+            for name in field_names:
+                # Extract single trajectory (shape: time, x, y, [vector])
+                field_trajectory = rollout[name].batch[b]
+                
+                # Convert to tensor [T, C, H, W]
+                # Use the converter's batch method if available, or loop
+                num_timesteps = field_trajectory.shape.get_size('time')
+                timestep_tensors = []
+                
+                for t in range(num_timesteps):
+                    field_t = field_trajectory.time[t]
+                    tensor_t = converters[name].field_to_tensor(field_t, ensure_cpu=True)
+                    # Remove batch dim if present
+                    if tensor_t.dim() == 4:
+                        tensor_t = tensor_t.squeeze(0)
+                    timestep_tensors.append(tensor_t)
+                
+                # Stack to [T, C, H, W]
+                tensor_data[name] = torch.stack(timestep_tensors, dim=0)
+            
+            synthetic_simulations.append({'tensor_data': tensor_data})
+        
+        return synthetic_simulations
+
+    def _fields_to_concatenated_tensor(
+        self,
+        fields: Dict[str, Field],
+        converters: Dict[str, Any],
+        field_names: List[str]
+    ) -> torch.Tensor:
+        """
+        Convert dict of Fields to concatenated tensor [C_all, H, W].
+        
+        Args:
+            fields: Dict mapping field names to Fields
+            converters: Pre-created field converters
+            field_names: Ordered list of field names
+        
+        Returns:
+            Concatenated tensor [C_all, H, W]
+        """
+        tensors = []
+        for name in field_names:
+            field = fields[name]
+            tensor = converters[name].field_to_tensor(field, ensure_cpu=True)
+            # Remove batch dimension if present
+            if tensor.dim() == 4:
+                tensor = tensor.squeeze(0)
+            tensors.append(tensor)
+        
+        return torch.cat(tensors, dim=0)
+
+    def _field_sequence_to_tensor(
+            self,
+            field_sequences: Dict[str, Field],
+            converters: Dict[str, Any],
+            field_names: List[str],
+            num_steps: int
+        ) -> torch.Tensor:
+            """
+            Convert dict of Field sequences to tensor [T, C_all, H, W].
+            
+            Args:
+                field_sequences: Dict mapping field names to Fields with time dimension
+                converters: Pre-created field converters
+                field_names: Ordered list of field names
+                num_steps: Number of timesteps
+            
+            Returns:
+                Tensor [T, C_all, H, W]
+            """
+            timestep_tensors = []
+            
+            for t in range(num_steps):
+                fields_t = {
+                    name: field_seq.time[t] 
+                    for name, field_seq in field_sequences.items()
+                }
+                tensor_t = self._fields_to_concatenated_tensor(
+                    fields_t, converters, field_names
+                )
+                timestep_tensors.append(tensor_t)
+            
+            return torch.stack(timestep_tensors, dim=0)
         
     def _generate_synthetic_predictions(self) -> List[Tuple]:
         """
@@ -379,22 +494,17 @@ class HybridTrainer(AbstractTrainer):
     # MODEL TRAINING
     # =======================================
 
-    def _train_synthetic_model(self, generated_data: List[Tuple]) -> float:
-        """
-        OPTIMIZED: Synthetic training with memory management.
-        """
+    def _train_synthetic_model(self, synthetic_sims: List[Dict]) -> float:
+        """Train synthetic model with synthetic simulations as augmentation."""
         with self.managed_memory_phase("Synthetic Training", clear_cache=False):
-            # Update dataset (from Step 3)
             access_policy = self._get_access_policy(for_synthetic=True)
             
             self._update_dataset_augmentation(
                 self._base_tensor_dataloader.dataset,
-                generated_data,
+                synthetic_sims,
                 access_policy
             )
-
             
-            # Train
             result = self.synthetic_trainer.train(
                 data_source=self._base_tensor_dataloader,
                 num_epochs=self.synthetic_epochs_per_cycle,
@@ -462,31 +572,34 @@ class HybridTrainer(AbstractTrainer):
     def _update_dataset_augmentation(
         self, 
         dataset, 
-        augmented_data: List[Tuple],
+        synthetic_sims: List[Dict[str, torch.Tensor]],
         access_policy: str
     ):
         """
-        OPTIMIZED: Update dataset's augmented samples in-place.
+        Update dataset with synthetic simulations.
         
-        This avoids recreating the entire dataset - we just swap out
-        the augmented_samples list and update counters.
+        The dataset will index these like real simulations, automatically
+        handling windowing through its existing _extract_sample() logic.
         
         Args:
             dataset: TensorDataset or FieldDataset to update
-            augmented_data: New augmented samples
+            synthetic_sims: List of synthetic simulation dicts
             access_policy: 'both', 'real_only', or 'generated_only'
-        """ 
-        # Process augmented samples through dataset's converter
-        # (this ensures format consistency)
-        processed_samples = [
-            dataset._process_augmented_sample(sample)
-            for sample in augmented_data
-        ]
+        """
+        # Clear old synthetic data
+        dataset.clear_synthetic_simulations()
         
-        # Update in-place (no dataset recreation!)
-        dataset.augmented_samples = processed_samples
-        dataset.num_augmented = len(processed_samples)
+        # Add new synthetic simulations
+        if len(synthetic_sims) > 0:
+            dataset.add_synthetic_simulations(synthetic_sims)
+        
+        # Update access policy
         dataset.access_policy = access_policy
+        
+        logger.debug(
+            f"Updated dataset: {dataset.num_real} samples "
+            f"(policy: {access_policy})"
+        )
      
     def _get_access_policy(self, for_synthetic: bool) -> str:
         """

@@ -186,67 +186,6 @@ class PhysicalModel(ABC):
     def __call__(self, *args) -> tuple[Field, ...]:
         """Convenience wrapper for the forward method."""
         return self.forward(*args)
-    
-    def generate_synthetic_trajectories(
-        self,
-        num_trajectories: int,
-        trajectory_length: int,
-        warmup_steps: int = 5,
-    ) -> List[List[Dict[str, Field]]]:
-        """
-        Generate complete synthetic trajectories from random initial conditions.
-        
-        This creates PURE synthetic data without sampling from real dataset.
-        Each trajectory is a complete simulation from random ICs.
-        
-        Strategy:
-        1. Generate random initial states (NOT from real data)
-        2. Apply warmup evolution to settle physics
-        3. Continue rollout to generate full trajectory
-        4. Return complete trajectories for dataset windowing
-        
-        Args:
-            num_trajectories: Number of independent trajectories to generate
-            trajectory_length: Number of time steps in each trajectory (after warmup)
-            warmup_steps: Number of steps to stabilize random initial conditions
-            
-        Returns:
-            List of trajectories, where each trajectory is a List[Dict[str, Field]]
-            Each trajectory has length `trajectory_length`
-            Each state Dict has fields with NO batch dimension (single trajectory)
-        """
-        
-        all_trajectories = []
-        
-        for traj_idx in range(num_trajectories):
-            if (traj_idx + 1) % 10 == 0:
-                self.logger.debug(
-                    f"  Generating trajectory {traj_idx + 1}/{num_trajectories}"
-                )
-            
-            # 1. Generate random initial condition (batch_size=1 for single trajectory)
-            initial_state = self.get_initial_state(batch_size=1)
-            
-            # 2. Warmup phase - let physics settle the random state
-            current_state = initial_state
-            for _ in range(warmup_steps):
-                current_state = self.forward(current_state)
-            
-            # 3. Generate trajectory by rolling out from settled state
-            trajectory = []
-            for step in range(trajectory_length):
-                current_state = self.forward(current_state)
-                
-                # Store a copy, removing batch dimension since batch=1
-                # PhiFlow Fields with batch dimension need to be unbatched
-                trajectory.append({
-                    name: field.batch[0] if 'batch' in field.shape else field
-                    for name, field in current_state.items()
-                })
-            
-            all_trajectories.append(trajectory)
-        rollout = self.rollout(initial_state, num_steps=trajectory_length)
-        return all_trajectories, rollout
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

@@ -153,24 +153,23 @@ class TensorDataset(AbstractDataset):
     
     def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
-        Load simulation tensors from cache.
-        
-        Args:
-            sim_idx: Simulation index
-        
-        Returns:
-            Dictionary mapping field names to tensors [T, C, H, W]
+        Load simulation data (handles both real and synthetic).
         """
-        # Load full data structure
+        # Check if this is a synthetic simulation
+        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
+            synthetic_idx = sim_idx - len(self.sim_indices)
+            if synthetic_idx < len(self._synthetic_sims):
+                return self._synthetic_sims[synthetic_idx]['tensor_data']
+        
+        # Otherwise load real simulation from cache
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
-        # Extract tensor data
         sim_data = full_data["tensor_data"]
         
-        # Pin memory if configured
-        if self.pin_memory:
+        # Pin memory if configured (for TensorDataset)
+        if hasattr(self, 'pin_memory') and self.pin_memory:
             sim_data = {
                 field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
                 for field, tensor in sim_data.items()
@@ -210,35 +209,39 @@ class TensorDataset(AbstractDataset):
         
         return initial_state, rollout_targets
     
-    def _process_augmented_sample(self, sample: Any) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _process_augmented_sample(self, data: Any) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Convert augmented sample to tensor format.
+        Convert a collection of augmented data into a list of tensor samples.
         
-        Handles both:
-        - Pre-processed (input_tensor, target_tensor) tuples
-        - Raw trajectory windows (List[Dict[str, Field]])
+        This method acts as a router, handling different input formats:
+        - A single batched rollout tensor [B, T, C, H, W].
+        - A list of raw trajectory windows (List[List[Dict[str, Field]]]).
+        - A list of already-processed (input, target) tensor tuples.
         
         Args:
-            sample: Augmented sample (tuple or trajectory window)
+            data: The raw augmented data to process.
         
         Returns:
-            Tuple of (initial_state, rollout_targets) as tensors
+            A list of (initial_state, rollout_targets) tensor tuples.
         """
-        # Check if already processed
-        if isinstance(sample, tuple) and len(sample) == 2:
-            input_tensor, target_tensor = sample
-            if isinstance(input_tensor, torch.Tensor):
-                # Already in tensor format
-                return input_tensor, target_tensor
+        # Case 1: Input is a single batched rollout tensor
+        if isinstance(data, torch.Tensor) and data.dim() == 5:
+            return self._convert_trajectory_rollout(data)
         
-        # Handle trajectory window
-        if isinstance(sample, list) and len(sample) > 0:
-            if isinstance(sample[0], dict):
-                # Raw trajectory window: List[Dict[str, Field]]
-                return self._convert_trajectory_window(sample)
+        # Case 2: Input is a list
+        if isinstance(data, list) and len(data) > 0:
+            first_item = data[0]
+            # Case 2a: List of raw trajectory windows
+            if isinstance(first_item, list) and isinstance(first_item[0], dict):
+                # Process each window in the list
+                return [self._convert_trajectory_window(window) for window in data]
+            # Case 2b: Assume it's a list of already-processed tensor tuples
+            elif isinstance(first_item, tuple) and isinstance(first_item[0], torch.Tensor):
+                return data
         
-        # Fallback: assume it's already correct format
-        return sample
+        # Fallback for unknown or empty data formats
+        logger.warning(f"Unsupported augmentation data type: {type(data)}. Returning empty list.")
+        return []
     
     def _convert_trajectory_window(
         self,
@@ -291,19 +294,65 @@ class TensorDataset(AbstractDataset):
         
         return initial_state, rollout_targets
     
+    
+    def _convert_trajectory_rollout(
+        self,
+        rollout: torch.Tensor
+    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Efficiently convert a batched rollout tensor into windowed samples.
+
+        Args:
+            rollout: A single tensor of shape [B, T, C, H, W] representing
+                     B trajectories of length T.
+
+        Returns:
+            A list of (initial_state, rollout_targets) tuples.
+        """
+        num_trajectories, traj_length, _, _, _ = rollout.shape
+        num_windows = traj_length - self.num_predict_steps
+
+        if num_windows <= 0:
+            return []
+
+        samples = []
+        for i in range(num_trajectories):
+            trajectory = rollout[i]  # [T, C, H, W]
+            for start_frame in range(num_windows):
+                # Initial state is a single frame
+                initial_state = trajectory[start_frame]  # [C, H, W]
+
+                # Target is a sequence of subsequent frames
+                target_start = start_frame + 1
+                target_end = start_frame + 1 + self.num_predict_steps
+                rollout_targets = trajectory[target_start:target_end]  # [pred_steps, C, H, W]
+                samples.append((initial_state, rollout_targets))
+        
+        return samples
+
+
+    
     # ==================== Utility Methods ====================
     
     def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
         """
         Compute simulation index and starting frame from sample index.
-        
-        Args:
-            idx: Sample index (unfiltered)
-        
-        Returns:
-            Tuple of (sim_idx, start_frame)
+        Handles both real and synthetic simulations.
         """
         samples_per_sim = self.num_frames - self.num_predict_steps
+        
+        # Check if this is a synthetic simulation
+        if hasattr(self, '_num_real_only'):
+            real_samples = self._num_real_only
+            if idx >= real_samples:
+                # This is a synthetic simulation - compute offset within synthetic data
+                synthetic_sample_idx = idx - real_samples
+                sim_offset = synthetic_sample_idx // samples_per_sim
+                start_frame = synthetic_sample_idx % samples_per_sim
+                sim_idx = len(self.sim_indices) + sim_offset
+                return sim_idx, start_frame
+        
+        # Real simulation
         sim_offset = idx // samples_per_sim
         start_frame = idx % samples_per_sim
         sim_idx = self.sim_indices[sim_offset]

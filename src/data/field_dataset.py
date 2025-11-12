@@ -150,21 +150,20 @@ class FieldDataset(AbstractDataset):
     
     # ==================== Implementation of Abstract Methods ====================
     
-    def _load_simulation(self, sim_idx: int) -> Dict[str, Any]:
+    def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
-        Load simulation data with metadata for Field reconstruction.
-        
-        Args:
-            sim_idx: Simulation index
-        
-        Returns:
-            Dictionary with 'tensor_data' and 'metadata' keys
+        Load simulation data (handles both real and synthetic).
         """
-        # Load full data structure (need metadata for Fields)
+        # Check if this is a synthetic simulation
+        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
+            synthetic_idx = sim_idx - len(self.sim_indices)
+            if synthetic_idx < len(self._synthetic_sims):
+                return self._synthetic_sims[synthetic_idx]
+        
+        # Otherwise load real simulation from cache
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
-        #Pinning data does not help here as we need to convert to Fields
         
         return full_data
     
@@ -440,19 +439,27 @@ class FieldDataset(AbstractDataset):
     def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
         """
         Compute simulation index and starting frame from sample index.
-        
-        Args:
-            idx: Sample index (unfiltered)
-        
-        Returns:
-            Tuple of (sim_idx, start_frame)
+        Handles both real and synthetic simulations.
         """
         samples_per_sim = self.num_frames - self.num_predict_steps
+        
+        # Check if this is a synthetic simulation
+        if hasattr(self, '_num_real_only'):
+            real_samples = self._num_real_only
+            if idx >= real_samples:
+                # This is a synthetic simulation - compute offset within synthetic data
+                synthetic_sample_idx = idx - real_samples
+                sim_offset = synthetic_sample_idx // samples_per_sim
+                start_frame = synthetic_sample_idx % samples_per_sim
+                sim_idx = len(self.sim_indices) + sim_offset
+                return sim_idx, start_frame
+        
+        # Real simulation
         sim_offset = idx // samples_per_sim
         start_frame = idx % samples_per_sim
         sim_idx = self.sim_indices[sim_offset]
         return sim_idx, start_frame
-    
+        
     
     def resample_real_data(self, seed: Optional[int] = None):
         """

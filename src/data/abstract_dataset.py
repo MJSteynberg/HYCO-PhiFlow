@@ -14,6 +14,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from abc import ABC, abstractmethod
 from torch.utils.data import Dataset
 from functools import lru_cache
+import torch
 
 from .data_manager import DataManager
 from src.utils.logger import get_logger
@@ -161,6 +162,92 @@ class AbstractDataset(Dataset, ABC):
         
         # Extract sample
         return self._extract_sample(actual_idx)
+    
+    # In abstract_dataset.py
+
+    def add_synthetic_simulations(self, synthetic_sims: List[Dict[str, torch.Tensor]]):
+        """Add synthetic simulations that will be indexed like real simulations."""
+        if not hasattr(self, '_synthetic_sims'):
+            self._synthetic_sims = []
+        
+        self._synthetic_sims.extend(synthetic_sims)
+        
+        samples_per_sim = self.num_frames - self.num_predict_steps
+        num_synthetic_samples = len(self._synthetic_sims) * samples_per_sim
+        
+        self._num_real_only = self.num_real
+        self.num_real = self._num_real_only + num_synthetic_samples
+        
+        # CRITICAL FIX: Disable filtering when synthetic data is added
+        # or update the mapper's total count
+        if self._index_mapper is not None:
+            self._index_mapper.total_samples = self.num_real
+            self._index_mapper.num_samples = self.num_real  # Use all samples
+            self._index_mapper._active_indices = list(range(self.num_real))
+        
+        self._total_length = self._compute_length()
+
+    def _load_simulation(self, sim_idx: int) -> Any:
+        """
+        Load simulation data (handles both real and synthetic).
+        """
+        # Check if this is a synthetic simulation
+        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
+            synthetic_idx = sim_idx - len(self.sim_indices)
+            if synthetic_idx < len(self._synthetic_sims):
+                sim_data = self._synthetic_sims[synthetic_idx]['tensor_data']
+                
+                # Pin memory if configured (for TensorDataset)
+                if hasattr(self, 'pin_memory') and self.pin_memory:
+                    sim_data = {
+                        field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
+                        for field, tensor in sim_data.items()
+                    }
+                
+                return sim_data
+        
+        # Otherwise load real simulation from cache
+        full_data = self.data_manager.get_or_load_simulation(
+            sim_idx, field_names=self.field_names, num_frames=self.num_frames
+        )
+        
+        # Extract tensor data
+        sim_data = full_data["tensor_data"]
+        
+        # Pin memory if configured (for TensorDataset)
+        if hasattr(self, 'pin_memory') and self.pin_memory:
+            sim_data = {
+                field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
+                for field, tensor in sim_data.items()
+            }
+        
+        return sim_data
+
+    def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
+        """
+        Compute simulation index and starting frame from sample index.
+        Handles both real and synthetic simulations.
+        """
+        samples_per_sim = self.num_frames - self.num_predict_steps
+        sim_offset = idx // samples_per_sim
+        start_frame = idx % samples_per_sim
+        
+        # Check if this maps to real or synthetic simulation
+        if sim_offset < len(self.sim_indices):
+            sim_idx = self.sim_indices[sim_offset]
+        else:
+            # Synthetic simulation - use offset beyond real sims
+            sim_idx = sim_offset
+        
+        return sim_idx, start_frame
+
+    def clear_synthetic_simulations(self):
+        """Clear all synthetic simulations."""
+        if hasattr(self, '_synthetic_sims'):
+            self._synthetic_sims.clear()
+            if hasattr(self, '_num_real_only'):
+                self.num_real = self._num_real_only
+                self._total_length = self._compute_length()
 
     # ==================== Cache Management ====================
 
