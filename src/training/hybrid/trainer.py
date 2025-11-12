@@ -27,18 +27,19 @@ from src.training.physical.trainer import PhysicalTrainer
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.data import TensorDataset, FieldDataset
 from src.utils.logger import get_logger
+from src.data.dataset_utilities import field_collate_fn
 # === 2. Batched conversion ===
 from src.utils.field_conversion import make_converter
 from src.config import ConfigHelper
 import torch
 from phi.math import math, Tensor
 import logging
-# Create dataloader
-from torch.utils.data import DataLoader
 # Setup dataset creation
 from torch.utils.data import DataLoader
 from src.config import ConfigHelper
 from src.data import DataManager
+from phi.flow import plot
+import matplotlib.pyplot as plt
 
 logger = get_logger(__name__)
 
@@ -83,8 +84,8 @@ class HybridTrainer(AbstractTrainer):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Pre-create base datasets (created once, reused)
-        self._base_tensor_dataset = None
-        self._base_field_dataset = None
+        self._base_tensor_dataloader = None
+        self._base_field_dataloader = None
         self._initialize_datasets()
 
         # Create component trainers
@@ -138,15 +139,15 @@ class HybridTrainer(AbstractTrainer):
 
         train_sim_indices = self.trainer_config["train_sim"]
         percentage_real_data = self.trainer_config["percentage_real_data"]
-        # Create base tensor dataset (for synthetic training)
-        self._base_tensor_dataset = self._create_dataset(
+        # Create base tensor dataloader (for synthetic training)
+        self._base_tensor_dataloader = self._create_dataset(
             train_sim_indices,
             return_fields=False,
             percentage_real_data=percentage_real_data
         )
         
-        # Create base field dataset (for physical training)  
-        self._base_field_dataset = self._create_dataset(
+        # Create base field dataloader (for physical training)  
+        self._base_field_dataloader = self._create_dataset(
             train_sim_indices,
             return_fields=True,
             percentage_real_data=percentage_real_data
@@ -191,17 +192,10 @@ class HybridTrainer(AbstractTrainer):
         OPTIMIZED warmup using pre-created dataset.
         """
         # Use base dataset directly (no augmentation)
-        self._base_tensor_dataset.access_policy = "real_only"
-        
-        dataloader = DataLoader(
-            self._base_tensor_dataset,
-            batch_size=self.trainer_config["batch_size"],
-            shuffle=True,
-            pin_memory=True,
-        )
+        self._base_tensor_dataloader.dataset.access_policy = "real_only"
         
         self.synthetic_trainer.train(
-            data_source=dataloader,
+            data_source=self._base_tensor_dataloader,
             num_epochs=self.warmup_synthetic_epochs,
             verbose=True
         )
@@ -261,8 +255,8 @@ class HybridTrainer(AbstractTrainer):
                 self.physical_model.to(self.device)
             
             # Calculate how many trajectories to generate based on alpha
-            num_real = len(self._base_tensor_dataset.sim_indices) * \
-                    self._base_tensor_dataset.samples_per_sim
+            num_real = len(self._base_tensor_dataloader.dataset.sim_indices) * \
+                    (self._base_tensor_dataloader.dataset.num_frames - self._base_tensor_dataloader.dataset.num_predict_steps)
             num_samples_needed = int(num_real * self.alpha)
             
             # Calculate trajectory parameters
@@ -276,29 +270,14 @@ class HybridTrainer(AbstractTrainer):
             
             
             # Generate synthetic trajectories from random ICs
-            trajectories = self.physical_model.generate_synthetic_trajectories(
+            trajectories, rollout = self.physical_model.generate_synthetic_trajectories(
                 num_trajectories=num_trajectories,
                 trajectory_length=trajectory_length,
                 warmup_steps=5,  # Let physics settle
             )
             
-            # Convert trajectories to tensor format using dataset's windowing logic
-            # Create a temporary config for trajectory processing
-            augmentation_config = {
-                "mode": "memory",
-                "data": trajectories,
-                "alpha": self.alpha
-            }
-            
-            # Use the base tensor dataset to process trajectories
-            # This will call _process_trajectory_data internally
-            processed_samples = self._base_tensor_dataset._process_trajectory_data(trajectories)
-            
-            # Truncate to exact number needed (if we generated too many)
-            if len(processed_samples) > num_samples_needed:
-                processed_samples = processed_samples[:num_samples_needed]
-            
-            return processed_samples
+            print(rollout)
+            return trajectories
         
     def _generate_synthetic_predictions(self) -> List[Tuple]:
         """
@@ -313,15 +292,17 @@ class HybridTrainer(AbstractTrainer):
             self.synthetic_model.eval()
             
             # Use synthetic model's optimized generation method
-            tensor_dataset =  self._create_dataset(self.trainer_config["train_sim"])
+            tensor_dataloader =  self._create_dataset(self.trainer_config["train_sim"])
             batch_size = self.trainer_config["batch_size"]
             
             inputs_tensor, targets_tensor = self.synthetic_model.generate_predictions(
-                real_dataset=tensor_dataset,
+                real_dataset=tensor_dataloader.dataset,
                 alpha=self.alpha,
                 device=str(self.device),
                 batch_size=batch_size,
             )
+
+
             
             # Convert to list of tuples
             tensor_predictions = list(zip(inputs_tensor, targets_tensor))
@@ -407,23 +388,15 @@ class HybridTrainer(AbstractTrainer):
             access_policy = self._get_access_policy(for_synthetic=True)
             
             self._update_dataset_augmentation(
-                self._base_tensor_dataset,
+                self._base_tensor_dataloader.dataset,
                 generated_data,
                 access_policy
             )
-            
-            # Create DataLoader
-            train_loader = DataLoader(
-                self._base_tensor_dataset,
-                batch_size=self.trainer_config["batch_size"],
-                shuffle=True,
-                num_workers=0,
-                pin_memory=True,
-            )
+
             
             # Train
             result = self.synthetic_trainer.train(
-                data_source=train_loader,
+                data_source=self._base_tensor_dataloader,
                 num_epochs=self.synthetic_epochs_per_cycle,
                 verbose=False
             )
@@ -442,14 +415,14 @@ class HybridTrainer(AbstractTrainer):
             access_policy = self._get_access_policy(for_synthetic=False)
             
             self._update_dataset_augmentation(
-                self._base_field_dataset,
+                self._base_field_dataloader.dataset,
                 generated_data,
                 access_policy
             )
-            
-            # Train
+
+            # Pass the DataLoader to the trainer
             sample_loss = self.physical_trainer.train(
-                data_source=self._base_field_dataset,
+                data_source=self._base_field_dataloader, # Pass the loader, not the dataset
                 num_epochs=self.physical_epochs_per_cycle,
                 verbose=False
             )
@@ -480,14 +453,11 @@ class HybridTrainer(AbstractTrainer):
             mode=mode,
             sim_indices=sim_indices,
             enable_augmentation=False,  # We handle augmentation separately in hybrid training
-            batch_size=(
-                None if return_fields else self.trainer_config["batch_size"]
-            ),
+            batch_size=(self.trainer_config["batch_size"]),
             percentage_real_data=percentage_real_data
         )
 
-        return result if return_fields else result.dataset
-
+        return result
     
     def _update_dataset_augmentation(
         self, 
@@ -505,7 +475,7 @@ class HybridTrainer(AbstractTrainer):
             dataset: TensorDataset or FieldDataset to update
             augmented_data: New augmented samples
             access_policy: 'both', 'real_only', or 'generated_only'
-        """
+        """ 
         # Process augmented samples through dataset's converter
         # (this ensures format consistency)
         processed_samples = [

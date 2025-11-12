@@ -49,115 +49,21 @@ class PhysicalTrainer(FieldTrainer):
         # Placeholder
         self.batch_size = 1000
 
-
     def _train_epoch(self, data_source: DataLoader) -> float:
         """
-        Train using batched optimization (MUCH FASTER).
-        
-        Key insight: PhiML's math.minimize can optimize over batch dimensions,
-        meaning we optimize parameters that minimize loss across ALL samples
-        simultaneously.
+        Train using a DataLoader that provides pre-collated batches.
         """
         total_loss = 0.0
-        num_batches = 0
-        
-        # Collect samples into batches
-        batch_initial = []
-        batch_targets = []
-        
-        for sample_idx, (initial_fields, target_fields) in enumerate(data_source):
-            batch_initial.append(initial_fields)
-            batch_targets.append(target_fields)
-            
-            # Process batch when full or at end of data
-            if len(batch_initial) >= self.batch_size or sample_idx == len(data_source) - 1:
-                # Stack samples along batch dimension
-                stacked_initial = self._stack_samples(batch_initial)
-                stacked_targets = self._stack_target_sequences(batch_targets)
-                
-                # Optimize over entire batch
-                batch_loss = self._optimize_batch(stacked_initial, stacked_targets)
-                
-                total_loss += batch_loss
-                num_batches += 1
-                
-                # Clear batch
-                batch_initial = []
-                batch_targets = []
-        
-        avg_loss = total_loss / num_batches if num_batches > 0 else float("inf")
-        return avg_loss 
 
-    def _stack_samples(
-        self, samples: List[Dict[str, Field]]
-    ) -> Dict[str, Field]:
-        """
-        Stack multiple samples along batch dimension.
-        
-        Args:
-            samples: List of sample dicts, each containing initial fields
-        
-        Returns:
-            Single dict with fields stacked along batch('samples') dimension
-        
-        Example:
-            Input: [{'velocity': Field[x, y]}, {'velocity': Field[x, y]}]
-            Output: {'velocity': Field[samples, x, y]}
-        """
-        if not samples:
-            raise ValueError("Cannot stack empty sample list")
-        
-        # Get field names from first sample
-        field_names = samples[0].keys()
-        
-        stacked = {}
-        for field_name in field_names:
-            # Collect fields across samples
-            field_list = [sample[field_name] for sample in samples]
-            
-            # Stack along new batch dimension named 'samples'
-            stacked[field_name] = stack(field_list, batch('samples'))
-        
-        return stacked
+        # The data_source is now a DataLoader
+        for stacked_initial, stacked_targets in data_source:
+            # Optimize over the entire batch
+            batch_loss = self._optimize_batch(stacked_initial, stacked_targets)
 
-    def _stack_target_sequences(
-        self, target_sequences: List[Dict[str, List[Field]]]
-    ) -> Dict[str, Field]:
-        """
-        Stack target sequences from multiple samples.
-        
-        Args:
-            target_sequences: List of target dicts, each containing field sequences
-        
-        Returns:
-            Dict with fields stacked along batch('samples') and batch('time')
-        
-        Example:
-            Input: [
-                {'velocity': [Field[x,y], Field[x,y], ...]},  # Sample 1
-                {'velocity': [Field[x,y], Field[x,y], ...]},  # Sample 2
-            ]
-            Output: {'velocity': Field[samples, time, x, y]}
-        """
-        if not target_sequences:
-            raise ValueError("Cannot stack empty target list")
-        
-        field_names = target_sequences[0].keys()
-        stacked = {}
-        
-        for field_name in field_names:
-            # First stack each sample's time sequence
-            sample_sequences = []
-            for sample_targets in target_sequences:
-                field_list = sample_targets[field_name]
-                # Stack time dimension for this sample
-                time_stacked = stack(field_list, batch('time'))
-                sample_sequences.append(time_stacked)
-            
-            # Then stack samples dimension
-            stacked[field_name] = stack(sample_sequences, batch('samples'))
-        
-        return stacked
+            total_loss += batch_loss
+
+
+        return total_loss
 
     def _optimize_batch(
         self,
@@ -208,7 +114,6 @@ class PhysicalTrainer(FieldTrainer):
             
             # Average over timesteps
             avg_loss = total_loss / self.num_predict_steps
-            
             # Loss is already averaged over batch dimension by PhiML operations
             return avg_loss
         
@@ -262,7 +167,7 @@ class PhysicalTrainer(FieldTrainer):
             
             # Sum over spatial dimensions, average over samples
             # PhiML automatically reduces over batch dimensions in math.sum
-            field_loss = math.mean(field_loss, dim="samples,time")
+            field_loss = math.mean(field_loss, dim="batch,time")
             step_loss += field_loss
         return step_loss    
 

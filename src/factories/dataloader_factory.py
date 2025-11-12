@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from src.data import DataManager, TensorDataset, FieldDataset
 from src.config import ConfigHelper
 from src.utils.logger import get_logger
+from src.data.dataset_utilities import field_collate_fn
 
 logger = get_logger(__name__)
 
@@ -162,11 +163,6 @@ class DataLoaderFactory:
 
         # === Step 5: Create dataset based on mode ===
         if mode == "tensor":
-            # Tensor mode: for synthetic (neural network) models
-            dynamic_fields, static_fields = cfg.get_field_types()
-
-            logger.debug(f"  Dynamic fields: {dynamic_fields}")
-            logger.debug(f"  Static fields: {static_fields}")
 
             dataset = TensorDataset(
                 data_manager=data_manager,
@@ -174,8 +170,6 @@ class DataLoaderFactory:
                 field_names=field_names,
                 num_frames=num_frames,
                 num_predict_steps=num_predict_steps,
-                dynamic_fields=dynamic_fields,
-                static_fields=static_fields,
                 augmentation_config=augmentation_config,
                 percentage_real_data=percentage_real_data,
             )
@@ -214,7 +208,16 @@ class DataLoaderFactory:
             # Return dataset directly (no DataLoader for field mode)
             logger.debug(f"  Created FieldDataset with {len(dataset)} samples")
             logger.debug(f"FieldDataset created successfully")
-            return dataset
+
+            data_loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=num_workers,
+                collate_fn=field_collate_fn,
+            )
+            logger.debug(f"DataLoader created successfully")
+            return data_loader
 
         else:
             raise ValueError(f"Unknown mode: {mode}. Must be 'tensor' or 'field'.")

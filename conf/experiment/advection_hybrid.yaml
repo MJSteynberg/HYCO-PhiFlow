@@ -16,7 +16,7 @@ defaults:
 run_params:
   experiment_name: 'advection_experiment'
   notes: 'Hybrid training with synthetic model learning from real data only'
-  mode: ['evaluate']  # Options: generate, train, evaluate
+  mode: ['train', 'evaluate']  # Options: generate, train, evaluate
   model_type: 'hybrid'  # Options: synthetic, physical, hybrid
 
 model:

@@ -169,6 +169,20 @@ class PhysicalModel(ABC):
         """
         pass
 
+    @abstractmethod
+    def rollout(self, initial_state: Dict[str, Field], num_steps: int) -> Dict[str, Field]:
+        """
+        Roll out the simulation for a specified number of time steps.
+
+        Args:
+            initial_state (Dict[str, Field]): The initial state at t=0.
+            num_steps (int): The number of time steps to roll out.
+        Returns:
+            Dict[str, Field]: A dictionary mapping field names to their
+                                states after num_steps.
+        """
+        pass
+
     def __call__(self, *args) -> tuple[Field, ...]:
         """Convenience wrapper for the forward method."""
         return self.forward(*args)
@@ -231,158 +245,8 @@ class PhysicalModel(ABC):
                 })
             
             all_trajectories.append(trajectory)
-        
-        return all_trajectories
-
-    def generate_predictions(
-        self,
-        real_dataset,
-        alpha: float,
-        num_rollout_steps: int = 10,
-        num_warmup_steps: int = 3,
-        noise_scale: float = 0.1,
-    ):
-        print("Warning (PhysicalModel):")
-        print("  The generate_predictions is deprecated, use generate_synthetic_trajectories instead.")
-        """
-        Generate predictions for data augmentation with noise-perturbed warmup.
-
-        Strategy:
-        1. Sample initial fields from real dataset
-        2. Add controlled noise to each field
-        3. Evolve noisy fields for num_warmup_steps (let physics settle)
-        4. Use settled state as input for rollout prediction
-
-        This creates more diverse and physically plausible augmentation data.
-
-        Args:
-            real_dataset: Dataset of real field samples (FieldDataset)
-            alpha: Proportion of generated samples (e.g., 0.1 = 10%)
-            num_rollout_steps: Number of rollout steps for prediction
-            num_warmup_steps: Number of steps to evolve noisy initial conditions
-            noise_scale: Scale of noise to add (relative to field magnitude)
-
-        Returns:
-            Tuple of (warmup_fields, predictions) where:
-            - warmup_fields: Dict[str, Field] with batch dimension [batch, x, y]
-            - predictions: List of Dict[str, Field], each with batch dimension
-        """
-        # Calculate number of samples to generate
-        num_real = len(real_dataset)
-        num_generate = int(num_real * alpha)
-
-        self.logger.debug(
-            f"Generating {num_generate} physical predictions "
-            f"(alpha={alpha:.2f}, warmup={num_warmup_steps} steps, noise_scale={noise_scale})"
-        )
-
-        if num_generate == 0:
-            self.logger.warning("Alpha too small, no samples will be generated")
-            return {}, []
-
-        # Select diverse sample indices
-        indices = self._select_proportional_indices(num_real, num_generate)
-
-        # Pre-allocate field collectors
-        sample_fields, _ = real_dataset[indices[0]]
-        field_names = list(sample_fields.keys())
-        field_collectors = {name: [] for name in field_names}
-        
-        # Collect all fields
-        for idx in indices:
-            initial_fields, _ = real_dataset[idx]
-            for field_name in field_names:
-                field_collectors[field_name].append(initial_fields[field_name])
-        
-        # Stack into batched fields
-        stacked_fields = {
-            field_name: math.stack(fields, batch('batch'))
-            for field_name, fields in field_collectors.items()
-        }
-        # Add noise to create perturbed initial conditions
-        noisy_fields = self._add_noise_to_fields(stacked_fields, batch_size=num_generate)
-        
-        # Warmup: evolve noisy fields to let physics settle the perturbation
-        warmup_fields = self._perform_warmup(noisy_fields, num_warmup_steps)
-        
-        # Perform rollout prediction from settled state
-        predictions = self._perform_rollout(warmup_fields, num_rollout_steps)
-        
-        return warmup_fields, predictions
-    
-    def _add_noise_to_fields(self, fields, batch_size):
-        """
-        Add controlled noise to each field in the dictionary.
-
-        Args:
-            fields: Dict[str, Field] with batch dimension
-            noise_scale: Scale of noise relative to field magnitude
-
-        Returns:
-            Dict[str, Field]: Noisy fields
-        """
-        noise = self.get_random_state(batch_size=batch_size)
-
-        for name in fields:
-            field = fields[name]
-            noise_field = noise[name]
-            fields[name] = math.tanh(field + 0.5*noise_field)
-
-        return fields
-    
-    def _perform_warmup(self, initial_fields: Dict[str, Field], num_steps: int):
-        """
-        Perform warmup evolution to let physics settle perturbations.
-
-        Args:
-            initial_fields: Initial noisy field state (dict of PhiFlow Fields)
-            num_steps: Number of warmup steps
-
-        Returns:
-            Dict[str, Field]: Settled field state after warmup
-        """
-
-        # Start from initial noisy state
-        current_state = initial_fields
-
-        # Perform warmup steps
-        for step_num in range(num_steps):
-            # Call model's forward method
-            current_state = self.forward(current_state)
-    
-        return current_state
-
-    def _perform_rollout(self, initial_fields: Dict[str, Field], num_steps: int):
-        """
-        Perform rollout prediction.
-
-        Args:
-            initial_fields: Initial field state (dict of PhiFlow Fields)
-            num_steps: Number of rollout steps
-
-        Returns:
-            List of predicted field states, one for each step (List[Dict[str, Field]])
-        """
-
-        self.logger.debug(f"Performing {num_steps}-step rollout with physical model")
-
-        # Start from initial state
-        current_state = initial_fields
-
-        # Store all rollout states
-        rollout_states = []
-
-        # Perform rollout steps
-        for step_num in range(num_steps):
-            self.logger.debug(f" Rollout step {step_num + 1}/{num_steps}")
-
-            # Call model's forward method
-            current_state = self.forward(current_state)
-            
-            # Store the state at this step
-            rollout_states.append(current_state)
-    
-        return rollout_states
+        rollout = self.rollout(initial_state, num_steps=trajectory_length)
+        return all_trajectories, rollout
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

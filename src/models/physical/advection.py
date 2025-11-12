@@ -30,7 +30,7 @@ def _advection_step(
     """
     # Scale velocity by advection coefficient
     velocity = velocity * advection_coeff
-    return advect.semi_lagrangian(density, velocity, dt=dt)
+    return advect.semi_lagrangian(density, velocity, dt=dt), velocity, advection_coeff
 
 
 @ModelRegistry.register_physical("AdvectionModel")
@@ -175,6 +175,19 @@ class AdvectionModel(PhysicalModel):
         density_0 = math.expand(density_0, b)
 
         return {"density": density_0, "velocity": velocity_0}
+    
+    def rollout(self, initial_state, num_steps):
+        """
+        Perform multiple simulation steps starting from the initial state.
+
+        Args:
+            initial_state: Dictionary containing initial 'density' and 'velocity' fields.
+            num_steps: Number of simulation steps to perform.
+        Returns:
+            List of states at each timestep.
+        """
+        density_trj, velocity_trj, _ = iterate(_advection_step, batch(time=int(num_steps*self.dt)), initial_state["density"], initial_state["velocity"], self.advection_coeff, dt = self.dt)
+        return {"density": density_trj, "velocity": velocity_trj}
 
     def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
@@ -186,11 +199,11 @@ class AdvectionModel(PhysicalModel):
         Returns:
             Dictionary with updated 'density' and unchanged 'velocity'.
         """
-        new_density = _advection_step(
+        new_density, new_velocity, _ = _advection_step(
             density=current_state["density"],
             velocity=current_state["velocity"],
             advection_coeff=self.advection_coeff,
             dt=self.dt,
         )
         # Velocity field remains static (like smoke's inflow)
-        return {"density": new_density, "velocity": current_state["velocity"]}
+        return {"density": new_density, "velocity": new_velocity}
