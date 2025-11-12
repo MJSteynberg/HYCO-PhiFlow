@@ -186,7 +186,7 @@ class AdvectionModel(PhysicalModel):
         Returns:
             List of states at each timestep.
         """
-        density_trj, velocity_trj, _ = iterate(_advection_step, batch(time=int(num_steps*self.dt)), initial_state["density"], initial_state["velocity"], self.advection_coeff, dt = self.dt)
+        density_trj, velocity_trj, _ = iterate(_advection_step, batch(time=num_steps), initial_state["density"], initial_state["velocity"], self.advection_coeff, dt = self.dt)
         return {"density": density_trj, "velocity": velocity_trj}
 
     def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:

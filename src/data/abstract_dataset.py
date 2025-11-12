@@ -187,42 +187,22 @@ class AbstractDataset(Dataset, ABC):
         
         self._total_length = self._compute_length()
 
-    def _load_simulation(self, sim_idx: int) -> Any:
-        """
-        Load simulation data (handles both real and synthetic).
-        """
-        # Check if this is a synthetic simulation
-        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
-            synthetic_idx = sim_idx - len(self.sim_indices)
-            if synthetic_idx < len(self._synthetic_sims):
-                # Synthetic sims are stored as {'tensor_data': {...}}
-                # Return the tensor_data dict directly
-                return self._synthetic_sims[synthetic_idx]['tensor_data']
-        
-        # Otherwise load real simulation from cache
-        full_data = self.data_manager.get_or_load_simulation(
-            sim_idx, field_names=self.field_names, num_frames=self.num_frames
-        )
-        
-        # Extract tensor data for consistent return type
-        return full_data["tensor_data"]
-
     def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
-        """
-        Compute simulation index and starting frame from sample index.
-        Handles both real and synthetic simulations.
-        """
+        """Compute simulation index and starting frame from a real sample index."""
         samples_per_sim = self.num_frames - self.num_predict_steps
+        if samples_per_sim <= 0:
+            # This can happen if num_frames is too small
+            return self.sim_indices[0], 0
+
         sim_offset = idx // samples_per_sim
         start_frame = idx % samples_per_sim
-        
-        # Check if this maps to real or synthetic simulation
+
         if sim_offset < len(self.sim_indices):
             sim_idx = self.sim_indices[sim_offset]
         else:
-            # Synthetic simulation - use offset beyond real sims
+            # This case should ideally not be hit if logic is separated,
+            # but as a fallback, we can treat it as a direct index.
             sim_idx = sim_offset
-        
         return sim_idx, start_frame
 
     def clear_synthetic_simulations(self):

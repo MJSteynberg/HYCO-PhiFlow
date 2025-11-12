@@ -152,20 +152,15 @@ class FieldDataset(AbstractDataset):
     
     def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
-        Load simulation data (handles both real and synthetic).
-        """
-        # Check if this is a synthetic simulation
-        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
-            synthetic_idx = sim_idx - len(self.sim_indices)
-            if synthetic_idx < len(self._synthetic_sims):
-                return self._synthetic_sims[synthetic_idx]
-        
+        Load simulation data from the data manager."""
         # Otherwise load real simulation from cache
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
         return full_data
+    
+    
     
     def _extract_sample(self, idx: int) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
         """

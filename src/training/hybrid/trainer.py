@@ -267,7 +267,6 @@ class HybridTrainer(AbstractTrainer):
             
             # Generate rollout
             rollout = self.physical_model.rollout(initial_state, num_steps=trajectory_length)
-            
             # Convert to tensor format (same as cached data)
             tensor_rollouts = self._convert_rollout_to_cached_format(rollout)
             
@@ -587,11 +586,11 @@ class HybridTrainer(AbstractTrainer):
             access_policy: 'both', 'real_only', or 'generated_only'
         """
         # Clear old synthetic data
-        dataset.clear_synthetic_simulations()
+        dataset.augmented_samples.clear()
         
         # Add new synthetic simulations
         if len(synthetic_sims) > 0:
-            dataset.add_synthetic_simulations(synthetic_sims)
+            dataset.augmented_samples.extend(synthetic_sims)
         
         # Update access policy
         dataset.access_policy = access_policy
@@ -679,4 +678,3 @@ class HybridTrainer(AbstractTrainer):
     
     
     
-
