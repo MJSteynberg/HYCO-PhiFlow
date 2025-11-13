@@ -32,11 +32,11 @@ trainer_params:
   # Training data
   train_sim: [1]  # Training simulations
   val_sim: [0]  # Validation simulations
-  percentage_real_data: 0.5  # Use all real data for synthetic model
+  percentage_real_data: 0.2  # Use all real data for synthetic model
   
   # Training hyperparameters
   epochs: 10
-  batch_size: 16
+  batch_size: 128
   num_predict_steps: 4
   
   # Optimizer (for synthetic/hybrid)
@@ -60,22 +60,22 @@ trainer_params:
   # Physical model optimization settings
   method: 'L-BFGS-B'  # Gradient descent
   abs_tol: 1e-3
-  max_iterations: 5 # Maximum optimization iterations
+  max_iterations: 2 # Maximum optimization iterations
 
 
 
   # Hybrid config
   hybrid:
     num_cycles: 50
-    synthetic_epochs_per_cycle: 10 # More synthetic training
+    synthetic_epochs_per_cycle: 1 # More synthetic training
     physical_epochs_per_cycle: 1   # Physical learns from synthetic
-    warmup_synthetic_epochs: 10  # Establish synthetic baseline
+    warmup_synthetic_epochs: 1  # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
-    real_data_access: 'both'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'
+    real_data_access: 'synthetic_only'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'
 
   augmentation:
-    alpha: 1.0  # More physics-based augmentation
+    alpha: 3.0  # More physics-based augmentation
 
 evaluation_params:
   test_sim: [2, 1]

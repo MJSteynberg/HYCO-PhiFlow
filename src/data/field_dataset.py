@@ -149,7 +149,8 @@ class FieldDataset(AbstractDataset):
             logger.debug(f"  Dataset: {self.num_augmented} generated samples")
     
     # ==================== Implementation of Abstract Methods ====================
-    
+
+
     def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
         Load simulation data from the data manager."""
@@ -198,39 +199,6 @@ class FieldDataset(AbstractDataset):
         )
         
         return initial_fields, target_fields
-    
-    def _process_augmented_sample(self, sample: Any) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
-        """
-        Convert augmented sample to Field format.
-        
-        Handles both:
-        - Pre-processed (input_tensor, target_tensor) tuples
-        - Raw trajectory windows (List[Dict[str, Field]])
-        
-        Args:
-            sample: Augmented sample (tuple or trajectory window)
-        
-        Returns:
-            Tuple of (initial_fields, target_fields) as Fields
-        """
-        # Check if already Fields
-        if isinstance(sample, tuple) and len(sample) == 2:
-            initial, targets = sample
-            if isinstance(initial, dict) and all(isinstance(f, Field) for f in initial.values()):
-                # Already in Field format
-                return initial, targets
-            elif isinstance(initial, torch.Tensor):
-                # Tensor format - need to convert
-                return self._convert_tensor_sample(initial, targets)
-        
-        # Handle trajectory window
-        if isinstance(sample, list) and len(sample) > 0:
-            if isinstance(sample[0], dict):
-                # Raw trajectory window
-                return self._convert_trajectory_window(sample)
-        
-        # Fallback
-        return sample
     
     def _convert_tensor_sample(
         self,
@@ -285,33 +253,6 @@ class FieldDataset(AbstractDataset):
                     target_fields[name].append(field.batch[0])
                 else:
                     target_fields[name].append(field)
-        
-        return initial_fields, target_fields
-    
-    def _convert_trajectory_window(
-        self,
-        window_states: List[Dict[str, Field]]
-    ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
-        """
-        Convert trajectory window to Field format.
-        
-        Args:
-            window_states: List of states [Dict[str, Field]]
-                         Length = num_predict_steps + 1
-        
-        Returns:
-            Tuple of (initial_fields, target_fields)
-        """
-        # First state is initial
-        initial_fields = window_states[0]
-        
-        # Remaining states are targets
-        target_states = window_states[1:]
-        
-        # Reorganize from List[Dict] to Dict[List]
-        target_fields = {}
-        for field_name in self.field_names:
-            target_fields[field_name] = [state[field_name] for state in target_states]
         
         return initial_fields, target_fields
     
@@ -524,3 +465,183 @@ class FieldDataset(AbstractDataset):
             f"  move_to_gpu={torch.cuda.is_available()}\n"
             f")"
         )
+
+
+    # ==================== UPDATED _process_augmented_sample ====================
+
+    def _process_augmented_sample(self, sample: Any) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
+        """
+        Convert augmented sample to Field format.
+        
+        Handles:
+        - Tensor tuples: (initial_tensor, target_tensor) → Convert to Fields
+        - Field tuples: (initial_fields, target_fields) → Return as-is
+        - Trajectory windows: List[Dict[str, Field]] → Extract initial and targets
+        
+        Args:
+            sample: Augmented sample in various formats
+        
+        Returns:
+            Tuple of (initial_fields, target_fields) as Fields
+        """
+        # Case 1: Tuple format
+        if isinstance(sample, tuple) and len(sample) == 2:
+            initial, targets = sample
+            
+            # Case 1a: Tensor format - MUST convert
+            if isinstance(initial, torch.Tensor):
+                return self._convert_tensor_window_to_fields(initial, targets)
+            
+            # Case 1b: Already in Field format - pass through
+            if isinstance(initial, dict):
+                if all(isinstance(f, Field) for f in initial.values()):
+                    if isinstance(targets, dict):
+                        return initial, targets
+        
+        # Case 2: Raw trajectory window (list of state dicts)
+        if isinstance(sample, list) and len(sample) > 0:
+            if isinstance(sample[0], dict) and all(isinstance(v, Field) for v in sample[0].values()):
+                return self._convert_trajectory_window(sample)
+        
+        # Unknown format - log and return as-is
+        logger.error(
+            f"_process_augmented_sample received unknown format:\n"
+            f"  Type: {type(sample)}\n"
+            f"  Content: {sample if not isinstance(sample, tuple) else f'tuple of ({type(sample[0])}, {type(sample[1])})'}"
+        )
+        raise ValueError(f"Cannot process augmented sample of type {type(sample)}")
+
+
+    def set_augmented_predictions(
+        self,
+        tensor_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
+    ):
+        """
+        Set augmented predictions with pre-conversion to Fields.
+        
+        This method converts all tensor predictions to Fields in a single batch,
+        then stores the converted Fields. This eliminates repeated conversions
+        on every dataset access.
+        
+        Args:
+            tensor_predictions: List of (initial_tensor, target_tensor) tuples
+        """
+        if not tensor_predictions:
+            self.augmented_samples = []
+            self.num_augmented = 0
+            self.access_policy = "real_only"
+            self._total_length = self._compute_length()
+            return
+        
+        
+        # Get field metadata and create batch converter ONCE
+        field_metadata = self._get_field_metadata()
+        from src.utils.field_conversion import make_batch_converter
+        batch_converter = make_batch_converter(field_metadata)
+        
+        # Convert all predictions
+        field_predictions = []
+        for idx, (initial_tensor, target_tensor) in enumerate(tensor_predictions):
+            if idx % 50 == 0 and idx > 0:
+                logger.debug(f"  Converted {idx}/{len(tensor_predictions)} predictions...")
+            
+            # Convert using the shared batch_converter
+            fields = self._convert_tensor_to_fields_optimized(
+                initial_tensor, target_tensor, batch_converter, field_metadata
+            )
+            field_predictions.append(fields)
+        
+        # Store converted Fields
+        self.augmented_samples = field_predictions
+        self.num_augmented = len(field_predictions)
+        
+
+
+    # ==================== ADD THIS OPTIMIZED CONVERSION METHOD ====================
+
+    def _convert_tensor_to_fields_optimized(
+        self,
+        input_tensor: torch.Tensor,
+        target_tensor: torch.Tensor,
+        batch_converter,  # Reuse across calls
+        field_metadata: Dict
+    ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
+        """
+        Optimized conversion using pre-created batch_converter.
+        
+        Args:
+            input_tensor: Initial state [C_all, H, W]
+            target_tensor: Target states [T, C_all, H, W]
+            batch_converter: Pre-created batch converter (reused)
+            field_metadata: Pre-fetched field metadata (reused)
+        
+        Returns:
+            Tuple of (initial_fields, target_fields)
+        """
+        # Move to GPU if available
+        if torch.cuda.is_available():
+            if not input_tensor.is_cuda:
+                input_tensor = input_tensor.cuda()
+            if not target_tensor.is_cuda:
+                target_tensor = target_tensor.cuda()
+        
+        # Convert initial state
+        input_with_batch = input_tensor.unsqueeze(0)
+        initial_fields = batch_converter.tensor_to_fields_batch(input_with_batch)
+        
+        # Remove batch dimension
+        for name, field in initial_fields.items():
+            if "batch" in field.shape:
+                initial_fields[name] = field.batch[0]
+        
+        # Convert target states
+        if target_tensor.dim() == 3:
+            target_tensor = target_tensor.unsqueeze(0)
+        
+        num_timesteps = target_tensor.shape[0]
+        target_fields = {name: [] for name in field_metadata.keys()}
+        
+        for t in range(num_timesteps):
+            timestep_tensor = target_tensor[t].unsqueeze(0)
+            timestep_fields = batch_converter.tensor_to_fields_batch(timestep_tensor)
+            
+            for name, field in timestep_fields.items():
+                if "batch" in field.shape:
+                    target_fields[name].append(field.batch[0])
+                else:
+                    target_fields[name].append(field)
+        
+        return initial_fields, target_fields
+
+
+    # ==================== SIMPLIFIED __getitem__ ====================
+
+    def __getitem__(self, idx: int):
+        """
+        Get a sample by index.
+        
+        Now much simpler since augmented_samples are already Fields!
+        """
+        # Route based on access policy
+        if self.access_policy == "real_only":
+            if idx >= self.num_real:
+                raise IndexError(f"Index {idx} out of range [0, {self.num_real})")
+            return self._get_real_sample(idx)
+        
+        elif self.access_policy == "generated_only":
+            if idx >= self.num_augmented:
+                raise IndexError(f"Index {idx} out of range [0, {self.num_augmented})")
+            
+            # Just return the pre-converted Field sample (no conversion needed!)
+            return self.augmented_samples[idx]
+        
+        else:  # 'both'
+            if idx >= self._total_length:
+                raise IndexError(f"Index {idx} out of range [0, {self._total_length})")
+            
+            if idx < self.num_real:
+                return self._get_real_sample(idx)
+            else:
+                aug_idx = idx - self.num_real
+                # Just return the pre-converted Field sample
+                return self.augmented_samples[aug_idx]

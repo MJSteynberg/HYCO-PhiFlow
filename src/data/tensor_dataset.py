@@ -255,6 +255,212 @@ class TensorDataset(AbstractDataset):
         logger.warning(f"Unsupported augmentation data type: {type(data)}. Returning empty list.")
         return []
     
+# new !!!!!!!!!!!!!!!!
+    def _convert_field_rollout_to_tensors(
+        self,
+        rollout: Dict[str, Field]
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Convert a Field rollout to cache-compatible tensor format.
+        
+        OPTIMIZED: Converts all timesteps for a field at once using batched operations.
+        
+        Args:
+            rollout: Dict mapping field_name to Field[time, x, y]
+        
+        Returns:
+            Dict with structure: {'tensor_data': {field_name: tensor[T, C, H, W]}}
+        """
+        from src.utils.field_conversion import make_converter
+        
+        tensor_data = {}
+        
+        for field_name in self.field_names:
+            if field_name not in rollout:
+                continue
+            
+            field_traj = rollout[field_name]
+            
+            # Get number of timesteps
+            num_timesteps = field_traj.shape.get_size('time')
+            
+            # OPTIMIZATION: Try batch conversion first
+            trajectory_tensor = self._try_batch_convert_trajectory(
+                field_traj, num_timesteps
+            )
+            
+            if trajectory_tensor is None:
+                # Fallback to per-timestep conversion
+                trajectory_tensor = self._convert_trajectory_sequential(
+                    field_traj, num_timesteps
+                )
+            
+            tensor_data[field_name] = trajectory_tensor.cpu()
+        
+        # Return in cache-compatible format
+        return {'tensor_data': tensor_data}
+
+
+    # ==================== ADD BATCH CONVERSION METHOD ====================
+
+    def _try_batch_convert_trajectory(
+        self,
+        field_traj: Field,
+        num_timesteps: int
+    ) -> Optional[torch.Tensor]:
+        """
+        Try to convert entire trajectory at once (fastest path).
+        
+        This works when the Field has a native tensor that can be accessed directly.
+        
+        Args:
+            field_traj: Field with time dimension
+            num_timesteps: Number of timesteps
+        
+        Returns:
+            Tensor [T, C, H, W] or None if batch conversion not possible
+        """
+        try:
+            # Try to access the native tensor directly
+            if hasattr(field_traj, 'values') and hasattr(field_traj.values, '_native'):
+                native_tensor = field_traj.values._native
+                
+                # Determine if vector or scalar
+                # Expected layouts from PhiFlow:
+                # Vector: [x, y, vector, time] or similar
+                # Scalar: [x, y, time]
+                
+                if native_tensor.dim() == 4:  # Vector field
+                    # Permute to [time, vector, x, y]
+                    tensor = native_tensor.permute(3, 2, 0, 1)
+                elif native_tensor.dim() == 3:  # Scalar field
+                    # Permute to [time, x, y], then add channel dim
+                    tensor = native_tensor.permute(2, 0, 1).unsqueeze(1)
+                else:
+                    return None  # Unexpected shape
+                
+                # Verify shape makes sense
+                if tensor.shape[0] == num_timesteps:
+                    return tensor
+            
+            return None
+        except Exception:
+            return None
+
+
+    # ==================== ADD SEQUENTIAL CONVERSION (FALLBACK) ====================
+
+    def _convert_trajectory_sequential(
+        self,
+        field_traj: Field,
+        num_timesteps: int
+    ) -> torch.Tensor:
+        """
+        Convert trajectory one timestep at a time (slower fallback).
+        
+        Args:
+            field_traj: Field with time dimension
+            num_timesteps: Number of timesteps
+        
+        Returns:
+            Tensor [T, C, H, W]
+        """
+        from src.utils.field_conversion import make_converter
+        
+        # Create converter from first timestep
+        first_field = field_traj.time[0]
+        converter = make_converter(first_field)
+        
+        # Convert each timestep
+        tensors = []
+        for t in range(num_timesteps):
+            field_t = field_traj.time[t]
+            tensor_t = converter.field_to_tensor(field_t, ensure_cpu=True)
+            
+            # Remove batch dimension if present
+            if tensor_t.dim() == 4:
+                tensor_t = tensor_t.squeeze(0)
+            
+            tensors.append(tensor_t)
+        
+        # Stack along time dimension: [T, C, H, W]
+        trajectory_tensor = torch.stack(tensors, dim=0)
+        return trajectory_tensor
+
+
+    # ==================== OPTIMIZED add_synthetic_simulations ====================
+
+    def add_synthetic_simulations(self, synthetic_rollouts: List[Dict[str, Field]]):
+        """
+        Add synthetic simulations from Field trajectories.
+        
+        OPTIMIZED: Uses batched conversion where possible.
+        
+        Args:
+            synthetic_rollouts: List of rollout dicts where each is
+                            {'field_name': Field[time, x, y]}
+        """
+        if not hasattr(self, '_synthetic_sims'):
+            self._synthetic_sims = []
+            self._num_real_only = self.num_real
+        
+        # Clear old synthetic sims
+        self._synthetic_sims.clear()
+
+        
+        # Convert each Field trajectory to tensor format
+        for idx, rollout in enumerate(synthetic_rollouts):
+            if idx % 10 == 0 and idx > 0:
+                logger.debug(f"  Converted {idx}/{len(synthetic_rollouts)} trajectories...")
+            
+            # Convert this rollout to cache-compatible tensor format
+            tensor_sim = self._convert_field_rollout_to_tensors(rollout)
+            self._synthetic_sims.append(tensor_sim)
+        
+        # Calculate how many samples these trajectories provide
+        samples_per_sim = self.num_frames - self.num_predict_steps
+        num_synthetic_samples = len(self._synthetic_sims) * samples_per_sim
+        
+        # Update num_real to include synthetic samples
+        self.num_real = self._num_real_only + num_synthetic_samples
+        
+        # Update filtering if active - we want to use ALL samples during training
+        if self._index_mapper is not None:
+            self._index_mapper.total_samples = self.num_real
+            self._index_mapper.num_samples = self.num_real
+            self._index_mapper._active_indices = list(range(self.num_real))
+        
+        # Recompute total length
+        self._total_length = self._compute_length()
+        
+
+    # !!!!!!!!!!!!!!!!!!!!!
+
+    def clear_synthetic_simulations(self):
+        """
+        Clear all synthetic simulations and restore original state.
+        """
+        if hasattr(self, '_synthetic_sims'):
+            self._synthetic_sims.clear()
+            
+            if hasattr(self, '_num_real_only'):
+                # Restore original num_real
+                self.num_real = self._num_real_only
+                
+                # Restore original filtering state
+                if self._index_mapper is not None:
+                    self._index_mapper.total_samples = self.num_real
+                    # Regenerate filtered indices for original real data
+                    self._index_mapper._active_indices = self._index_mapper._generate_indices(None)
+                
+                # Recompute length
+                self._total_length = self._compute_length()
+                
+                logger.debug(
+                    f"Cleared synthetic simulations. "
+                    f"Restored to {self.num_real} real samples"
+                )
+    
     def _convert_trajectory_window(
         self,
         window_states: List[Dict[str, Field]]
