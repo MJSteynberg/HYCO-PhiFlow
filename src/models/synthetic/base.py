@@ -93,8 +93,9 @@ class SyntheticModel(nn.Module, ABC):
         self.eval()
         self.to(device)
 
-        num_real = len(real_dataset)
-        num_generate = int(num_real * alpha)
+        # If dataset exposes `num_augmented` and it is > 0, prefer that.
+        num_augmented = getattr(real_dataset, 'num_augmented', 0)
+        num_generate = int(num_augmented)
 
         if num_generate == 0:
             self.logger.warning("Alpha too small, no samples will be generated")
@@ -116,8 +117,13 @@ class SyntheticModel(nn.Module, ABC):
             device=device
         )
 
-        # Select diverse indices
-        indices = self._select_proportional_indices(num_real, num_generate)
+        # Select diverse indices. If augmented samples are present, we want to
+        # select indices only from the augmented-region of the dataset so the
+        # synthetic predictions correspond to physically-generated trajectories.
+        total_aug = num_augmented
+        aug_start = len(real_dataset) - total_aug
+        indices = [aug_start + i for i in range(total_aug)]
+
         subset = torch.utils.data.Subset(real_dataset, indices)
         
         # Enable pin_memory for faster transfer
@@ -128,7 +134,6 @@ class SyntheticModel(nn.Module, ABC):
             pin_memory=(device != 'cpu'),
             num_workers=0  # Can be increased if data loading is bottleneck
         )
-
         idx = 0
         for batch_inputs, _ in loader:
             batch_size_actual = batch_inputs.size(0)
@@ -143,7 +148,10 @@ class SyntheticModel(nn.Module, ABC):
             
             idx += batch_size_actual
 
-        return all_inputs, all_predictions
+        # Return only the filled prefix in case num_generate was not perfectly
+        # filled by the loader (due to rounding or selection).
+        self.logger.debug(f"generate_predictions: actually generated {idx} samples (requested {num_generate})")
+        return all_inputs[:idx], all_predictions[:idx]
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

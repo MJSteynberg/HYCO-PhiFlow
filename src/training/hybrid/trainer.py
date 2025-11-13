@@ -1,12 +1,11 @@
 """
-REFACTORED HybridTrainer - Clean separation of concerns
+REFACTORED HybridTrainer - Clean API with new dataset methods
 
-The trainer ONLY:
-1. Generates data (Fields from physical, tensors from synthetic)
-2. Passes data to datasets
-3. Calls train methods
-
-Datasets handle ALL conversions internally via their _process_augmented_sample methods.
+Key Changes:
+- Uses set_augmented_trajectories() for TensorDataset (physical → synthetic training)
+- Uses set_augmented_predictions() for FieldDataset (synthetic → physical training)
+- Clear distinction between trajectory-based and prediction-based augmentation
+- Datasets maintain source tracking internally
 """
 
 import torch
@@ -21,7 +20,7 @@ from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 from src.data import TensorDataset, FieldDataset
-from src.utils.logger import get_logger
+from src.utils.logger import get_logger, logging
 from src.config import ConfigHelper
 from phi.math import Tensor
 from phi.flow import Field
@@ -35,7 +34,11 @@ class HybridTrainer(AbstractTrainer):
     """
     Hybrid trainer with clean separation of concerns.
     
-    Generates data and passes to datasets - datasets handle all conversions.
+    Training Flow:
+    1. Physical model generates trajectories (Fields) → TensorDataset augmentation
+    2. Synthetic model trains on real + physical trajectories
+    3. Synthetic model generates predictions (tensors) → FieldDataset augmentation
+    4. Physical model trains on real + synthetic predictions
     """
 
     def __init__(
@@ -141,9 +144,10 @@ class HybridTrainer(AbstractTrainer):
 
     def _run_warmup(self):
         """Warmup phase - train synthetic model on real data only."""
+        logger.info(f"Running warmup for {self.warmup_synthetic_epochs} epochs...")
+        
         self._base_tensor_dataset.access_policy = "real_only"
         
-        # Create dataloader for warmup
         warmup_dataloader = DataLoader(
             self._base_tensor_dataset,
             batch_size=self.trainer_config["batch_size"],
@@ -162,18 +166,30 @@ class HybridTrainer(AbstractTrainer):
 
     def _run_cycle(self) -> Tuple[float, float]:
         """Execute one complete hybrid training cycle."""
+        logger.debug(f"\n{'='*60}")
+        logger.debug(f"CYCLE {self.current_cycle + 1}/{self.num_cycles}")
+        logger.debug(f"{'='*60}")
+        
         # Phase 1: Generate physical trajectories (as Field rollouts)
+        logger.debug("Phase 1: Generating physical trajectories...")
         physical_rollouts = self._generate_physical_rollouts()
         
         # Phase 2: Add to tensor dataset and train synthetic model
-        self._base_tensor_dataset.clear_synthetic_simulations()
-        self._base_tensor_dataset.add_synthetic_simulations(physical_rollouts)
+        logger.debug("Phase 2: Training synthetic model on physical trajectories...")
+        # Ensure dataset access policy is set before we recompute totals in the dataset
+        access_policy = self._get_access_policy(for_synthetic=True)
+        self._base_tensor_dataset.access_policy = access_policy
+
+        logger.debug(f"  Set TensorDataset access_policy={access_policy} before adding augmented trajectories")
+        self._base_tensor_dataset.set_augmented_trajectories(physical_rollouts)
         synthetic_loss = self._train_synthetic_model()
         
         # Phase 3: Generate synthetic predictions (as tensor windows)
+        logger.debug("Phase 3: Generating synthetic predictions...")
         synthetic_predictions = self._generate_synthetic_predictions()
         
         # Phase 4: Add to field dataset and train physical model
+        logger.debug("Phase 4: Training physical model on synthetic predictions...")
         physical_loss = self._train_physical_model(synthetic_predictions)
         
         # Cleanup
@@ -191,9 +207,7 @@ class HybridTrainer(AbstractTrainer):
         
         Returns:
             List of rollout dictionaries: [{'field_name': Field[time, x, y]}]
-            Each rollout is a full trajectory in Field format.
         """
-        
         with self.managed_memory_phase("Physical Generation"):
             if hasattr(self.physical_model, 'to'):
                 self.physical_model.to(self.device)
@@ -206,11 +220,14 @@ class HybridTrainer(AbstractTrainer):
             samples_per_trajectory = trajectory_length - self.trainer_config["num_predict_steps"]
             num_trajectories = max(1, (num_synthetic_samples + samples_per_trajectory - 1) // samples_per_trajectory)
             
+            logger.debug(
+                f"  Generating {num_trajectories} trajectories "
+                f"(~{num_synthetic_samples} samples after windowing)"
+            )
             
             # Generate batched rollout
             initial_state = self.physical_model.get_random_state(batch_size=num_trajectories)
             rollout = self.physical_model.rollout(initial_state, num_steps=trajectory_length)
-            # rollout: Dict[field_name, Field] with shape [batch, time, x, y]
             
             # Split into list of individual trajectories
             field_names = ConfigHelper(self.config).get_field_names()
@@ -219,25 +236,30 @@ class HybridTrainer(AbstractTrainer):
             for traj_idx in range(num_trajectories):
                 trajectory = {}
                 for field_name in field_names:
-                    # Extract single trajectory [time, x, y]
                     trajectory[field_name] = rollout[field_name].batch[traj_idx]
                 rollouts.append(trajectory)
             
+            logger.debug(f"  Generated {len(rollouts)} physical trajectories")
             return rollouts
     
     # ==================== PHASE 2: SYNTHETIC MODEL TRAINING ====================
     
     def _train_synthetic_model(self) -> float:
         """
-        Train synthetic model on real + synthetic trajectory windows.
+        Train synthetic model on real + physical trajectories.
         
-        TensorDataset handles conversion from Field trajectories to tensor windows.
+        TensorDataset handles windowing of physical trajectories internally.
         """
-        
         with self.managed_memory_phase("Synthetic Training", clear_cache=False):
             # Set access policy
             access_policy = self._get_access_policy(for_synthetic=True)
             self._base_tensor_dataset.access_policy = access_policy
+            
+            logger.debug(
+                f"  TensorDataset: {self._base_tensor_dataset.num_real} real + "
+                f"{self._base_tensor_dataset.num_augmented} augmented = "
+                f"{len(self._base_tensor_dataset)} total samples"
+            )
             
             # Create dataloader
             dataloader = DataLoader(
@@ -255,6 +277,7 @@ class HybridTrainer(AbstractTrainer):
                 verbose=False
             )
             
+            logger.debug(f"  Synthetic loss: {result['final_loss']:.6f}")
             return result['final_loss']
     
     # ==================== PHASE 3: SYNTHETIC PREDICTION GENERATION ====================
@@ -264,11 +287,8 @@ class HybridTrainer(AbstractTrainer):
         Generate windowed synthetic predictions as tensors.
         
         Returns:
-            List of (initial_state, targets) tuples where:
-            - initial_state: [C_all, H, W]
-            - targets: [T, C_all, H, W]
+            List of (initial_state, targets) tuples
         """
-        
         with self.managed_memory_phase("Synthetic Prediction"):
             self.synthetic_model.to(self.device)
             self.synthetic_model.eval()
@@ -283,7 +303,7 @@ class HybridTrainer(AbstractTrainer):
                 batch_size=batch_size,
             )
             
-            
+            logger.debug(f"  Generated {len(inputs_tensor)} synthetic predictions")
             return list(zip(inputs_tensor, targets_tensor))
     
     # ==================== PHASE 4: PHYSICAL MODEL TRAINING ====================
@@ -293,30 +313,27 @@ class HybridTrainer(AbstractTrainer):
         synthetic_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
     ) -> float:
         """
-        Train physical model on real data + synthetic windowed predictions.
+        Train physical model on real + synthetic predictions.
         
-        FieldDataset handles conversion from tensor windows to Field windows.
-        
-        Args:
-            synthetic_predictions: List of (input, target) tensor tuples
-        
-        Returns:
-            Final loss value
+        FieldDataset handles conversion from tensor predictions to Fields.
         """
         if len(self.physical_trainer.learnable_params) == 0:
             logger.info("No learnable parameters, skipping physical training")
             return 0.0
         
-        
         with self.managed_memory_phase("Physical Training", clear_cache=False):
             # Set access policy
             access_policy = self._get_access_policy(for_synthetic=False)
             
-            # OPTIMIZED: Pre-convert all predictions to Fields at once
-            # This happens once instead of per-access, eliminating repeated conversions
+            # Set augmented predictions (converts to Fields internally)
             self._base_field_dataset.set_augmented_predictions(synthetic_predictions)
             self._base_field_dataset.access_policy = access_policy
-            self._base_field_dataset._total_length = self._base_field_dataset._compute_length()
+            
+            logger.debug(
+                f"  FieldDataset: {self._base_field_dataset.num_real} real + "
+                f"{self._base_field_dataset.num_augmented} augmented = "
+                f"{len(self._base_field_dataset)} total samples"
+            )
             
             # Create dataloader with custom collate function
             from src.data.dataset_utilities import field_collate_fn
@@ -324,7 +341,7 @@ class HybridTrainer(AbstractTrainer):
                 self._base_field_dataset,
                 batch_size=self.trainer_config["batch_size"],
                 shuffle=True,
-                num_workers=0,  # Field conversion doesn't work well with multiprocessing
+                num_workers=0,
                 collate_fn=field_collate_fn
             )
             
@@ -335,15 +352,24 @@ class HybridTrainer(AbstractTrainer):
                 verbose=False
             )
             
+            logger.debug(f"  Physical loss: {result['final_loss']:.6f}")
             return float(result['final_loss'])
     
     # ==================== UTILITIES ====================
     
     def _calculate_num_real_samples(self) -> int:
-        """Calculate number of real samples in dataset."""
-        # Use _num_real_only if it exists (excludes synthetic sims)
+        """
+        Calculate number of truly real samples (excluding any augmentation).
+        
+        For TensorDataset: Need to count only the original real data, not
+        any previously added physical trajectories.
+        """
+        # Check if dataset has original real count stored
         if hasattr(self._base_tensor_dataset, '_num_real_only'):
+            # This exists if we've added trajectories before
             return self._base_tensor_dataset._num_real_only
+        
+        # Otherwise, num_real is the true real count
         return self._base_tensor_dataset.num_real
     
     def _create_dataset(
@@ -371,9 +397,9 @@ class HybridTrainer(AbstractTrainer):
         if for_synthetic:
             # Synthetic model training
             if self.real_data_access in ["both", "synthetic_only"]:
-                return "both"  # Use real + synthetic trajectories
+                return "both"  # Use real + physical trajectories
             else:
-                return "generated_only"  # Only synthetic trajectories
+                return "generated_only"  # Only physical trajectories
         else:
             # Physical model training
             if self.real_data_access in ["both", "physical_only"]:
@@ -410,6 +436,8 @@ class HybridTrainer(AbstractTrainer):
                 / f"{checkpoint_path.stem}_hybrid_best{checkpoint_path.suffix}"
             )
             torch.save(self.synthetic_model.state_dict(), checkpoint_path)
+            logger.debug(f"  Saved best synthetic model (loss: {synthetic_loss:.6f})")
         
         if physical_loss < self.best_physical_loss:
             self.best_physical_loss = physical_loss
+            logger.debug(f"  New best physical loss: {physical_loss:.6f}")

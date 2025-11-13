@@ -88,7 +88,7 @@ class TensorTrainer(AbstractTrainer):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Store model and move to device
-        self.model = model.to(self.device) #  torch.compile(model.to(self.device))
+        self.model = torch.compile(model.to(self.device))
 
         # Create optimizer for the model
         self.optimizer = self._create_optimizer()

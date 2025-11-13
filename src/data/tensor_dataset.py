@@ -1,18 +1,21 @@
 """
-Tensor Dataset for Synthetic Model Training
+TensorDataset - Refactored for Physical Trajectory Augmentation
 
-Returns PyTorch tensors suitable for neural network training.
-Parallel structure to FieldDataset with tensor-specific implementations.
+Key Changes:
+- Augmented data = physically-generated trajectories (stored as cache-format)
+- These trajectories are windowed exactly like real data
+- _get_augmented_sample() applies sliding window to trajectory data
+- Clear distinction maintained between real and physically-generated data
 """
 
 from typing import List, Optional, Dict, Any, Tuple
 import torch
 from phi.field import Field
-from src.utils.field_conversion import make_converter
+
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
-from src.utils.logger import get_logger
+from src.utils.logger import get_logger, logging
 
 logger = get_logger(__name__)
 
@@ -21,23 +24,10 @@ class TensorDataset(AbstractDataset):
     """
     PyTorch Dataset that returns tensors for synthetic training.
     
-    Returns samples in format:
-    - initial_state: [C_all, H, W] - concatenated tensor of ALL fields
-    - rollout_targets: [T, C_all, H, W] - concatenated tensor for T steps
-    
-    Args:
-        data_manager: DataManager for loading cached data
-        sim_indices: List of simulation indices
-        field_names: List of all field names to load
-        num_frames: Number of frames per simulation (None = auto-detect)
-        num_predict_steps: Number of prediction steps
-        dynamic_fields: List of fields that are predicted
-        static_fields: List of fields that are input-only
-        augmentation_config: Optional augmentation configuration
-        access_policy: 'both', 'real_only', or 'generated_only'
-        max_cached_sims: LRU cache size
-        pin_memory: If True, pin tensors for faster GPU transfer
-        percentage_real_data: Percentage of real data to use (0.0 < p <= 1.0)
+    Augmentation source: Physically-generated trajectories
+    - Stored in cache-compatible format: {'tensor_data': {field: tensor[T,C,H,W]}}
+    - Windowed exactly like real data
+    - Remain distinguishable via _is_augmented_trajectory()
     """
     
     def __init__(
@@ -53,8 +43,7 @@ class TensorDataset(AbstractDataset):
         pin_memory: bool = True,
         percentage_real_data: float = 1.0,
     ):
-        """Initialize TensorDataset with validation and setup."""
-
+        """Initialize TensorDataset."""
         self.pin_memory = pin_memory and torch.cuda.is_available()
         
         # Setup dataset using builder
@@ -64,7 +53,7 @@ class TensorDataset(AbstractDataset):
             augmentation_config, percentage_real_data
         )
         
-        # Call parent constructor with pre-computed values
+        # Call parent constructor
         super().__init__(
             data_manager=data_manager,
             sim_indices=sim_indices,
@@ -78,9 +67,12 @@ class TensorDataset(AbstractDataset):
             max_cached_sims=max_cached_sims,
         )
         
-        # Log dataset info
+        # Track number of augmented trajectories (for indexing)
+        self._num_augmented_trajectories = len(augmented_samples)
+        self._samples_per_trajectory = num_frames - num_predict_steps
+        
         self._log_dataset_info()
-    
+
     # ==================== Setup ====================
     
     def _setup_dataset(
@@ -93,18 +85,10 @@ class TensorDataset(AbstractDataset):
         augmentation_config: Optional[Dict[str, Any]],
         percentage_real_data: float,
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
-        """
-        Setup dataset components.
-        
-        Returns:
-            Tuple of (num_frames, num_real, augmented_samples, index_mapper)
-        """
+        """Setup dataset components."""
         builder = DatasetBuilder(data_manager)
         
-        # Setup cache and determine num_frames
         num_frames = builder.setup_cache(sim_indices, field_names, num_frames)
-        
-        # Compute sliding window
         samples_per_sim = builder.compute_sliding_window(num_frames, num_predict_steps)
         total_real_samples = len(sim_indices) * samples_per_sim
         
@@ -120,16 +104,12 @@ class TensorDataset(AbstractDataset):
         else:
             num_real = total_real_samples
         
-        # Setup augmentation
+        # Setup augmentation (if provided)
         augmented_samples = []
         if augmentation_config:
-            raw_samples = AugmentationHandler.load_augmentation(
+            augmented_samples = AugmentationHandler.load_augmentation(
                 augmentation_config, num_real, num_predict_steps, field_names
             )
-            # Process each augmented sample
-            augmented_samples = [
-                self._process_augmented_sample(sample) for sample in raw_samples
-            ]
         
         return num_frames, num_real, augmented_samples, index_mapper
     
@@ -148,39 +128,21 @@ class TensorDataset(AbstractDataset):
                     "  Dataset: access_policy=generated_only but no augmented samples!"
                 )
             logger.debug(f"  Dataset: {self.num_augmented} generated samples")
-    
+
     # ==================== Implementation of Abstract Methods ====================
     
-    # In tensor_dataset.py, replace _load_simulation (around line 165):
-
     def _load_simulation(self, sim_idx: int) -> Dict[str, torch.Tensor]:
         """
-        Load simulation data (handles both real and synthetic).
-        """
-        # Check if this is a synthetic simulation
-        if hasattr(self, '_synthetic_sims') and sim_idx >= len(self.sim_indices):
-            synthetic_idx = sim_idx - len(self.sim_indices)
-            if synthetic_idx < len(self._synthetic_sims):
-                # Return tensor_data directly from synthetic sim
-                sim_data = self._synthetic_sims[synthetic_idx]['tensor_data']
-                
-                # Pin memory if configured
-                if self.pin_memory:
-                    sim_data = {
-                        field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
-                        for field, tensor in sim_data.items()
-                    }
-                return sim_data
+        Load simulation data from cache.
         
-        # Otherwise load real simulation from cache
+        Returns tensor_data dict directly.
+        """
         full_data = self.data_manager.get_or_load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
-        # Extract tensor_data from the full cache structure
         sim_data = full_data["tensor_data"]
         
-        # Pin memory if configured
         if self.pin_memory:
             sim_data = {
                 field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
@@ -191,79 +153,135 @@ class TensorDataset(AbstractDataset):
     
     def _extract_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Extract a single sample as tensors.
-        
-        Args:
-            idx: Actual (unfiltered) sample index
+        Extract a windowed sample from real simulations.
         
         Returns:
             Tuple of (initial_state, rollout_targets)
-            - initial_state: [C_all, H, W]
-            - rollout_targets: [T, C_all, H, W]
         """
-        # Compute simulation and frame
         sim_idx, start_frame = self._compute_sim_and_frame(idx)
-        
-        # Load simulation
         sim_data = self._cached_load_simulation(sim_idx)
         
         # Concatenate all fields
         all_field_tensors = [sim_data[name] for name in self.field_names]
         all_data = torch.cat(all_field_tensors, dim=1)  # [T, C_all, H, W]
         
-        # Extract initial state
         initial_state = all_data[start_frame]  # [C_all, H, W]
-        
-        # Extract target rollout
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
         rollout_targets = all_data[target_start:target_end]  # [T, C_all, H, W]
         
         return initial_state, rollout_targets
     
-    def _process_augmented_sample(self, data: Any) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    def _get_augmented_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Convert a collection of augmented data into a list of tensor samples.
+        Get sample from augmented (physically-generated) trajectories.
         
-        This method acts as a router, handling different input formats:
-        - A single batched rollout tensor [B, T, C, H, W].
-        - A list of raw trajectory windows (List[List[Dict[str, Field]]]).
-        - A list of already-processed (input, target) tensor tuples.
+        These are stored as full trajectories and windowed on-the-fly,
+        exactly like real data.
         
         Args:
-            data: The raw augmented data to process.
+            idx: Index within augmented samples
         
         Returns:
-            A list of (initial_state, rollout_targets) tensor tuples.
+            Tuple of (initial_state, rollout_targets)
         """
-        # Case 1: Input is a single batched rollout tensor
-        if isinstance(data, torch.Tensor) and data.dim() == 5:
-            return self._convert_trajectory_rollout(data)
+        # Compute which trajectory and which window within that trajectory
+        traj_idx = idx // self._samples_per_trajectory
+        window_start = idx % self._samples_per_trajectory
         
-        # Case 2: Input is a list
-        if isinstance(data, list) and len(data) > 0:
-            first_item = data[0]
-            # Case 2a: List of raw trajectory windows
-            if isinstance(first_item, list) and isinstance(first_item[0], dict):
-                # Process each window in the list
-                return [self._convert_trajectory_window(window) for window in data]
-            # Case 2b: Assume it's a list of already-processed tensor tuples
-            elif isinstance(first_item, tuple) and isinstance(first_item[0], torch.Tensor):
-                return data
+        if traj_idx >= self._num_augmented_trajectories:
+            raise IndexError(
+                f"Augmented index {idx} out of range "
+                f"(trajectory {traj_idx} >= {self._num_augmented_trajectories})"
+            )
         
-        # Fallback for unknown or empty data formats
-        logger.warning(f"Unsupported augmentation data type: {type(data)}. Returning empty list.")
-        return []
-    
-# new !!!!!!!!!!!!!!!!
-    def _convert_field_rollout_to_tensors(
+        # Get the trajectory data (in cache format)
+        trajectory_data = self.augmented_samples[traj_idx]
+        
+        # Extract tensor_data
+        if isinstance(trajectory_data, dict) and 'tensor_data' in trajectory_data:
+            tensor_data = trajectory_data['tensor_data']
+        else:
+            # Assume it's already tensor_data
+            tensor_data = trajectory_data
+        
+        # Concatenate all fields
+        all_field_tensors = [tensor_data[name] for name in self.field_names]
+        all_data = torch.cat(all_field_tensors, dim=1)  # [T, C_all, H, W]
+        
+        # Apply sliding window
+        initial_state = all_data[window_start]  # [C_all, H, W]
+        target_start = window_start + 1
+        target_end = window_start + 1 + self.num_predict_steps
+        rollout_targets = all_data[target_start:target_end]  # [T, C_all, H, W]
+        
+        return initial_state, rollout_targets
+
+    # ==================== Augmentation Management ====================
+
+    def set_augmented_trajectories(self, trajectory_rollouts: List[Dict[str, Field]]):
+        """
+        Set augmented data from physically-generated Field trajectories.
+        
+        Converts Field rollouts to cache-compatible tensor format.
+        
+        Args:
+            trajectory_rollouts: List of rollout dicts where each is
+                                {'field_name': Field[time, x, y]}
+        """
+        if not trajectory_rollouts:
+            self.augmented_samples = []
+            self.num_augmented = 0
+            self._num_augmented_trajectories = 0
+            self._total_length = self._compute_length()
+            return
+        
+        logger.debug(f"Converting {len(trajectory_rollouts)} physical trajectories...")
+        
+        # Convert each Field trajectory to cache format
+        converted_trajectories = []
+        for idx, rollout in enumerate(trajectory_rollouts):
+            if idx % 10 == 0 and idx > 0:
+                logger.debug(f"  Converted {idx}/{len(trajectory_rollouts)} trajectories...")
+            
+            tensor_trajectory = self._convert_field_rollout_to_cache_format(rollout)
+            converted_trajectories.append(tensor_trajectory)
+        
+        # Store trajectories
+        self.augmented_samples = converted_trajectories
+        self._num_augmented_trajectories = len(converted_trajectories)
+        
+        # Calculate total augmented samples (with windowing)
+        self.num_augmented = self._num_augmented_trajectories * self._samples_per_trajectory
+        logger.debug(
+            f"Set {self._num_augmented_trajectories} augmented trajectories "
+            f"{self._samples_per_trajectory} samples each = "
+            f"({self.num_augmented} windowed samples)"
+        )
+        # Recompute total length
+        self._total_length = self._compute_length()
+        
+        logger.debug(
+            f"Set {self._num_augmented_trajectories} augmented trajectories "
+            f"({self.num_augmented} windowed samples)"
+            f"; total dataset length is now {self._total_length} samples"
+            f", where it should be {self.num_augmented + self.num_real} samples."
+        )
+
+    def clear_augmented_trajectories(self):
+        """Clear all augmented trajectories."""
+        self.augmented_samples = []
+        self.num_augmented = 0
+        self._num_augmented_trajectories = 0
+        self._total_length = self._compute_length()
+        logger.debug("Cleared augmented trajectories")
+
+    def _convert_field_rollout_to_cache_format(
         self,
         rollout: Dict[str, Field]
     ) -> Dict[str, torch.Tensor]:
         """
         Convert a Field rollout to cache-compatible tensor format.
-        
-        OPTIMIZED: Converts all timesteps for a field at once using batched operations.
         
         Args:
             rollout: Dict mapping field_name to Field[time, x, y]
@@ -280,28 +298,22 @@ class TensorDataset(AbstractDataset):
                 continue
             
             field_traj = rollout[field_name]
-            
-            # Get number of timesteps
             num_timesteps = field_traj.shape.get_size('time')
             
-            # OPTIMIZATION: Try batch conversion first
+            # Try batch conversion first (optimization)
             trajectory_tensor = self._try_batch_convert_trajectory(
                 field_traj, num_timesteps
             )
             
             if trajectory_tensor is None:
-                # Fallback to per-timestep conversion
+                # Fallback to sequential conversion
                 trajectory_tensor = self._convert_trajectory_sequential(
                     field_traj, num_timesteps
                 )
             
             tensor_data[field_name] = trajectory_tensor.cpu()
         
-        # Return in cache-compatible format
         return {'tensor_data': tensor_data}
-
-
-    # ==================== ADD BATCH CONVERSION METHOD ====================
 
     def _try_batch_convert_trajectory(
         self,
@@ -311,35 +323,20 @@ class TensorDataset(AbstractDataset):
         """
         Try to convert entire trajectory at once (fastest path).
         
-        This works when the Field has a native tensor that can be accessed directly.
-        
-        Args:
-            field_traj: Field with time dimension
-            num_timesteps: Number of timesteps
-        
         Returns:
             Tensor [T, C, H, W] or None if batch conversion not possible
         """
         try:
-            # Try to access the native tensor directly
             if hasattr(field_traj, 'values') and hasattr(field_traj.values, '_native'):
                 native_tensor = field_traj.values._native
                 
-                # Determine if vector or scalar
-                # Expected layouts from PhiFlow:
-                # Vector: [x, y, vector, time] or similar
-                # Scalar: [x, y, time]
-                
-                if native_tensor.dim() == 4:  # Vector field
-                    # Permute to [time, vector, x, y]
-                    tensor = native_tensor.permute(3, 2, 0, 1)
-                elif native_tensor.dim() == 3:  # Scalar field
-                    # Permute to [time, x, y], then add channel dim
-                    tensor = native_tensor.permute(2, 0, 1).unsqueeze(1)
+                if native_tensor.dim() == 4:  # Vector field [x, y, vector, time]
+                    tensor = native_tensor.permute(3, 2, 0, 1)  # -> [time, vector, x, y]
+                elif native_tensor.dim() == 3:  # Scalar field [x, y, time]
+                    tensor = native_tensor.permute(2, 0, 1).unsqueeze(1)  # -> [time, 1, x, y]
                 else:
-                    return None  # Unexpected shape
+                    return None
                 
-                # Verify shape makes sense
                 if tensor.shape[0] == num_timesteps:
                     return tensor
             
@@ -347,287 +344,73 @@ class TensorDataset(AbstractDataset):
         except Exception:
             return None
 
-
-    # ==================== ADD SEQUENTIAL CONVERSION (FALLBACK) ====================
-
     def _convert_trajectory_sequential(
         self,
         field_traj: Field,
         num_timesteps: int
     ) -> torch.Tensor:
         """
-        Convert trajectory one timestep at a time (slower fallback).
-        
-        Args:
-            field_traj: Field with time dimension
-            num_timesteps: Number of timesteps
+        Convert trajectory one timestep at a time (fallback).
         
         Returns:
             Tensor [T, C, H, W]
         """
         from src.utils.field_conversion import make_converter
         
-        # Create converter from first timestep
         first_field = field_traj.time[0]
         converter = make_converter(first_field)
         
-        # Convert each timestep
         tensors = []
         for t in range(num_timesteps):
             field_t = field_traj.time[t]
             tensor_t = converter.field_to_tensor(field_t, ensure_cpu=True)
             
-            # Remove batch dimension if present
             if tensor_t.dim() == 4:
                 tensor_t = tensor_t.squeeze(0)
             
             tensors.append(tensor_t)
         
-        # Stack along time dimension: [T, C, H, W]
-        trajectory_tensor = torch.stack(tensors, dim=0)
-        return trajectory_tensor
+        return torch.stack(tensors, dim=0)
 
-
-    # ==================== OPTIMIZED add_synthetic_simulations ====================
-
-    def add_synthetic_simulations(self, synthetic_rollouts: List[Dict[str, Field]]):
-        """
-        Add synthetic simulations from Field trajectories.
-        
-        OPTIMIZED: Uses batched conversion where possible.
-        
-        Args:
-            synthetic_rollouts: List of rollout dicts where each is
-                            {'field_name': Field[time, x, y]}
-        """
-        if not hasattr(self, '_synthetic_sims'):
-            self._synthetic_sims = []
-            self._num_real_only = self.num_real
-        
-        # Clear old synthetic sims
-        self._synthetic_sims.clear()
-
-        
-        # Convert each Field trajectory to tensor format
-        for idx, rollout in enumerate(synthetic_rollouts):
-            if idx % 10 == 0 and idx > 0:
-                logger.debug(f"  Converted {idx}/{len(synthetic_rollouts)} trajectories...")
-            
-            # Convert this rollout to cache-compatible tensor format
-            tensor_sim = self._convert_field_rollout_to_tensors(rollout)
-            self._synthetic_sims.append(tensor_sim)
-        
-        # Calculate how many samples these trajectories provide
-        samples_per_sim = self.num_frames - self.num_predict_steps
-        num_synthetic_samples = len(self._synthetic_sims) * samples_per_sim
-        
-        # Update num_real to include synthetic samples
-        self.num_real = self._num_real_only + num_synthetic_samples
-        
-        # Update filtering if active - we want to use ALL samples during training
-        if self._index_mapper is not None:
-            self._index_mapper.total_samples = self.num_real
-            self._index_mapper.num_samples = self.num_real
-            self._index_mapper._active_indices = list(range(self.num_real))
-        
-        # Recompute total length
-        self._total_length = self._compute_length()
-        
-
-    # !!!!!!!!!!!!!!!!!!!!!
-
-    def clear_synthetic_simulations(self):
-        """
-        Clear all synthetic simulations and restore original state.
-        """
-        if hasattr(self, '_synthetic_sims'):
-            self._synthetic_sims.clear()
-            
-            if hasattr(self, '_num_real_only'):
-                # Restore original num_real
-                self.num_real = self._num_real_only
-                
-                # Restore original filtering state
-                if self._index_mapper is not None:
-                    self._index_mapper.total_samples = self.num_real
-                    # Regenerate filtered indices for original real data
-                    self._index_mapper._active_indices = self._index_mapper._generate_indices(None)
-                
-                # Recompute length
-                self._total_length = self._compute_length()
-                
-                logger.debug(
-                    f"Cleared synthetic simulations. "
-                    f"Restored to {self.num_real} real samples"
-                )
-    
-    def _convert_trajectory_window(
-        self,
-        window_states: List[Dict[str, Field]]
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Convert trajectory window to tensor format.
-        
-        Args:
-            window_states: List of states [Dict[str, Field]]
-                         Length = num_predict_steps + 1
-        
-        Returns:
-            Tuple of (initial_state, rollout_targets)
-        """
-        
-        # First state is initial condition
-        initial_fields = window_states[0]
-        target_states = window_states[1:]
-        
-        # Convert initial state to tensors and concatenate
-        initial_tensors = []
-        for field_name in self.field_names:
-            field = initial_fields[field_name]
-            converter = make_converter(field)
-            tensor = converter.field_to_tensor(field, ensure_cpu=True)
-            # Remove batch dimension if present
-            if tensor.dim() == 4:
-                tensor = tensor.squeeze(0)
-            initial_tensors.append(tensor)
-        
-        initial_state = torch.cat(initial_tensors, dim=0)  # [C_all, H, W]
-        
-        # Convert target states
-        target_tensors_list = []
-        for state in target_states:
-            state_tensors = []
-            for field_name in self.field_names:
-                field = state[field_name]
-                converter = make_converter(field)
-                tensor = converter.field_to_tensor(field, ensure_cpu=True)
-                if tensor.dim() == 4:
-                    tensor = tensor.squeeze(0)
-                state_tensors.append(tensor)
-            
-            state_tensor = torch.cat(state_tensors, dim=0)
-            target_tensors_list.append(state_tensor)
-        
-        rollout_targets = torch.stack(target_tensors_list, dim=0)  # [T, C_all, H, W]
-        
-        return initial_state, rollout_targets
-    
-    
-    def _convert_trajectory_rollout(
-        self,
-        rollout: torch.Tensor
-    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-        """
-        Efficiently convert a batched rollout tensor into windowed samples.
-
-        Args:
-            rollout: A single tensor of shape [B, T, C, H, W] representing
-                     B trajectories of length T.
-
-        Returns:
-            A list of (initial_state, rollout_targets) tuples.
-        """
-        num_trajectories, traj_length, _, _, _ = rollout.shape
-        num_windows = traj_length - self.num_predict_steps
-
-        if num_windows <= 0:
-            return []
-
-        samples = []
-        for i in range(num_trajectories):
-            trajectory = rollout[i]  # [T, C, H, W]
-            for start_frame in range(num_windows):
-                # Initial state is a single frame
-                initial_state = trajectory[start_frame]  # [C, H, W]
-
-                # Target is a sequence of subsequent frames
-                target_start = start_frame + 1
-                target_end = start_frame + 1 + self.num_predict_steps
-                rollout_targets = trajectory[target_start:target_end]  # [pred_steps, C, H, W]
-                samples.append((initial_state, rollout_targets))
-        
-        return samples
-
-
-    
     # ==================== Utility Methods ====================
-    
-    def _compute_sim_and_frame(self, idx: int) -> Tuple[int, int]:
+
+    def _is_augmented_trajectory(self, idx: int) -> bool:
         """
-        Compute simulation index and starting frame from sample index.
-        Handles both real and synthetic simulations.
-        """
-        samples_per_sim = self.num_frames - self.num_predict_steps
-        
-        # Check if this is a synthetic simulation
-        if hasattr(self, '_num_real_only'):
-            real_samples = self._num_real_only
-            if idx >= real_samples:
-                # This is a synthetic simulation - compute offset within synthetic data
-                synthetic_sample_idx = idx - real_samples
-                sim_offset = synthetic_sample_idx // samples_per_sim
-                start_frame = synthetic_sample_idx % samples_per_sim
-                sim_idx = len(self.sim_indices) + sim_offset
-                return sim_idx, start_frame
-        
-        # Real simulation
-        sim_offset = idx // samples_per_sim
-        start_frame = idx % samples_per_sim
-        sim_idx = self.sim_indices[sim_offset]
-        return sim_idx, start_frame
-    
-    def resample_real_data(self, seed: Optional[int] = None):
-        """
-        Resample the subset of real data (if filtering is active).
+        Check if a sample index corresponds to an augmented trajectory.
         
         Args:
-            seed: Optional random seed for reproducibility
-        """
-        if self._index_mapper is None:
-            logger.debug("No resampling needed (percentage_real_data=1.0)")
-            return
-        
-        self._index_mapper.resample(seed)
-    
-    def get_field_info(self) -> Dict[str, Any]:
-        """Get field configuration information."""
-        return {
-            "all_fields": self.field_names,
-            "num_all_fields": len(self.field_names),
-        }
-    
-    def get_tensor_shapes(self, idx: int = 0) -> Dict[str, tuple]:
-        """
-        Get tensor shapes for debugging.
-        
-        Args:
-            idx: Sample index to check
+            idx: Global sample index
         
         Returns:
-            Dictionary with shape information
+            True if from augmented trajectory, False if real
         """
-        if idx >= self.num_real:
-            raise ValueError(
-                f"Index {idx} is augmented, cannot determine shapes from real data"
-            )
+        if self.access_policy == "generated_only":
+            return True
+        elif self.access_policy == "real_only":
+            return False
+        else:  # 'both'
+            return idx >= self.num_real
+
+    def get_sample_source(self, idx: int) -> str:
+        """
+        Get the source of a sample.
         
-        initial, targets = self._extract_sample(idx)
+        Args:
+            idx: Sample index
         
-        return {
-            "initial_state": tuple(initial.shape),
-            "rollout_targets": tuple(targets.shape),
-            "num_all_channels": initial.shape[0],
-            "spatial_dims": tuple(initial.shape[1:]),
-            "num_predict_steps": targets.shape[0],
-        }
-    
+        Returns:
+            'real' or 'physical_generated'
+        """
+        return 'physical_generated' if self._is_augmented_trajectory(idx) else 'real'
+
     def __repr__(self) -> str:
         """String representation."""
         return (
             f"TensorDataset(\n"
             f"  simulations={len(self.sim_indices)},\n"
             f"  samples={len(self)} (real={self.num_real}, aug={self.num_augmented}),\n"
-            f"  fields={len(self.field_names)} "
+            f"  augmented_trajectories={self._num_augmented_trajectories},\n"
+            f"  fields={len(self.field_names)},\n"
             f"  frames={self.num_frames},\n"
             f"  predict_steps={self.num_predict_steps},\n"
             f"  pin_memory={self.pin_memory}\n"
