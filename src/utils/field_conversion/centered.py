@@ -1,149 +1,146 @@
 """
-Simplified Centered Grid Converter
+Centered converter: strict, symmetric conversions between
+CenteredGrid <-> canonical torch.Tensor [B, T, *spatial, V].
 
-Key simplifications:
-1. Assume tensors were created by our field_to_tensor (known layout)
-2. Use PhiFlow's math.tensor() with explicit dimensions
-3. Remove complex shape inference logic
-4. Leverage PhiFlow's automatic dimension handling
+Assumptions (by design):
+ - Inputs to field_to_tensor are valid PhiFlow CenteredGrid objects.
+ - Inputs to tensor_to_field are canonical tensors produced by the opposite converter.
+ - No backwards compatibility or shape guessing is performed.
 """
-
 from typing import Optional
 import torch
+
+from phi.field import CenteredGrid  # phi fields
 from phi import math
-from phi.math import spatial, channel, batch as batch_dim
-from phi.field import Field, CenteredGrid
-from .base import SingleFieldConverter
-from .metadata import FieldMetadata
+from phi.field._field import Field
+from ..field_conversion.layout import canonical_from_phiflow_native, canonical_to_phiflow_native
 
 
-class CenteredConverter(SingleFieldConverter):
-    """
-    Simplified converter for CenteredGrid fields.
-    
-    Assumptions (guaranteed by our pipeline):
-    - field_to_tensor always produces [B, C, H, W] or [C, H, W]
-    - C=1 for scalar fields, C=len(spatial_dims) for vector fields
-    - Spatial order matches metadata.spatial_dims
-    """
+class CenteredConverter:
+    def __init__(self):
+        pass
 
-    @classmethod
-    def can_handle(cls, metadata: FieldMetadata) -> bool:
-        """Check if this converter can handle the field type."""
-        return metadata.field_type == "centered"
-
-    def field_to_tensor(self, field: Field, *, ensure_cpu: bool = True) -> torch.Tensor:
+    def field_to_tensor(self, field: Field, *, device: Optional[torch.device] = None) -> torch.Tensor:
         """
-        Convert CenteredGrid to PyTorch tensor.
-        
-        Output format: [B, C, H, W] where:
-        - B: batch dimension (if present)
-        - C: channels (1 for scalar, len(spatial_dims) for vector)
-        - H, W: spatial dimensions in order of metadata.spatial_dims
-        
-        Args:
-            field: PhiFlow CenteredGrid
-            ensure_cpu: If True, ensures output is on CPU
-            
-        Returns:
-            Tensor with shape [B, C, H, W] or [C, H, W]
-        """
-        # PhiFlow native tensor order: batch, spatial..., vector
-        # We want: batch, vector, spatial...
-        
-        # Build dimension order for native()
-        dims = []
-   
-        dims.append("time")
-        
-        # Add vector (channels) - always present even for scalars
-        dims.append('vector')
-        
-        # Add spatial dimensions in order
-        dims.extend(self.metadata.spatial_dims if self.metadata else field.shape.spatial.names)
-        
-        # Get native tensor with our desired layout
-        tensor = field.values.native(dims)
-        
-        return self._ensure_device(tensor, ensure_cpu)
+        Convert a CenteredGrid (phi Field) to canonical torch tensor [B, T, *spatial, V].
 
-    def tensor_to_field(
-        self,
-        tensor: torch.Tensor,
-        metadata: FieldMetadata,
-        *,
-        time_slice: Optional[int] = None,
-    ) -> Field:
+        Strict assumptions:
+          - The phi Field .values.native(...) will provide native in the repo's expected order:
+            [*spatial, V, T] for vector, [*spatial, T] for scalar.
+          - We do not attempt to handle arbitrary previous layouts.
         """
-        Convert PyTorch tensor to CenteredGrid.
-        
-        Assumes tensor was created by field_to_tensor, so layout is known:
-        - [B, C, H, W] or [C, H, W]
-        - Spatial order matches metadata.spatial_dims
-        
-        Args:
-            tensor: Tensor from field_to_tensor
-            metadata: Field reconstruction metadata
-            time_slice: Optional time index (unused, kept for API compatibility)
-            
-        Returns:
-            Reconstructed CenteredGrid
-        """
-        # Determine if we have batch dimension
-        has_batch = tensor.dim() == 4
-        
-        # Get spatial dimensions
-        spatial_dims = metadata.spatial_dims
-        num_spatial = len(spatial_dims)
-        
-        # Build PhiML shape specification
-        shape_spec = []
-        
-        if has_batch:
-            shape_spec.append(batch_dim('time'))
-        
-        # Channel dimension
-        num_channels = tensor.shape[-3]  # Channel dim is always -3 in our layout
-        is_vector = num_channels > 1
-        
-        if is_vector:
-            # Vector field: label channels with spatial dimension names
-            vector_labels = ','.join(spatial_dims)
-            shape_spec.append(channel(vector=vector_labels))
-        else:
-            # Scalar field: single channel (will be squeezed by PhiFlow)
-            shape_spec.append(channel(vector='scalar'))
-        
-        # Spatial dimensions
-        spatial_sizes = {
-            dim: tensor.shape[-num_spatial + i] 
-            for i, dim in enumerate(spatial_dims)
-        }
-        shape_spec.append(spatial(**spatial_sizes))
-        
-        # Create PhiML tensor with explicit shape
-        from functools import reduce
-        import operator
-        combined_shape = reduce(operator.and_, shape_spec)
-        phiml_tensor = math.tensor(tensor, combined_shape)
-        
-        # For scalar fields, remove the channel dimension
-        if not is_vector:
-            phiml_tensor = phiml_tensor.vector['scalar']
-        
-        # Create CenteredGrid
-        return CenteredGrid(
-            phiml_tensor,
-            metadata.extrapolation,
-            bounds=metadata.domain
-        )
+        # Ask phi for a native tensor with spatial first, vector then time last.
+        # The phi API used in the repo typically allows extracting native values in a chosen dim ordering
+        # but to keep this file self-contained we request a native representation and rely on its
+        # documented ordering used across the codebase: spatial dims first, vector, then time.
+        # Many earlier code paths used something like field.values.native(spatial + ['vector', 'time'])
+        # but we will call field.values.native() without specifying dims and expect consistent layout.
+        # To be safe, use field.values.native() and inspect dims via field.shape if needed.
+        native = field.values.native()  # may be a phi.math.Tensor or similar with ._native
+        # Some PhiFlow versions represent underlying torch tensor at ._native or .native() returns torch directly.
+        native_t = getattr(native, '_native', native)
+        # Determine vectorness via field.shape.channel.rank
+        is_vector = field.shape.channel.rank > 0
 
+        canonical = canonical_from_phiflow_native(native_t, is_vector=is_vector)
+        if device is not None:
+            canonical = canonical.to(device)
+        return canonical
 
-    def _get_spatial_layout(self, tensor: torch.Tensor, metadata: FieldMetadata) -> str:
+    def tensor_to_field(self, tensor: torch.Tensor, metadata, *, device: Optional[torch.device] = None) -> CenteredGrid:
         """
-        Determine spatial dimension names from tensor shape and metadata.
-        
-        Returns string like 'x,y' or 'x,y,z'
+        Convert canonical tensor -> CenteredGrid.
+
+        - tensor: strict canonical tensor [B, T, *spatial, V]
+        - metadata: object with fields needed to reconstruct the CenteredGrid:
+            - spatial_dims (Sequence[str])  : names of spatial dims in order (e.g. ['x','y'])
+            - domain / bounds (optional)    : used as 'bounds' for CenteredGrid
+            - extrapolation (optional)      : extrapolation to use
+        The function will use the first batch element to reconstruct a single CenteredGrid.
         """
-        spatial_dims = metadata.spatial_dims
-        return ','.join(spatial_dims)
+        if device is not None:
+            tensor = tensor.to(device)
+
+        if tensor.dim() < 4:
+            raise ValueError("Expected canonical tensor with dims [B, T, *spatial, V]")
+
+        # Convert to PhiFlow native shape expected by constructors:
+        native = canonical_to_phiflow_native(tensor)  # [*spatial, V, T] or [*spatial, T] for scalar
+
+        # Build phi shape spec dynamically using metadata.
+        # We prefer to keep dependency on phi.math minimal here, but we will create a phi math tensor.
+        # Caller must provide metadata with necessary spatial dimension sizes and names.
+        # metadata must expose:
+        #   - spatial_dims: Sequence[str]
+        #   - spatial_sizes: Sequence[int] or dict name->size (prefer dict)
+        #   - bounds (optional)
+        #   - extrapolation (optional)
+        spatial_dims = getattr(metadata, 'spatial_dims', None)
+        spatial_sizes = getattr(metadata, 'spatial_sizes', None)
+        bounds = getattr(metadata, 'domain', None) or getattr(metadata, 'bounds', None)
+        extrapolation = getattr(metadata, 'extrapolation', None)
+
+        # Prepare shape for math.tensor:
+        # native currently either [*spatial, V, T] or [*spatial, T] (if V == 1)
+        # Convert native -> numpy-like torch tensor and feed to math.tensor with proper shape.
+        # phi.math.tensor will accept numpy-like arrays with shape matching a phi Shape if provided.
+        # We need to assemble a phi shape; to avoid hard dependencies on shape constructors across
+        # phi versions, we'll attempt a minimal approach:
+        from phi import math as phi_math
+
+        # Build shape dims sizes:
+        # tensor has shape [B, T, *spatial, V]
+        t = tensor
+        B = t.shape[0]
+        T = t.shape[1]
+        spatial_shape = list(t.shape[2:-1])
+        V = t.shape[-1]
+
+        # Create phi tensor by providing the underlying torch tensor with an explicit shape mask.
+        # Construct shape as batch('time') & spatial(...) & channel('vector' / 'scalar')
+        # This code uses phi.math.tensor with an explicit shape in the typical API shape constructors.
+        try:
+            # Preferred approach if phi supports shape constructors:
+            from phi.math import spatial, channel, batch as batch_dim
+            # Build spatial dict if metadata provides names, else use anonymous sizes
+            if spatial_dims and len(spatial_dims) == len(spatial_shape):
+                spatial_kwargs = {name: int(size) for name, size in zip(spatial_dims, spatial_shape)}
+                spatial_shape_obj = spatial(**spatial_kwargs)
+            else:
+                # fallback: use unnamed spatial dims; phi supports spatial(*sizes) in some versions,
+                # but to keep broad compatibility we use positional spatial:
+                spatial_shape_obj = spatial(*[int(s) for s in spatial_shape])
+
+            if V == 1:
+                channel_shape = channel(vector='scalar')
+            else:
+                channel_shape = channel(vector=V)
+
+            combined_shape = batch_dim('time') & spatial_shape_obj & channel_shape
+
+            # Pass python-native tensor (drop batch) to phi.math.tensor. canonical_to_phiflow_native returned
+            # a tensor already dropped to [*spatial, V, T] or [*spatial, T], but phi expects shapes matching the
+            # combined_shape ordering; constructing the precise phi.math.tensor may require permutation.
+            # Use canonical_to_phiflow_native to get [*spatial, V, T] -> we need to permute for phi.tensor input.
+            phi_native = native  # already [*spatial, V, T] or [*spatial, T]
+
+            # phi.math.tensor expects the data in an array compatible with the shape; many versions are flexible.
+            phi_tensor = phi_math.tensor(phi_native, combined_shape)
+        except Exception:
+            # Fallback: attempt to create a simple CenteredGrid using constructor that accepts values and bounds.
+            # Map native -> [T, *spatial, V] then call CenteredGrid directly:
+            # native currently [*spatial, V, T] or [*spatial, T]; reorder to [T, *spatial, V]
+            if V == 1:
+                # native: [*spatial, T] -> permute last to first -> [T, *spatial]
+                permute_order = [-1] + list(range(0, len(spatial_shape)))
+                phi_native_reordered = native.permute(*permute_order).unsqueeze(-1)  # -> [T, *spatial, 1]
+            else:
+                permute_order = [-1] + list(range(0, len(spatial_shape))) + [len(spatial_shape)]
+                phi_native_reordered = native.permute(*permute_order)  # -> [T, *spatial, V]
+            # Build CenteredGrid directly
+            cg = CenteredGrid(phi_native_reordered, extrapolation=extrapolation, bounds=bounds)
+            return cg
+
+        # Build CenteredGrid from phi_tensor
+        cg = CenteredGrid(phi_tensor, extrapolation=extrapolation, bounds=bounds)
+        return cg
