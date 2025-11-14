@@ -1,7 +1,11 @@
 """
-Centered Grid Converter
+Simplified Centered Grid Converter
 
-This module implements conversion between CenteredGrid fields and tensors.
+Key simplifications:
+1. Assume tensors were created by our field_to_tensor (known layout)
+2. Use PhiFlow's math.tensor() with explicit dimensions
+3. Remove complex shape inference logic
+4. Leverage PhiFlow's automatic dimension handling
 """
 
 from typing import Optional
@@ -15,11 +19,12 @@ from .metadata import FieldMetadata
 
 class CenteredConverter(SingleFieldConverter):
     """
-    Converter for CenteredGrid fields.
-
-    Handles conversion between PhiFlow CenteredGrid objects and PyTorch tensors.
-    CenteredGrids have values sampled at cell centers, making the conversion
-    straightforward.
+    Simplified converter for CenteredGrid fields.
+    
+    Assumptions (guaranteed by our pipeline):
+    - field_to_tensor always produces [B, C, H, W] or [C, H, W]
+    - C=1 for scalar fields, C=len(spatial_dims) for vector fields
+    - Spatial order matches metadata.spatial_dims
     """
 
     @classmethod
@@ -29,20 +34,37 @@ class CenteredConverter(SingleFieldConverter):
 
     def field_to_tensor(self, field: Field, *, ensure_cpu: bool = True) -> torch.Tensor:
         """
-        Convert a CenteredGrid to a PyTorch tensor.
-
+        Convert CenteredGrid to PyTorch tensor.
+        
+        Output format: [B, C, H, W] where:
+        - B: batch dimension (if present)
+        - C: channels (1 for scalar, len(spatial_dims) for vector)
+        - H, W: spatial dimensions in order of metadata.spatial_dims
+        
         Args:
-            field: PhiFlow CenteredGrid to convert
-            ensure_cpu: If True, ensures output tensor is on CPU
-
+            field: PhiFlow CenteredGrid
+            ensure_cpu: If True, ensures output is on CPU
+            
         Returns:
-            PyTorch tensor with shape:
-            - [B, 1, H, W] for scalar fields with batch
-            - [B, C, H, W] for vector fields with batch
+            Tensor with shape [B, C, H, W] or [C, H, W]
         """
-        self.validate_field(field)
-        # Get the native tensor
-        tensor = field.values.native('batch,vector,x,y')
+        # PhiFlow native tensor order: batch, spatial..., vector
+        # We want: batch, vector, spatial...
+        
+        # Build dimension order for native()
+        dims = []
+   
+        dims.append("time")
+        
+        # Add vector (channels) - always present even for scalars
+        dims.append('vector')
+        
+        # Add spatial dimensions in order
+        dims.extend(self.metadata.spatial_dims if self.metadata else field.shape.spatial.names)
+        
+        # Get native tensor with our desired layout
+        tensor = field.values.native(dims)
+        
         return self._ensure_device(tensor, ensure_cpu)
 
     def tensor_to_field(
@@ -53,115 +75,75 @@ class CenteredConverter(SingleFieldConverter):
         time_slice: Optional[int] = None,
     ) -> Field:
         """
-        Convert a PyTorch tensor to a CenteredGrid.
-
+        Convert PyTorch tensor to CenteredGrid.
+        
+        Assumes tensor was created by field_to_tensor, so layout is known:
+        - [B, C, H, W] or [C, H, W]
+        - Spatial order matches metadata.spatial_dims
+        
         Args:
-            tensor: PyTorch tensor to convert
-            metadata: FieldMetadata containing reconstruction information
-            time_slice: Optional time index for batch tensors
-
+            tensor: Tensor from field_to_tensor
+            metadata: Field reconstruction metadata
+            time_slice: Optional time index (unused, kept for API compatibility)
+            
         Returns:
             Reconstructed CenteredGrid
         """
-        self.validate_tensor(tensor)
-
-        # Handle time dimension
-        if time_slice is not None:
-            if len(tensor.shape) == 4:  # [time, channels, x, y]
-                tensor = tensor[time_slice]  # -> [channels, x, y]
-            elif len(tensor.shape) != 3:
-                raise ValueError(
-                    f"Expected tensor with 3 or 4 dimensions, got shape {tensor.shape}"
-                )
-
-        # Convert from [B, C, H, W] or [C, H, W] to PhiFlow layout
-        # Target: [B, x, y, C] or [x, y, C]
-
-        if len(tensor.shape) == 4:  # [B, C, H, W]
-            tensor = tensor.permute(0, 2, 3, 1)  # -> [B, x, y, C]
-        elif len(tensor.shape) == 3:  # [C, H, W]
-            tensor = tensor.permute(1, 2, 0)  # -> [x, y, C]
-        elif len(tensor.shape) == 2:  # [H, W] - scalar
-            pass  # Already in correct layout
+        # Determine if we have batch dimension
+        has_batch = tensor.dim() == 4
+        
+        # Get spatial dimensions
+        spatial_dims = metadata.spatial_dims
+        num_spatial = len(spatial_dims)
+        
+        # Build PhiML shape specification
+        shape_spec = []
+        
+        if has_batch:
+            shape_spec.append(batch_dim('time'))
+        
+        # Channel dimension
+        num_channels = tensor.shape[-3]  # Channel dim is always -3 in our layout
+        is_vector = num_channels > 1
+        
+        if is_vector:
+            # Vector field: label channels with spatial dimension names
+            vector_labels = ','.join(spatial_dims)
+            shape_spec.append(channel(vector=vector_labels))
         else:
-            raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
-
-        # For scalar fields (1 channel), remove the channel dimension
-        if tensor.shape[-1] == 1 and not metadata.channel_dims:
-            tensor = tensor.squeeze(-1)
-
-        # Determine spatial shape from tensor
-        if len(tensor.shape) == 4:  # [B, x, y, C]
-            tensor_spatial_shape = tensor.shape[1 : 1 + len(metadata.spatial_dims)]
-        elif len(tensor.shape) == 3:
-            if metadata.channel_dims:  # [x, y, C]
-                tensor_spatial_shape = tensor.shape[: len(metadata.spatial_dims)]
-            else:  # [B, x, y] - scalar with batch
-                tensor_spatial_shape = tensor.shape[1:]
-        elif len(tensor.shape) == 2:  # [x, y]
-            tensor_spatial_shape = tensor.shape
-        else:
-            raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
-
-        # Create spatial shape
+            # Scalar field: single channel (will be squeezed by PhiFlow)
+            shape_spec.append(channel(vector='scalar'))
+        
+        # Spatial dimensions
         spatial_sizes = {
-            dim: size for dim, size in zip(metadata.spatial_dims, tensor_spatial_shape)
+            dim: tensor.shape[-num_spatial + i] 
+            for i, dim in enumerate(spatial_dims)
         }
-        actual_resolution = spatial(**spatial_sizes)
-
-        # Convert to PhiML tensor with proper dimensions
-        if len(tensor.shape) == 2:  # [x, y] - scalar field
-            phiml_tensor = math.tensor(tensor, actual_resolution)
-        elif len(tensor.shape) == 3:
-            if metadata.channel_dims:  # [x, y, C]
-                # For vector fields, add labels matching spatial dimensions
-                if (
-                    "vector" in metadata.channel_dims
-                    and len(metadata.channel_dims) == 1
-                ):
-                    vector_labels = ",".join(metadata.spatial_dims)
-                    phiml_tensor = math.tensor(
-                        tensor, actual_resolution & channel(vector=vector_labels)
-                    )
-                else:
-                    phiml_tensor = math.tensor(
-                        tensor, actual_resolution & channel(*metadata.channel_dims)
-                    )
-            else:  # [B, x, y] - batch dimension
-                phiml_tensor = math.tensor(
-                    tensor, batch_dim("time") & actual_resolution
-                )
-        elif len(tensor.shape) == 4:  # [B, x, y, C]
-            if metadata.channel_dims:
-                if (
-                    "vector" in metadata.channel_dims
-                    and len(metadata.channel_dims) == 1
-                ):
-                    vector_labels = ",".join(metadata.spatial_dims)
-                    phiml_tensor = math.tensor(
-                        tensor,
-                        batch_dim("time")
-                        & actual_resolution
-                        & channel(vector=vector_labels),
-                    )
-                else:
-                    phiml_tensor = math.tensor(
-                        tensor,
-                        batch_dim("time")
-                        & actual_resolution
-                        & channel(*metadata.channel_dims),
-                    )
-            else:
-                # Scalar field with time dimension
-                phiml_tensor = math.tensor(
-                    tensor, batch_dim("time") & actual_resolution
-                )
-        else:
-            raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
-
+        shape_spec.append(spatial(**spatial_sizes))
+        
+        # Create PhiML tensor with explicit shape
+        from functools import reduce
+        import operator
+        combined_shape = reduce(operator.and_, shape_spec)
+        phiml_tensor = math.tensor(tensor, combined_shape)
+        
+        # For scalar fields, remove the channel dimension
+        if not is_vector:
+            phiml_tensor = phiml_tensor.vector['scalar']
+        
         # Create CenteredGrid
-        centered_grid = CenteredGrid(
-            phiml_tensor, metadata.extrapolation, bounds=metadata.domain
+        return CenteredGrid(
+            phiml_tensor,
+            metadata.extrapolation,
+            bounds=metadata.domain
         )
 
-        return centered_grid
+
+    def _get_spatial_layout(self, tensor: torch.Tensor, metadata: FieldMetadata) -> str:
+        """
+        Determine spatial dimension names from tensor shape and metadata.
+        
+        Returns string like 'x,y' or 'x,y,z'
+        """
+        spatial_dims = metadata.spatial_dims
+        return ','.join(spatial_dims)

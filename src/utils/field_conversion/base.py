@@ -88,7 +88,7 @@ class AbstractConverter(ABC):
         Returns:
             Tensor on appropriate device
         """
-        if ensure_cpu and tensor.device.type != "cpu":
+        if ensure_cpu and tensor.device != "cpu":
             return tensor.cpu()
         return tensor
 

@@ -36,7 +36,7 @@ trainer_params:
   
   # Training hyperparameters
   epochs: 10
-  batch_size: 256
+  batch_size: 64
   num_predict_steps: 4
   
   # Optimizer (for synthetic/hybrid)
@@ -67,9 +67,9 @@ trainer_params:
   # Hybrid config
   hybrid:
     num_cycles: 100
-    synthetic_epochs_per_cycle: 100 # More synthetic training
+    synthetic_epochs_per_cycle: 1 # More synthetic training
     physical_epochs_per_cycle: 1   # Physical learns from synthetic
-    warmup_synthetic_epochs: 100  # Establish synthetic baseline
+    warmup_synthetic_epochs: 1  # Establish synthetic baseline
     
     # KEY PARAMETER: Only synthetic model sees real data
     real_data_access: 'both'  # Options: 'both', 'synthetic_only', 'physical_only', 'none'

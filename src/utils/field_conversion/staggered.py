@@ -1,12 +1,15 @@
 """
-Staggered Grid Converter
+Simplified Staggered Grid Converter
 
-This module implements conversion between StaggeredGrid fields and tensors.
+Key insight: Staggered grids convert through centered intermediate.
+The centered converter handles all the complex logic, so this just
+needs to handle the staggered↔centered conversion using PhiFlow's
+built-in methods.
 """
 
 from typing import Optional
 import torch
-from phi.field import Field, StaggeredGrid
+from phi.field import Field, StaggeredGrid, CenteredGrid
 from .base import SingleFieldConverter
 from .metadata import FieldMetadata
 from .centered import CenteredConverter
@@ -14,26 +17,19 @@ from .centered import CenteredConverter
 
 class StaggeredConverter(SingleFieldConverter):
     """
-    Converter for StaggeredGrid fields.
-
-    Handles conversion between PhiFlow StaggeredGrid objects and PyTorch tensors.
-    StaggeredGrids have values sampled at face centers, so conversion requires
-    resampling through a centered grid intermediate.
-
+    Simplified converter for StaggeredGrid fields.
+    
     Strategy:
-    - field_to_tensor: Convert staggered -> centered -> tensor
-    - tensor_to_field: tensor -> centered -> staggered
+    - field_to_tensor: staggered.at_centers() → centered_converter
+    - tensor_to_field: centered_converter → StaggeredGrid()
+    
+    All complexity is delegated to CenteredConverter and PhiFlow's
+    built-in staggered↔centered conversion.
     """
 
     def __init__(self, metadata: Optional[FieldMetadata] = None):
-        """
-        Initialize staggered converter.
-
-        Args:
-            metadata: Optional FieldMetadata for validation/reconstruction
-        """
+        """Initialize with metadata and centered converter."""
         super().__init__(metadata)
-        # Use a centered converter for the actual tensor conversion
         self._centered_converter = CenteredConverter(metadata)
 
     @classmethod
@@ -43,27 +39,22 @@ class StaggeredConverter(SingleFieldConverter):
 
     def field_to_tensor(self, field: Field, *, ensure_cpu: bool = True) -> torch.Tensor:
         """
-        Convert a StaggeredGrid to a PyTorch tensor.
-
-        The staggered grid is first converted to a centered grid (resampling
-        face-centered values to cell centers), then converted to a tensor.
-
+        Convert StaggeredGrid to tensor via centered intermediate.
+        
+        PhiFlow's at_centers() handles the resampling automatically.
+        
         Args:
-            field: PhiFlow StaggeredGrid to convert
-            ensure_cpu: If True, ensures output tensor is on CPU
-
+            field: PhiFlow StaggeredGrid
+            ensure_cpu: If True, ensures output is on CPU
+            
         Returns:
-            PyTorch tensor with shape [C, H, W] or [B, C, H, W]
+            Tensor with same format as CenteredConverter
         """
-        self.validate_field(field)
-
-        # Convert staggered to centered (PhiFlow handles resampling)
-        centered_field = field.at_centers()
-
+        # Convert to centered (PhiFlow resamples automatically)
+        centered = field.at_centers()
+        
         # Use centered converter for tensor conversion
-        return self._centered_converter.field_to_tensor(
-            centered_field, ensure_cpu=ensure_cpu
-        )
+        return self._centered_converter.field_to_tensor(centered, ensure_cpu=ensure_cpu)
 
     def tensor_to_field(
         self,
@@ -73,38 +64,34 @@ class StaggeredConverter(SingleFieldConverter):
         time_slice: Optional[int] = None
     ) -> Field:
         """
-        Convert a PyTorch tensor to a StaggeredGrid.
-
-        The tensor is first converted to a centered grid, then PhiFlow
-        automatically resamples it to staggered (face-centered) sample points.
-
+        Convert tensor to StaggeredGrid via centered intermediate.
+        
+        PhiFlow's StaggeredGrid constructor handles the resampling automatically.
+        
         Args:
-            tensor: PyTorch tensor to convert
-            metadata: FieldMetadata containing reconstruction information
-            time_slice: Optional time index for batch tensors
-
+            tensor: Tensor from field_to_tensor
+            metadata: Field reconstruction metadata
+            time_slice: Optional time index (unused)
+            
         Returns:
             Reconstructed StaggeredGrid
         """
-        self.validate_tensor(tensor)
-
         # First convert to centered grid
-        centered_grid = self._centered_converter.tensor_to_field(
+        centered = self._centered_converter.tensor_to_field(
             tensor, metadata, time_slice=time_slice
         )
-
-        # Convert centered to staggered
-        # PhiFlow's StaggeredGrid constructor resamples the centered field
-        # to face-centered sample points
+        
+        # Convert centered to staggered (PhiFlow resamples automatically)
+        # Extract resolution from metadata
         resolution_dict = {
-            dim: metadata.resolution.get_size(dim) for dim in metadata.spatial_dims
+            dim: metadata.resolution.get_size(dim) 
+            for dim in metadata.spatial_dims
         }
-
-        staggered_grid = StaggeredGrid(
-            centered_grid,  # PhiFlow will resample this to face centers
+        
+        # StaggeredGrid constructor automatically resamples to face centers
+        return StaggeredGrid(
+            centered,
             metadata.extrapolation,
             bounds=metadata.domain,
-            **resolution_dict  # e.g., x=128, y=128
+            **resolution_dict
         )
-
-        return staggered_grid
