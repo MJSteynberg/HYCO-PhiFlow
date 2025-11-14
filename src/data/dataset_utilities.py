@@ -442,7 +442,7 @@ def field_collate_fn(samples: List[Tuple[Dict[str, Field], Dict[str, List[Field]
     """
     # 1. Unzip the list of samples into initial states and target sequences
     initial_fields_list, target_fields_list = zip(*samples)
-
+    
     # --- 2. Process Initial Fields (Logic from _stack_samples) ---
     field_names = initial_fields_list[0].keys()
     stacked_initial = {}
@@ -461,7 +461,6 @@ def field_collate_fn(samples: List[Tuple[Dict[str, Field], Dict[str, List[Field]
             time_stacked_field = stack(sample_targets[name], batch('time'))
             sample_sequences.append(time_stacked_field)
         
-        # Now stack the time-stacked sequences from all samples along a 'batch' dimension
         stacked_targets[name] = stack(sample_sequences, batch('batch'))
 
     # 4. Return the complete, collated batch

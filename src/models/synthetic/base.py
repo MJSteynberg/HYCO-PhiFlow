@@ -104,7 +104,7 @@ class SyntheticModel(nn.Module, ABC):
         self,
         real_dataset,
         alpha: float,
-        device: str = "cpu",
+        device: str = "cuda",
         batch_size: int = 32,
     ):
         """
@@ -175,7 +175,7 @@ class SyntheticModel(nn.Module, ABC):
         # Normalize outputs to CPU, detached tensors. Returning CPU tensors
         # simplifies downstream code (HybridTrainer / FieldDataset) which
         # expects to receive CPU-side tensors that it can further process.
-        return all_inputs[:idx].detach().cpu(), all_predictions[:idx].detach().cpu()
+        return all_inputs[:idx].detach(), all_predictions[:idx].detach()
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

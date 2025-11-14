@@ -200,7 +200,7 @@ class AdvectionModel(PhysicalModel):
             Dictionary with updated 'density' and unchanged 'velocity'.
         """
         new_density, new_velocity, _ = _advection_step(
-            density=current_state["density"],
+            density=current_state["density"], 
             velocity=current_state["velocity"],
             advection_coeff=self.advection_coeff,
             dt=self.dt,

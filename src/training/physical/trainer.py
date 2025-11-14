@@ -45,7 +45,7 @@ class PhysicalTrainer(FieldTrainer):
         """
         # Initialize base trainer with model and params
         super().__init__(config, model, learnable_params)
-
+        
         # Placeholder
         self.batch_size = 1000
 

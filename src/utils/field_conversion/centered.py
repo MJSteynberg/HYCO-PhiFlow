@@ -11,7 +11,7 @@ Key simplifications:
 from typing import Optional
 import torch
 from phi import math
-from phi.math import spatial, channel, batch as batch_dim
+from phi.math import spatial, channel, batch
 from phi.field import Field, CenteredGrid
 from .base import SingleFieldConverter
 from .metadata import FieldMetadata
@@ -81,80 +81,17 @@ class CenteredConverter(SingleFieldConverter):
         time_slice: Optional[int] = None,
     ) -> Field:
         """
-        Convert PyTorch tensor to CenteredGrid.
-        
-        Assumes tensor was created by field_to_tensor, so layout is known:
-        - [B, C, H, W] or [C, H, W]
-        - Spatial order matches metadata.spatial_dims
-        
-        Args:
-            tensor: Tensor from field_to_tensor
-            metadata: Field reconstruction metadata
-            time_slice: Optional time index (unused, kept for API compatibility)
-            
-        Returns:
-            Reconstructed CenteredGrid
+
         """
-    # Normalize accepted input shapes to a values tensor ready for PhiFlow
-    # Strict: accept only batched snapshots [B, V, *spatial] or BVTS
-    # with a single timestep [B, V, 1, *spatial]. Reject 3D single-
-    # snapshot tensors to avoid implicit coercions.
-        if not isinstance(tensor, torch.Tensor):
-            raise TypeError("tensor_to_field expects a torch.Tensor")
+        if tensor.dim() == 4:
+            phiml_tensor = math.tensor(tensor, batch('batch'), channel("vector"), spatial(*metadata.spatial_dims))
 
-        if tensor.dim() == 5:
-            # BVTS provided
-            if time_slice is not None:
-                tensor = tensor[:, :, time_slice:time_slice+1, :, :]
-            B, V, T, *_spatial = tensor.shape
-            if T != 1:
-                raise ValueError("tensor_to_field received multi-timestep BVTS tensor; please provide single-timestep tensors")
-            values_batch = tensor.squeeze(2)  # [B, V, *spatial]
+        elif tensor.dim() == 3:
+            phiml_tensor = math.tensor(tensor, channel("vector"), spatial(*metadata.spatial_dims))
 
-        elif tensor.dim() == 4:
-            # [B, V, *spatial]
-            values_batch = tensor
-        else:
-            raise ValueError(
-                f"tensor_to_field requires a batched snapshot [B,V,*spatial] or BVTS [B,V,1,*spatial]; got {tensor.dim()}D. "
-                f"If you have a single [V,*spatial] snapshot, wrap it with an explicit batch dim first (tensor.unsqueeze(0))."
-            )
-
-        B = values_batch.shape[0]
-        V = values_batch.shape[1]
-
-        # Prepare PhiML shape spec
-        spatial_dims = metadata.spatial_dims
-        num_spatial = len(spatial_dims)
-
-        # If singleton batch, remove batch from values to create CenteredGrid
-        if B == 1:
-            values = values_batch.squeeze(0)  # [V, *spatial]
-        else:
-            values = values_batch
-
-        shape_spec = []
-        if B > 1:
-            shape_spec.append(batch_dim('time'))
-
-        if V > 1:
-            vector_labels = ','.join(spatial_dims)
-            shape_spec.append(channel(vector=vector_labels))
-        else:
-            shape_spec.append(channel(vector='scalar'))
-
-        spatial_sizes = {dim: values.shape[-num_spatial + i] for i, dim in enumerate(spatial_dims)}
-        shape_spec.append(spatial(**spatial_sizes))
-
-        from functools import reduce
-        import operator
-        combined_shape = reduce(operator.and_, shape_spec)
-        phiml_tensor = math.tensor(values, combined_shape)
-
-        if V == 1:
-            phiml_tensor = phiml_tensor.vector['scalar']
-
-        return CenteredGrid(phiml_tensor, metadata.extrapolation, bounds=metadata.domain)
+        
+        ret = CenteredGrid(phiml_tensor, metadata.extrapolation, bounds=metadata.domain)
+        return ret
 
 
     def _get_spatial_layout(self, tensor: torch.Tensor, metadata: FieldMetadata) -> str:

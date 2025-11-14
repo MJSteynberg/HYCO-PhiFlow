@@ -14,17 +14,17 @@ defaults:
   - _self_
 
 run_params:
-  experiment_name: 'advection_experiment_2'
+  experiment_name: 'advection_experiment'
   notes: 'Hybrid training with synthetic model learning from real data only'
-  mode: ['train', 'evaluate']  # Options: generate, train, evaluate
+  mode: [ 'train', 'evaluate']  # Options: generate, train, evaluate
   model_type: 'hybrid'  # Options: synthetic, physical, hybrid
 
 model:
   synthetic:
-    model_save_name: 'hybrid_advection_unet_128_2'
+    model_save_name: 'hybrid_advection_unet_128'
 
 generation_params:
-  num_simulations: 1
+  num_simulations: 2
   total_steps: 100
   save_interval: 1
 

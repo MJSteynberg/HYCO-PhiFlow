@@ -159,29 +159,10 @@ class TensorDataset(AbstractDataset):
         sim_data = full_data["tensor_data"]
 
         # Always return BVTS in-memory. Convert cached tensors to BVTS using the
-        # adapter/helper.
-        try:
-            from src.data.adapters.bvts_adapter import sim_dict_to_bvts
-        except Exception:
-            sim_dict_to_bvts = None
-
-        if sim_dict_to_bvts is not None:
-            sim_bvts = sim_dict_to_bvts(sim_data)
-        else:
-            try:
-                from src.utils.field_conversion.bvts import to_bvts
-            except Exception:
-                to_bvts = None
-
-            sim_bvts = {
-                k: (to_bvts(v) if to_bvts is not None and isinstance(v, torch.Tensor) else v)
-                for k, v in sim_data.items()
-            }
-
         if self.pin_memory:
-            sim_bvts = {field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_bvts.items()}
+            sim_data = {field: tensor.unsqueeze(0).pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_data.items()}
 
-        return sim_bvts
+        return sim_data
     
     def _extract_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -284,7 +265,7 @@ class TensorDataset(AbstractDataset):
         tensor_data = self._normalize_sim_tensor_data(tensor_data)
         
         # Concatenate all fields
-        all_field_tensors = [tensor_data[name] for name in self.field_names]
+        all_field_tensors = [tensor_data[name].unsqueeze(0) for name in self.field_names]
 
         # Augmented trajectories are stored in BVTS cache-format and have been
         # normalized by _normalize_sim_tensor_data earlier. Expect [B, C_all, T, H, W]

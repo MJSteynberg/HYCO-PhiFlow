@@ -93,7 +93,7 @@ def run_generation(config: dict):
         ):
 
             # Step the model forward
-            current_state_dict = model.step(current_state_dict)
+            current_state_dict = model.forward(current_state_dict)
 
             # Save at intervals
             if t % save_interval == 0:

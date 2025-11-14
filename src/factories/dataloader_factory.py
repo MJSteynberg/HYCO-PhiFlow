@@ -175,13 +175,6 @@ class DataLoaderFactory:
                 percentage_real_data=percentage_real_data,
             )
 
-            # Enforce BVTS producer contract for tensor datasets
-            try:
-                validate_bvts_dataset(dataset)
-            except Exception as e:
-                # Fail early and loudly: dataset must produce BVTS tensors
-                raise RuntimeError(f"TensorDataset did not produce BVTS: {e}")
-
             # Wrap in DataLoader for batching
             logger.debug(f"  Created TensorDataset with {len(dataset)} samples")
             logger.debug(

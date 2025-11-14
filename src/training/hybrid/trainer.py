@@ -302,7 +302,6 @@ class HybridTrainer(AbstractTrainer):
                 device=str(self.device),
                 batch_size=batch_size,
             )
-
             # Normalization / validation: model.generate_predictions may return
             # batched tensors or lists. We normalize to a list of (initial, target)
             # tuples where each element is a CPU tensor in a compact layout that
@@ -317,27 +316,27 @@ class HybridTrainer(AbstractTrainer):
                 if inputs_tensor.dim() == 5 and targets_tensor.dim() == 5:
                     B = inputs_tensor.shape[0]
                     for i in range(B):
-                        init = inputs_tensor[i].detach().cpu()
-                        targ = targets_tensor[i].detach().cpu()
+                        init = inputs_tensor[i].detach()
+                        targ = targets_tensor[i].detach()
                         # If time dim for init is >1, select only first timestep
                         normalized.append((init, targ))
                 else:
                     # Fallback: treat as single sample
-                    normalized.append((inputs_tensor.detach().cpu(), targets_tensor.detach().cpu()))
+                    normalized.append((inputs_tensor.detach(), targets_tensor.detach()))
 
             else:
                 # If lists were returned, coerce items to tensors on CPU
                 try:
                     for a, b in zip(inputs_tensor, targets_tensor):
-                        a_t = a.detach().cpu() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
-                        b_t = b.detach().cpu() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
+                        a_t = a.detach() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
+                        b_t = b.detach() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
                         normalized.append((a_t, b_t))
                 except Exception:
                     # As a last resort, zip and cast
                     for pair in zip(inputs_tensor, targets_tensor):
                         a, b = pair
-                        a_t = a.detach().cpu() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
-                        b_t = b.detach().cpu() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
+                        a_t = a.detach() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
+                        b_t = b.detach() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
                         normalized.append((a_t, b_t))
 
             logger.debug(f"  Generated {len(normalized)} synthetic predictions")
@@ -357,7 +356,7 @@ class HybridTrainer(AbstractTrainer):
         if len(self.physical_trainer.learnable_params) == 0:
             logger.info("No learnable parameters, skipping physical training")
             return 0.0
-        
+    
         with self.managed_memory_phase("Physical Training", clear_cache=False):
             # Set access policy
             access_policy = self._get_access_policy(for_synthetic=False)
@@ -371,7 +370,6 @@ class HybridTrainer(AbstractTrainer):
                 f"{self._base_field_dataset.num_augmented} augmented = "
                 f"{len(self._base_field_dataset)} total samples"
             )
-            
             # Create dataloader with custom collate function
             from src.data.dataset_utilities import field_collate_fn
             dataloader = DataLoader(
@@ -381,7 +379,6 @@ class HybridTrainer(AbstractTrainer):
                 num_workers=0,
                 collate_fn=field_collate_fn
             )
-            
             # Train
             result = self.physical_trainer.train(
                 data_source=dataloader,

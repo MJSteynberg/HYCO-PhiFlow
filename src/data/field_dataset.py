@@ -146,7 +146,10 @@ class FieldDataset(AbstractDataset):
         """
         sim_idx, start_frame = self._compute_sim_and_frame(idx)
         data = self._cached_load_simulation(sim_idx)
-        
+        # convert to cuda This is temporary!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        for name in data["tensor_data"]:
+            data["tensor_data"][name] = data["tensor_data"][name].to("cuda")
+
         # Reconstruct field metadata
         field_metadata = self._reconstruct_metadata(data)
         
@@ -155,14 +158,13 @@ class FieldDataset(AbstractDataset):
             data, field_metadata, start_frame, start_frame + 1
         )
         initial_fields = {name: fields[0] for name, fields in initial_fields.items()}
-        
         # Convert target rollout
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
         target_fields = self._tensors_to_fields(
             data, field_metadata, target_start, target_end
         )
-        
+
         return initial_fields, target_fields
     
     def _get_augmented_sample(self, idx: int) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
@@ -183,6 +185,7 @@ class FieldDataset(AbstractDataset):
             )
         
         # Augmented samples are already (initial_fields, target_fields) tuples
+
         return self.augmented_samples[idx]
 
     # ==================== Augmentation Management ====================
@@ -200,6 +203,7 @@ class FieldDataset(AbstractDataset):
         Args:
             tensor_predictions: List of (initial_tensor, target_tensor) tuples
         """
+
         if not tensor_predictions:
             self.augmented_samples = []
             self.num_augmented = 0
@@ -220,7 +224,6 @@ class FieldDataset(AbstractDataset):
 
             # Lightweight normalization for common generator layouts
             initial_tensor, target_tensor = self._normalize_prediction_tensors(initial_tensor, target_tensor)
-
             # Strict: accept per-sample tensors [V,T,H,W] or [V,H,W] and batched
             # BVTS [B,V,T,H,W]. Normalize to a batched BVTS tensor for the
             # downstream converter (which requires 5D inputs).
@@ -251,7 +254,6 @@ class FieldDataset(AbstractDataset):
                 initial_bvts, target_bvts, batch_converter, field_metadata
             )
             field_predictions.append(fields)
-        
         # Store converted Fields
         self.augmented_samples = field_predictions
         self.num_augmented = len(field_predictions)
@@ -305,13 +307,9 @@ class FieldDataset(AbstractDataset):
         """
         # BVTS-only implementation: inputs MUST be BVTS [B, V, T, H, W]
         from src.utils.field_conversion.validation import assert_bvts_format
-
         assert_bvts_format(input_tensor, context="FieldDataset.synthetic initial")
         assert_bvts_format(target_tensor, context="FieldDataset.synthetic target")
 
-        # Do NOT move tensors to GPU here. Conversions should happen on CPU
-        # to keep Dataset/Field creation device-consistent. The training loop
-        # is responsible for moving batches to GPU.
 
         total_channels = getattr(batch_converter, "total_channels", None)
         if total_channels is None:
@@ -322,6 +320,7 @@ class FieldDataset(AbstractDataset):
 
         # Convert initial state (expects [B, C, H, W])
         initial_fields = batch_converter.tensor_to_fields_batch(initial_snapshot)
+
         for name, field in initial_fields.items():
             if "batch" in field.shape:
                 initial_fields[name] = field.batch[0]
@@ -412,7 +411,6 @@ class FieldDataset(AbstractDataset):
     ) -> Dict[str, List[Field]]:
         """Convert tensors to Fields for a frame range."""
         fields_dict = {}
-        
         for name in self.field_names:
             sample_tensor = data["tensor_data"][name]
 
@@ -422,11 +420,9 @@ class FieldDataset(AbstractDataset):
 
             from src.utils.field_conversion.validation import assert_bvts_format
 
-            # Validate BVTS for this per-field tensor
-            assert_bvts_format(sample_tensor, context=f"FieldDataset._tensors_to_fields {name}")
 
-            # Slice requested time window -> still BVTS [B, V, T_slice, H, W]
-            window_bvts = sample_tensor[:, :, start_frame:end_frame]
+            # Slice requested time window -> still BVTS [V, T_slice, H, W]
+            window_bvts = sample_tensor[:, start_frame:end_frame]
 
             # Convert each timestep by selecting time index and passing a
             # batched snapshot [B, V, H, W] to the single-field converter.
@@ -434,8 +430,8 @@ class FieldDataset(AbstractDataset):
             converter = make_converter(field_meta)
 
             fields_list = []
-            for t in range(window_bvts.shape[2]):
-                timestep = window_bvts[:, :, t, :, :]  # [B, V, H, W]
+            for t in range(window_bvts.shape[1]):
+                timestep = window_bvts[:, t, :, :]  # [V, H, W]
                 field_t = converter.tensor_to_field(timestep, field_meta, time_slice=0)
                 fields_list.append(field_t)
 

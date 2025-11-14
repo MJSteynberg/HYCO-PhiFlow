@@ -37,7 +37,7 @@ def to_bvts(tensor: torch.Tensor) -> torch.Tensor:
     # Time-major 4D: [T, C, H, W]
     if tensor.dim() == 4:
         # -> [1, C, T, H, W]
-        return tensor.permute(1, 0, 2, 3).unsqueeze(0)
+        return tensor.permute(1, 0, 2, 3)
 
     # Single-frame with channel: [C, H, W]
     if tensor.dim() == 3:

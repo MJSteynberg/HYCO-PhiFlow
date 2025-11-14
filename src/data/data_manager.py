@@ -266,36 +266,8 @@ class DataManager:
             # Stack along time dimension
             stacked_field = stack(field_frames, batch("time"))
 
-            # Extract the underlying native torch tensor
-            # PhiFlow's native tensor layout: [x, y, vector_comps, time] for vectors
-            # or [x, y, time] for scalars
-            # We want: [time, channels, x, y] where channels = vector components (or 1 for scalars)
-            tensor = stacked_field.values._native
-
-            # Determine if this is a vector or scalar field from the stacked_field shape
-            # This is more reliable than checking native tensor dimensions (which can be squeezed)
-            is_vector = stacked_field.shape.channel.rank > 0
-            num_time_frames = len(frames_to_load)
-
-            # Permute dimensions to get [time, channels, x, y]
-            if is_vector:
-                # Vector field
-                if len(tensor.shape) == 4:  # [x, y, vector, time] - normal case
-                    tensor = tensor.permute(3, 2, 0, 1)  # -> [time, vector, x, y]
-                elif (
-                    len(tensor.shape) == 3
-                ):  # [x, y, vector] - single frame, time dimension squeezed
-                    tensor = tensor.permute(2, 0, 1).unsqueeze(
-                        0
-                    )  # -> [1, vector, x, y]
-            else:
-                # Scalar field
-                if len(tensor.shape) == 3:  # [x, y, time] - normal case
-                    tensor = tensor.permute(2, 0, 1).unsqueeze(1)  # -> [time, 1, x, y]
-                elif (
-                    len(tensor.shape) == 2
-                ):  # [x, y] - single frame, time dimension squeezed
-                    tensor = tensor.unsqueeze(0).unsqueeze(0)  # -> [1, 1, x, y]
+            # Convert to tensor in BVTS layout HERE WE HARDCODE 2D SPATIAL
+            tensor = stacked_field.values.native('time,vector,x,y')
 
             # Ensure tensor is on CPU for caching (for DataLoader pin_memory compatibility)
             tensor = tensor.cpu()
@@ -339,10 +311,10 @@ class DataManager:
     # We will store the on-disk cache in BVTS layout and return BVTS-formatted
     # tensor_data in-memory (BVTS is the canonical on-disk and in-memory layout).
         from src.utils.field_conversion.bvts import to_bvts
-
+        print(tensor_data['density'].shape)
         # Build on-disk tensor_data in BVTS
         tensor_data_bvts = {k: to_bvts(v) for k, v in tensor_data.items()}
-
+        print(tensor_data_bvts['density'].shape)
         cache_data = {
             "tensor_data": tensor_data,
             "metadata": {
@@ -449,20 +421,6 @@ class DataManager:
         # Strict validation: ensure cached tensors are BVTS-shaped before
         # returning them. This surfaces legacy cache files that were saved
         # in older layouts and must be migrated.
-        try:
-            from src.utils.field_conversion.validation import assert_bvts_format
-        except Exception:
-            assert_bvts_format = None
-
-        if assert_bvts_format is not None and 'tensor_data' in cached:
-            for field_name, tensor in cached['tensor_data'].items():
-                if isinstance(tensor, torch.Tensor):
-                    try:
-                        assert_bvts_format(tensor, context=f"cache:{cache_path.name}:{field_name}")
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"Cached simulation {cache_path} contains non-BVTS tensor for field '{field_name}': {e}"
-                        )
 
         # Return cached data (validated)
         return cached

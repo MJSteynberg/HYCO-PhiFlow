@@ -148,6 +148,7 @@ class BatchConcatenationConverter:
         """
         # Strict: expect a 4D batched snapshot [B, C, H, W]. Do not accept
         # 3D or 5D inputs silently. This surfaces non-conforming producers.
+
         if tensor.dim() != 4:
             raise ValueError(
                 f"tensor_to_fields_batch expects a 4D batched snapshot [B,C,H,W]; got {tensor.dim()}D {tuple(tensor.shape)}"
