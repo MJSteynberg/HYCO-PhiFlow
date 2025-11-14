@@ -446,7 +446,25 @@ class DataManager:
         # and the metadata dict contains non-tensor types
         cached = torch.load(cache_path, weights_only=False)
 
-        # Return cached data as-is. Cached layout may be BVTS (the canonical on-disk format).
+        # Strict validation: ensure cached tensors are BVTS-shaped before
+        # returning them. This surfaces legacy cache files that were saved
+        # in older layouts and must be migrated.
+        try:
+            from src.utils.field_conversion.validation import assert_bvts_format
+        except Exception:
+            assert_bvts_format = None
+
+        if assert_bvts_format is not None and 'tensor_data' in cached:
+            for field_name, tensor in cached['tensor_data'].items():
+                if isinstance(tensor, torch.Tensor):
+                    try:
+                        assert_bvts_format(tensor, context=f"cache:{cache_path.name}:{field_name}")
+                    except Exception as e:
+                        raise RuntimeError(
+                            f"Cached simulation {cache_path} contains non-BVTS tensor for field '{field_name}': {e}"
+                        )
+
+        # Return cached data (validated)
         return cached
 
     def get_or_load_simulation(

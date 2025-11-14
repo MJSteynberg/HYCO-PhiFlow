@@ -16,6 +16,7 @@ from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
 from src.utils.field_conversion import FieldMetadata, make_converter, make_batch_converter
+from src.utils.field_conversion.validation import assert_bvts_format, BVTSValidationError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -217,13 +218,37 @@ class FieldDataset(AbstractDataset):
             if idx % 50 == 0 and idx > 0:
                 logger.debug(f"  Converted {idx}/{len(tensor_predictions)} predictions...")
 
-            # Normalize tensor shapes to the expected consumer format:
-            # - initial_tensor: accept [C,1,H,W] or [C,H,W] -> convert to [C,H,W]
-            # - target_tensor: accept [C,T,H,W] or [T,C,H,W] -> convert to [T,C,H,W]
+            # Lightweight normalization for common generator layouts
             initial_tensor, target_tensor = self._normalize_prediction_tensors(initial_tensor, target_tensor)
 
+            # Strict: accept per-sample tensors [V,T,H,W] or [V,H,W] and batched
+            # BVTS [B,V,T,H,W]. Normalize to a batched BVTS tensor for the
+            # downstream converter (which requires 5D inputs).
+            def _to_batched_bvts(t: torch.Tensor):
+                if t is None:
+                    return None
+                if not isinstance(t, torch.Tensor):
+                    raise TypeError("Augmented prediction must be a torch.Tensor or None")
+                if t.dim() == 5:
+                    # Already batched BVTS
+                    assert_bvts_format(t, context=f"FieldDataset.set_augmented_predictions batched")
+                    return t
+                elif t.dim() == 4:
+                    # Per-sample [V, T, H, W] -> add batch dim
+                    return t.unsqueeze(0)
+                elif t.dim() == 3:
+                    # Single-frame [V, H, W] -> add batch and time dims
+                    return t.unsqueeze(0).unsqueeze(2)
+                else:
+                    raise BVTSValidationError(
+                        f"Unsupported tensor shape for augmented prediction: {tuple(t.shape)}; expected [V,T,H,W] or [V,H,W] or batched [B,V,T,H,W]"
+                    )
+
+            initial_bvts = _to_batched_bvts(initial_tensor) if initial_tensor is not None else None
+            target_bvts = _to_batched_bvts(target_tensor) if target_tensor is not None else None
+
             fields = self._convert_tensor_to_fields_optimized(
-                initial_tensor, target_tensor, batch_converter, field_metadata
+                initial_bvts, target_bvts, batch_converter, field_metadata
             )
             field_predictions.append(fields)
         
@@ -278,139 +303,42 @@ class FieldDataset(AbstractDataset):
         Returns:
             Tuple of (initial_fields, target_fields)
         """
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            if not input_tensor.is_cuda:
-                input_tensor = input_tensor.cuda()
-            if not target_tensor.is_cuda:
-                target_tensor = target_tensor.cuda()
+        # BVTS-only implementation: inputs MUST be BVTS [B, V, T, H, W]
+        from src.utils.field_conversion.validation import assert_bvts_format
 
-        # Deterministic normalization using field metadata / converter expectations.
-        # Goal: produce initial snapshot as [C_total, H, W] (or [B, C_total, H, W])
-        # and target tensor as [T, C_total, H, W]. We compute the expected
-        # total channel count from the batch_converter and enforce it.
+        assert_bvts_format(input_tensor, context="FieldDataset.synthetic initial")
+        assert_bvts_format(target_tensor, context="FieldDataset.synthetic target")
+
+        # Do NOT move tensors to GPU here. Conversions should happen on CPU
+        # to keep Dataset/Field creation device-consistent. The training loop
+        # is responsible for moving batches to GPU.
+
         total_channels = getattr(batch_converter, "total_channels", None)
-
         if total_channels is None:
             raise RuntimeError("Batch converter does not expose total_channels")
 
-        def to_target_time_major(tensor: torch.Tensor) -> torch.Tensor:
-            """Return tensor in shape [T, C_total, H, W]."""
-            # Handle batched sim outputs e.g., [B_sim, C, T, H, W]
-            if tensor.dim() == 5:
-                if tensor.shape[0] == 1:
-                    s = tensor.squeeze(0)
-                else:
-                    # If multiple sim-batches present, we don't support them here
-                    # (augmented predictions are single-simulation outputs)
-                    raise ValueError(
-                        f"Unsupported batched augmented prediction: {tensor.shape}"
-                    )
-                # s expected to be [C, T, H, W] or [T, C, H, W]
-                tensor = s
+        # initial snapshot: select time index 0 -> [B, V, H, W]
+        initial_snapshot = input_tensor[:, :, 0, :, :]
 
-            if tensor.dim() == 4:
-                # Two common layouts: [C, T, H, W] or [T, C, H, W]
-                c0, d1, h, w = tensor.shape
-                if c0 == total_channels:
-                    # [C, T, H, W] -> permute
-                    return tensor.permute(1, 0, 2, 3).contiguous()
-                elif d1 == total_channels:
-                    # [T, C, H, W] already
-                    return tensor.contiguous()
-                else:
-                    # If neither axis matches total_channels, it's an error
-                    raise ValueError(
-                        f"Cannot interpret target tensor with shape {tensor.shape}; "
-                        f"expected total channels={total_channels} on either axis"
-                    )
-
-            if tensor.dim() == 3:
-                # [C, H, W] -> single timestep
-                c, h, w = tensor.shape
-                if c != total_channels:
-                    raise ValueError(
-                        f"Expected {total_channels} channels, got {c} in tensor {tensor.shape}"
-                    )
-                return tensor.unsqueeze(0)
-
-            raise ValueError(f"Unsupported tensor dimensionality for target: {tensor.dim()}D")
-
-        def to_initial_snapshot(tensor: torch.Tensor) -> torch.Tensor:
-            """Return initial snapshot as [C_total, H, W]."""
-            # If empty / None supplied, this function will not be called
-            # Handle [B, C, T, H, W]
-            if tensor.dim() == 5:
-                if tensor.shape[0] == 1:
-                    s = tensor.squeeze(0)
-                else:
-                    raise ValueError(f"Unsupported batched initial tensor: {tensor.shape}")
-                tensor = s
-
-            if tensor.dim() == 4:
-                # could be [C, T, H, W] or [C, H, W] (if T==H?)
-                # Distinguish [C, T, H, W]
-                c0 = tensor.shape[0]
-                if c0 == total_channels:
-                    # [C, T, H, W] -> select time 0
-                    return tensor[:, 0, :, :].contiguous()
-                # Otherwise maybe it's [C, H, W] already (if dims match)
-                if tensor.shape[0] == total_channels and tensor.dim() == 3:
-                    return tensor
-                # If tensor looks like [C, 1, H, W] (i.e., channel, time==1)
-                if tensor.shape[1] == 1 and tensor.shape[0] == total_channels:
-                    return tensor.squeeze(1).contiguous()
-
-            if tensor.dim() == 3:
-                c = tensor.shape[0]
-                if c != total_channels:
-                    raise ValueError(
-                        f"Expected {total_channels} channels for initial tensor, got {c}"
-                    )
-                return tensor.contiguous()
-
-            raise ValueError(f"Unsupported tensor dimensionality for initial: {tensor.dim()}D")
-
-        # Deterministically construct initial and target tensors
-        target_time_major = to_target_time_major(target_tensor)
-        initial_snapshot = to_initial_snapshot(input_tensor)
-        
-        # Convert initial state (wrap as batch dim for converter)
-        input_with_batch = initial_snapshot.unsqueeze(0)
-        # Double-check channel count
-        actual_channels = input_with_batch.shape[-3]
-        if actual_channels != total_channels:
-            raise ValueError(
-                f"Initial tensor channels ({actual_channels}) != expected ({total_channels})"
-            )
-
-        initial_fields = batch_converter.tensor_to_fields_batch(input_with_batch)
-        # Remove batch dimension from Fields if present
+        # Convert initial state (expects [B, C, H, W])
+        initial_fields = batch_converter.tensor_to_fields_batch(initial_snapshot)
         for name, field in initial_fields.items():
             if "batch" in field.shape:
                 initial_fields[name] = field.batch[0]
 
-        # Convert each timestep in target_time_major
-        num_timesteps = target_time_major.shape[0]
+        # Convert each timestep in target tensor
+        B, V, T, H, W = target_tensor.shape
         target_fields = {name: [] for name in field_metadata.keys()}
 
-        for t in range(num_timesteps):
-            timestep = target_time_major[t]
-            # timestep is [C_total, H, W]; wrap as batch
-            timestep_batch = timestep.unsqueeze(0)
-
-            if timestep_batch.shape[-3] != total_channels:
-                raise ValueError(
-                    f"Target timestep channels ({timestep_batch.shape[-3]}) != expected ({total_channels})"
-                )
-
-            timestep_fields = batch_converter.tensor_to_fields_batch(timestep_batch)
+        for t in range(T):
+            timestep = target_tensor[:, :, t, :, :]  # [B, V, H, W]
+            timestep_fields = batch_converter.tensor_to_fields_batch(timestep)
             for name, field in timestep_fields.items():
                 if "batch" in field.shape:
                     target_fields[name].append(field.batch[0])
                 else:
                     target_fields[name].append(field)
-        
+
         return initial_fields, target_fields
 
     # ==================== Helper Methods ====================
@@ -488,46 +416,27 @@ class FieldDataset(AbstractDataset):
         for name in self.field_names:
             sample_tensor = data["tensor_data"][name]
 
-            # Normalize BVTS-derived per-field tensors. We want to iterate over the
-            # requested time slice and produce a list of Field objects where
-            # each entry corresponds to a single timestep.
+            # Strict: expect per-field BVTS tensors [B, V, T, *spatial]
             if not isinstance(sample_tensor, torch.Tensor):
                 raise RuntimeError(f"Tensor data for field {name} is not a torch.Tensor")
 
-            tensor = sample_tensor
-            # DataManager guarantees BVTS on-disk and in-memory. Expect per-field
-            # tensors to be either [B, C, T, *spatial] (common, B==1) or
-            # already squeezed [C, T, *spatial]. We reject other shapes.
-            if tensor.dim() == 5:
-                # Squeeze singleton sim-batch for per-field processing
-                if tensor.shape[0] == 1:
-                    tensor = tensor.squeeze(0)
-                else:
-                    # Multiple sims unsupported here
-                    raise ValueError(f"Unsupported multi-sim tensor for field {name}: {tensor.shape}")
+            from src.utils.field_conversion.validation import assert_bvts_format
 
-            # At this point tensor must be 4D: [C, T, *spatial]
-            if tensor.dim() != 4:
-                raise ValueError(f"FieldDataset expects per-field 4D tensors [C,T,...] after BVTS normalization; got {tensor.dim()}D for field {name}")
+            # Validate BVTS for this per-field tensor
+            assert_bvts_format(sample_tensor, context=f"FieldDataset._tensors_to_fields {name}")
 
-            # [C, T, H, W] -> select the time window and make time the
-            # leading axis: [T_slice, C, H, W]
-            window = tensor[:, start_frame:end_frame]
-            window = window.permute(1, 0, 2, 3).contiguous()
+            # Slice requested time window -> still BVTS [B, V, T_slice, H, W]
+            window_bvts = sample_tensor[:, :, start_frame:end_frame]
 
-            if torch.cuda.is_available() and not window.is_cuda:
-                window = window.cuda()
-
+            # Convert each timestep by selecting time index and passing a
+            # batched snapshot [B, V, H, W] to the single-field converter.
             field_meta = field_metadata[name]
             converter = make_converter(field_meta)
 
             fields_list = []
-            for t in range(window.shape[0]):
-                # timestep tensor: [C, H, W]
-                timestep = window[t]
-                # converter expects a time-sliced tensor like [1, C, H, W]
-                tensor_t = timestep.unsqueeze(0)
-                field_t = converter.tensor_to_field(tensor_t, field_meta, time_slice=0)
+            for t in range(window_bvts.shape[2]):
+                timestep = window_bvts[:, :, t, :, :]  # [B, V, H, W]
+                field_t = converter.tensor_to_field(timestep, field_meta, time_slice=0)
                 fields_list.append(field_t)
 
             fields_dict[name] = fields_list

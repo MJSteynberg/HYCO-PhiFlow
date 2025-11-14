@@ -16,6 +16,7 @@ from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
 from src.utils.logger import get_logger, logging
+from src.utils.field_conversion.validation import assert_bvts_format
 
 logger = get_logger(__name__)
 
@@ -201,18 +202,46 @@ class TensorDataset(AbstractDataset):
         # initial_state: keep time as length-1 dimension -> [B, C_all, 1, H, W]
         initial_state = all_data[:, :, start_frame : start_frame + 1]
 
+        # Validate BVTS contract for concatenated data
+        assert_bvts_format(all_data, context="TensorDataset._extract_sample all_data")
+
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
         rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
 
-        # Normalize per-sample shapes: remove the simulation-batch dim when it is singleton
-        if initial_state.dim() == 5 and initial_state.size(0) == 1:
-            initial_state = initial_state.squeeze(0)
-            rollout_targets = rollout_targets.squeeze(0)
+        # Ensure we return a batched BVTS tensor [B, C_all, T, H, W].
+        # If the data is missing an explicit batch dim (e.g. [C,T,H,W]),
+        # add B=1. If it's missing a time dim (e.g. [C,H,W]) add T=1.
+        def _ensure_bvts(t: torch.Tensor) -> torch.Tensor:
+            if not isinstance(t, torch.Tensor):
+                raise RuntimeError("Expected torch.Tensor in TensorDataset sample")
+            if t.dim() == 5:
+                return t
+            if t.dim() == 4:
+                # [C, T, H, W] -> [1, C, T, H, W]
+                return t.unsqueeze(0)
+            if t.dim() == 3:
+                # [C, H, W] -> [1, C, 1, H, W]
+                return t.unsqueeze(0).unsqueeze(2)
+            raise RuntimeError(f"Unsupported tensor dimensionality for BVTS enforcement: {t.dim()}D")
 
-        # Ensure initial has a time dim
-        if initial_state.dim() == 3:
-            initial_state = initial_state.unsqueeze(1)
+        initial_state = _ensure_bvts(initial_state)
+        rollout_targets = _ensure_bvts(rollout_targets)
+
+        # Convert to per-sample format (remove simulation-batch dim B==1).
+        def _to_per_sample(t: torch.Tensor) -> torch.Tensor:
+            # t is guaranteed to be 5D here
+            if t.dim() == 5:
+                if t.size(0) == 1:
+                    return t.squeeze(0)  # -> [C, T, H, W]
+                else:
+                    raise ValueError(
+                        f"TensorDataset produced multi-sim tensor with B>1; expected per-sample tensors. Got {t.shape}"
+                    )
+            return t
+
+        initial_state = _to_per_sample(initial_state)
+        rollout_targets = _to_per_sample(rollout_targets)
 
         return initial_state, rollout_targets
     
@@ -249,9 +278,9 @@ class TensorDataset(AbstractDataset):
             # Assume it's already tensor_data
             tensor_data = trajectory_data
 
-    # Defensive normalization: ensure the augmented trajectory's tensor_data
-    # matches the dataset mode (BVTS). This handles the case where
-    # augmented_samples were loaded from external sources with differing conventions.
+        # Defensive normalization: ensure the augmented trajectory's tensor_data
+        # matches the dataset mode (BVTS). This handles the case where
+        # augmented_samples were loaded from external sources with differing conventions.
         tensor_data = self._normalize_sim_tensor_data(tensor_data)
         
         # Concatenate all fields
@@ -261,17 +290,42 @@ class TensorDataset(AbstractDataset):
         # normalized by _normalize_sim_tensor_data earlier. Expect [B, C_all, T, H, W]
         all_data = torch.cat(all_field_tensors, dim=1)  # [B, C_all, T, H, W]
 
+        # Validate BVTS contract for augmented trajectory data
+        assert_bvts_format(all_data, context="TensorDataset._get_augmented_sample all_data")
+
         initial_state = all_data[:, :, window_start : window_start + 1]  # [B, C_all, 1, H, W]
         target_start = window_start + 1
         target_end = window_start + 1 + self.num_predict_steps
         rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
 
-        if initial_state.dim() == 5 and initial_state.size(0) == 1:
-            initial_state = initial_state.squeeze(0)
-            rollout_targets = rollout_targets.squeeze(0)
+        # Ensure returned augmented sample tensors are BVTS-shaped [B,C,T,H,W].
+        def _ensure_bvts(t: torch.Tensor) -> torch.Tensor:
+            if not isinstance(t, torch.Tensor):
+                raise RuntimeError("Expected torch.Tensor in TensorDataset augmented sample")
+            if t.dim() == 5:
+                return t
+            if t.dim() == 4:
+                return t.unsqueeze(0)
+            if t.dim() == 3:
+                return t.unsqueeze(0).unsqueeze(2)
+            raise RuntimeError(f"Unsupported tensor dimensionality for BVTS enforcement: {t.dim()}D")
 
-        if initial_state.dim() == 3:
-            initial_state = initial_state.unsqueeze(1)
+        initial_state = _ensure_bvts(initial_state)
+        rollout_targets = _ensure_bvts(rollout_targets)
+
+        # Convert to per-sample format (remove simulation-batch dim B==1).
+        def _to_per_sample(t: torch.Tensor) -> torch.Tensor:
+            if t.dim() == 5:
+                if t.size(0) == 1:
+                    return t.squeeze(0)
+                else:
+                    raise ValueError(
+                        f"TensorDataset augmented sample produced multi-sim tensor with B>1; expected per-sample tensors. Got {t.shape}"
+                    )
+            return t
+
+        initial_state = _to_per_sample(initial_state)
+        rollout_targets = _to_per_sample(rollout_targets)
 
         return initial_state, rollout_targets
 

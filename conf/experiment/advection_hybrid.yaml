@@ -36,7 +36,7 @@ trainer_params:
   
   # Training hyperparameters
   epochs: 10
-  batch_size: 16
+  batch_size: 64
   num_predict_steps: 4
   
   # Optimizer (for synthetic/hybrid)

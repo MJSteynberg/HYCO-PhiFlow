@@ -107,12 +107,21 @@ class BatchConcatenationConverter:
                 f"got {list(fields.keys())}"
             )
 
-        # Convert each field (guaranteed consistent format)
+        # Convert each field (guaranteed consistent format). Converters MUST
+        # return a 4D batched snapshot [B, C, H, W]. We do NOT coerce 5D
+        # BVTS tensors here; raising an error helps locate non-conforming
+        # converters during strict migration.
         tensors = []
         for name in self.field_names:  # Maintain order
             field = fields[name]
             converter = self._converters[name]
             tensor = converter.field_to_tensor(field, ensure_cpu=ensure_cpu)
+            if not isinstance(tensor, torch.Tensor):
+                raise ValueError(f"Converter for field {name} did not return a torch.Tensor")
+            if tensor.dim() != 4:
+                raise ValueError(
+                    f"Converter for field {name} must return a 4D batched snapshot [B,C,H,W]; got {tensor.dim()}D {tuple(tensor.shape)}"
+                )
             tensors.append(tensor)
 
         # Simple concatenation along channel dimension (dim=-3)
@@ -137,10 +146,17 @@ class BatchConcatenationConverter:
         Returns:
             Dict mapping field names to Field objects
         """
+        # Strict: expect a 4D batched snapshot [B, C, H, W]. Do not accept
+        # 3D or 5D inputs silently. This surfaces non-conforming producers.
+        if tensor.dim() != 4:
+            raise ValueError(
+                f"tensor_to_fields_batch expects a 4D batched snapshot [B,C,H,W]; got {tensor.dim()}D {tuple(tensor.shape)}"
+            )
+
         # Verify channel dimension
         channel_dim = -3  # Channel dimension in [B, C, H, W]
         actual_channels = tensor.shape[channel_dim]
-        
+
         if actual_channels != self.total_channels:
             raise ValueError(
                 f"Expected {self.total_channels} channels, got {actual_channels}. "

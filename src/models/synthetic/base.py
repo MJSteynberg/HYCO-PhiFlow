@@ -9,6 +9,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import logging
 
+from src.utils.field_conversion.validation import assert_bvts_format
+
 
 class SyntheticModel(nn.Module, ABC):
     """
@@ -72,28 +74,29 @@ class SyntheticModel(nn.Module, ABC):
             Output tensor in BVTS layout [B, V, T, H, W] representing the
             next state.
         """
-        # Handle BVTS input: [B, V, T, H, W]
-        if x.dim() == 5:
-            B, V, T, H, W = x.shape
+        # Enforce BVTS at entry
+        assert_bvts_format(x, context=f"{self.__class__.__name__}.forward input")
 
-            # Move time into batch: [B*T, V, H, W]
-            reshaped_in = x.permute(0, 2, 1, 3, 4).reshape(B * T, V, H, W)
+        # Guaranteed BVTS: [B, V, T, H, W]
+        B, V, T, H, W = x.shape
 
-            # Run through network which expects [batch, channels, H, W]
-            dynamic_out = self.net(reshaped_in)
+        # Move time into batch: [B*T, V, H, W]
+        reshaped_in = x.permute(0, 2, 1, 3, 4).reshape(B * T, V, H, W)
 
-            # dynamic_out: [B*T, num_dynamic_channels, H, W]
-            out_frames = torch.empty_like(reshaped_in)
-            out_frames[:, self._dynamic_slice] = dynamic_out
-            out_frames[:, self.num_dynamic_channels:] = reshaped_in[ : , self.num_dynamic_channels:]
+        # Run through network which expects [batch, channels, H, W]
+        dynamic_out = self.net(reshaped_in)
 
-            # Reshape back to BVTS: [B, V, T, H, W]
-            out = out_frames.reshape(B, T, V, H, W).permute(0, 2, 1, 3, 4).contiguous()
-            return out
-        # Enforce BVTS-only inputs for the migrated codebase.
-        raise ValueError(
-            f"SyntheticModel.forward expects BVTS-shaped inputs [B,V,T,H,W]; got tensor with dim={x.dim()}"
-        )
+        # dynamic_out: [B*T, num_dynamic_channels, H, W]
+        out_frames = torch.empty_like(reshaped_in)
+        out_frames[:, self._dynamic_slice] = dynamic_out
+        out_frames[:, self.num_dynamic_channels:] = reshaped_in[:, self.num_dynamic_channels:]
+
+        # Reshape back to BVTS: [B, V, T, H, W]
+        out = out_frames.reshape(B, T, V, H, W).permute(0, 2, 1, 3, 4).contiguous()
+
+        # Enforce BVTS on output
+        assert_bvts_format(out, context=f"{self.__class__.__name__}.forward output")
+        return out
 
 
     @torch.no_grad()
