@@ -36,7 +36,8 @@ class DatasetBuilder:
         self,
         sim_indices: List[int],
         field_names: List[str],
-        num_frames: Optional[int]
+        num_frames: Optional[int],
+        num_predict_steps: Optional[int] = None,
     ) -> int:
         """
         Validate cache and determine num_frames.
@@ -55,9 +56,62 @@ class DatasetBuilder:
             first_sim_data = self.data_manager.get_or_load_simulation(
                 sim_indices[0], field_names=field_names, num_frames=None
             )
-            num_frames = first_sim_data["tensor_data"][field_names[0]].shape[0]
+            sample_tensor = first_sim_data["tensor_data"][field_names[0]]
+            # Detect BVTS canonical layout [B, C, T, *spatial] -> time at dim=2
+            if isinstance(sample_tensor, torch.Tensor):
+                if sample_tensor.dim() >= 3:
+                    if sample_tensor.dim() == 5:
+                        # BVTS with batch: [B, C, T, *spatial]
+                        num_frames = sample_tensor.shape[2]
+                    elif sample_tensor.dim() == 4:
+                        # BVTS without batch per-field: [C, T, *spatial]
+                        num_frames = sample_tensor.shape[1]
+                    elif sample_tensor.dim() == 3:
+                        # [C, H, W] -> single frame
+                        num_frames = 1
+                    else:
+                        num_frames = sample_tensor.shape[0]
+                else:
+                    num_frames = 1
+            else:
+                raise RuntimeError("First simulation tensor is not a torch.Tensor")
+
             logger.debug(f"Determined num_frames = {num_frames}")
             del first_sim_data
+
+        # If a predict horizon is provided and the discovered num_frames is
+        # too small for at least one training window, attempt to force a
+        # re-load with a larger num_frames. This handles stale/invalid cache
+        # cases where metadata reports too few frames.
+        if num_predict_steps is not None and num_frames < (num_predict_steps + 1):
+            logger.warning(
+                f"Discovered num_frames={num_frames} < required {num_predict_steps + 1}; "
+                "attempting to reload simulation with larger frame count..."
+            )
+            try:
+                # Ask DataManager to load at least the required number of frames
+                forced = self.data_manager.get_or_load_simulation(
+                    sim_indices[0], field_names=field_names, num_frames=(num_predict_steps + 1)
+                )
+                forced_tensor = forced["tensor_data"][field_names[0]]
+                if isinstance(forced_tensor, torch.Tensor):
+                    if forced_tensor.dim() == 5:
+                        num_frames = forced_tensor.shape[2]
+                    elif forced_tensor.dim() == 4:
+                        # BVTS without batch per-field: [C, T, *spatial]
+                        num_frames = forced_tensor.shape[1]
+                    elif forced_tensor.dim() == 3:
+                        num_frames = 1
+                    else:
+                        num_frames = forced_tensor.shape[0]
+                else:
+                    raise RuntimeError("Forced simulation tensor is not a torch.Tensor")
+
+                logger.debug(f"After forced reload, num_frames = {num_frames}")
+            except Exception as e:
+                logger.error(f"Failed to reload simulation to satisfy predict steps: {e}")
+                # Let the caller handle the invalid configuration
+                raise
         
         # Check and cache uncached simulations
         uncached_sims = [

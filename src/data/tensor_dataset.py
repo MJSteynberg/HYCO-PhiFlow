@@ -70,8 +70,22 @@ class TensorDataset(AbstractDataset):
         # Track number of augmented trajectories (for indexing)
         self._num_augmented_trajectories = len(augmented_samples)
         self._samples_per_trajectory = num_frames - num_predict_steps
-        
+    # Dataset now assumes BVTS as the canonical in-memory layout.
+    # All simulation tensors returned by DataManager / builder are normalized
+    # to BVTS [B, V, T, *spatial].
+
         self._log_dataset_info()
+
+        # Normalize any augmented samples we received from the builder so that
+        # they follow the same tensor conventions as _load_simulation() returns.
+        # This prevents mixed-format augmented samples which can cause collate
+        # failures when batches mix real and generated data.
+        try:
+            self._normalize_all_augmented_samples()
+        except Exception:
+            # Fail-safe: don't raise during dataset construction; log instead
+            logger.debug("Failed to normalize augmented samples at init; continuing")
+
 
     # ==================== Setup ====================
     
@@ -87,8 +101,8 @@ class TensorDataset(AbstractDataset):
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
         """Setup dataset components."""
         builder = DatasetBuilder(data_manager)
-        
-        num_frames = builder.setup_cache(sim_indices, field_names, num_frames)
+
+        num_frames = builder.setup_cache(sim_indices, field_names, num_frames, num_predict_steps)
         samples_per_sim = builder.compute_sliding_window(num_frames, num_predict_steps)
         total_real_samples = len(sim_indices) * samples_per_sim
         
@@ -142,14 +156,31 @@ class TensorDataset(AbstractDataset):
         )
         
         sim_data = full_data["tensor_data"]
-        
-        if self.pin_memory:
-            sim_data = {
-                field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor
-                for field, tensor in sim_data.items()
+
+        # Always return BVTS in-memory. Convert cached tensors to BVTS using the
+        # adapter/helper.
+        try:
+            from src.data.adapters.bvts_adapter import sim_dict_to_bvts
+        except Exception:
+            sim_dict_to_bvts = None
+
+        if sim_dict_to_bvts is not None:
+            sim_bvts = sim_dict_to_bvts(sim_data)
+        else:
+            try:
+                from src.utils.field_conversion.bvts import to_bvts
+            except Exception:
+                to_bvts = None
+
+            sim_bvts = {
+                k: (to_bvts(v) if to_bvts is not None and isinstance(v, torch.Tensor) else v)
+                for k, v in sim_data.items()
             }
-        
-        return sim_data
+
+        if self.pin_memory:
+            sim_bvts = {field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_bvts.items()}
+
+        return sim_bvts
     
     def _extract_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -163,13 +194,26 @@ class TensorDataset(AbstractDataset):
         
         # Concatenate all fields
         all_field_tensors = [sim_data[name] for name in self.field_names]
-        all_data = torch.cat(all_field_tensors, dim=1)  # [T, C_all, H, W]
-        
-        initial_state = all_data[start_frame]  # [C_all, H, W]
+
+        # Expect BVTS tensors: [B, C_all, T, H, W]
+        all_data = torch.cat(all_field_tensors, dim=1)  # [B, C_all, T, H, W]
+
+        # initial_state: keep time as length-1 dimension -> [B, C_all, 1, H, W]
+        initial_state = all_data[:, :, start_frame : start_frame + 1]
+
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
-        rollout_targets = all_data[target_start:target_end]  # [T, C_all, H, W]
-        
+        rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
+
+        # Normalize per-sample shapes: remove the simulation-batch dim when it is singleton
+        if initial_state.dim() == 5 and initial_state.size(0) == 1:
+            initial_state = initial_state.squeeze(0)
+            rollout_targets = rollout_targets.squeeze(0)
+
+        # Ensure initial has a time dim
+        if initial_state.dim() == 3:
+            initial_state = initial_state.unsqueeze(1)
+
         return initial_state, rollout_targets
     
     def _get_augmented_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -204,17 +248,31 @@ class TensorDataset(AbstractDataset):
         else:
             # Assume it's already tensor_data
             tensor_data = trajectory_data
+
+    # Defensive normalization: ensure the augmented trajectory's tensor_data
+    # matches the dataset mode (BVTS). This handles the case where
+    # augmented_samples were loaded from external sources with differing conventions.
+        tensor_data = self._normalize_sim_tensor_data(tensor_data)
         
         # Concatenate all fields
         all_field_tensors = [tensor_data[name] for name in self.field_names]
-        all_data = torch.cat(all_field_tensors, dim=1)  # [T, C_all, H, W]
-        
-        # Apply sliding window
-        initial_state = all_data[window_start]  # [C_all, H, W]
+
+        # Augmented trajectories are stored in BVTS cache-format and have been
+        # normalized by _normalize_sim_tensor_data earlier. Expect [B, C_all, T, H, W]
+        all_data = torch.cat(all_field_tensors, dim=1)  # [B, C_all, T, H, W]
+
+        initial_state = all_data[:, :, window_start : window_start + 1]  # [B, C_all, 1, H, W]
         target_start = window_start + 1
         target_end = window_start + 1 + self.num_predict_steps
-        rollout_targets = all_data[target_start:target_end]  # [T, C_all, H, W]
-        
+        rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
+
+        if initial_state.dim() == 5 and initial_state.size(0) == 1:
+            initial_state = initial_state.squeeze(0)
+            rollout_targets = rollout_targets.squeeze(0)
+
+        if initial_state.dim() == 3:
+            initial_state = initial_state.unsqueeze(1)
+
         return initial_state, rollout_targets
 
     # ==================== Augmentation Management ====================
@@ -371,6 +429,59 @@ class TensorDataset(AbstractDataset):
             tensors.append(tensor_t)
         
         return torch.stack(tensors, dim=0)
+
+    # ==================== Normalization Utilities ====================
+
+    def _normalize_sim_tensor_data(self, sim_tensor_data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """
+        Normalize a simulation's `tensor_data` dict to the canonical BVTS format
+        used throughout the codebase: [B, C, T, *spatial].
+
+    This converts tensors to the canonical in-memory BVTS layout
+    using the converter helpers. If the BVTS helper is not available
+    a RuntimeError is raised to avoid silent misinterpretation.
+        """
+        try:
+            from src.utils.field_conversion.bvts import to_bvts, from_bvts
+        except Exception:
+            to_bvts = None
+            from_bvts = None
+
+        normalized = {}
+        for field, tensor in sim_tensor_data.items():
+            if not isinstance(tensor, torch.Tensor):
+                normalized[field] = tensor
+                continue
+
+            # Convert to BVTS canonical in-memory format [B, V, T, *spatial]
+            # We require the BVTS helper to be present; treat missing helper as
+            # a hard error to avoid silent misinterpretation.
+            if to_bvts is None:
+                raise RuntimeError(
+                    "BVTS conversion helper not available. Ensure 'src.utils.field_conversion.bvts.to_bvts' is importable."
+                )
+
+            normalized[field] = to_bvts(tensor)
+
+        return normalized
+
+    def _normalize_all_augmented_samples(self):
+        """Normalize all entries in self.augmented_samples in-place."""
+        if not hasattr(self, 'augmented_samples') or not self.augmented_samples:
+            return
+
+        normalized_list = []
+        for entry in self.augmented_samples:
+            if isinstance(entry, dict) and 'tensor_data' in entry:
+                normalized_list.append({'tensor_data': self._normalize_sim_tensor_data(entry['tensor_data'])})
+            elif isinstance(entry, dict):
+                # Possibly raw tensor_data
+                normalized_list.append({'tensor_data': self._normalize_sim_tensor_data(entry)})
+            else:
+                # Unknown format: keep as-is
+                normalized_list.append(entry)
+
+        self.augmented_samples = normalized_list
 
     # ==================== Utility Methods ====================
 

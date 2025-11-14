@@ -335,7 +335,14 @@ class DataManager:
                 "field_type": original_field_type,  # Store original field type (before conversion to centered)
             }
 
-        # Prepare data structure to cache with enhanced metadata
+    # Prepare data structure to cache with enhanced metadata
+    # We will store the on-disk cache in BVTS layout and return BVTS-formatted
+    # tensor_data in-memory (BVTS is the canonical on-disk and in-memory layout).
+        from src.utils.field_conversion.bvts import to_bvts
+
+        # Build on-disk tensor_data in BVTS
+        tensor_data_bvts = {k: to_bvts(v) for k, v in tensor_data.items()}
+
         cache_data = {
             "tensor_data": tensor_data,
             "metadata": {
@@ -397,11 +404,22 @@ class DataManager:
             },
         }
 
-        # Save to cache
-        cache_path = self.get_cached_path(sim_index)
-        torch.save(cache_data, cache_path)
+        # On-disk cache: include layout metadata and BVTS-formatted tensors
+        cache_to_save = {
+            "tensor_data": tensor_data_bvts,
+            "metadata": dict(cache_data["metadata"], layout="BVTS", layout_version=1),
+        }
 
-        return cache_data
+        # Save BVTS cache
+        cache_path = self.get_cached_path(sim_index)
+        torch.save(cache_to_save, cache_path)
+
+        # Return BVTS-formatted tensor_data in-memory (we adopt BVTS as
+        # the canonical in-memory format for the migrated codebase).
+        cache_data_bvts = dict(cache_data)
+        cache_data_bvts["tensor_data"] = tensor_data_bvts
+        cache_data_bvts["metadata"] = dict(cache_data["metadata"], layout="BVTS", layout_version=1)
+        return cache_data_bvts
 
     def load_from_cache(self, sim_index: int) -> Dict[str, Any]:
         """
@@ -426,7 +444,10 @@ class DataManager:
 
         # Use weights_only=False because we're loading our own trusted data
         # and the metadata dict contains non-tensor types
-        return torch.load(cache_path, weights_only=False)
+        cached = torch.load(cache_path, weights_only=False)
+
+        # Return cached data as-is. Cached layout may be BVTS (the canonical on-disk format).
+        return cached
 
     def get_or_load_simulation(
         self, sim_index: int, field_names: List[str], num_frames: Optional[int] = None

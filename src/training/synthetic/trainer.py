@@ -85,24 +85,39 @@ class SyntheticTrainer(TensorTrainer):
         initial_state = initial_state.to(self.device, non_blocking=True)
         rollout_targets = rollout_targets.to(self.device, non_blocking=True)
 
-        num_steps = rollout_targets.shape[1]
-        
-        # Use AMP context
+        # Enforce BVTS-only inputs: initial_state and rollout_targets must be
+        # BVTS-shaped tensors: [B, V, 1, H, W] and [B, V, T, H, W]. If not,
+        # raise a descriptive error to guide migration.
+        if not (initial_state.dim() == 5 and rollout_targets.dim() == 5):
+            raise ValueError(
+                f"Expected BVTS tensors for SyntheticTrainer (initial: 5D, targets: 5D), "
+                f"got initial.dim()={initial_state.dim()}, targets.dim()={rollout_targets.dim()}. "
+                "Ensure datasets and DataManager produce BVTS-shaped tensors [B,V,T,H,W]."
+            )
+
+        num_steps = rollout_targets.shape[2]
+
+        # BVTS autoregressive loop: current_state is [B, V, 1, H, W]
         with torch.amp.autocast(enabled=True, device_type=self.device.type):
             current_state = initial_state
             total_loss = 0.0
 
             for t in range(num_steps):
-                # Predict next state
+                # Predict next frame as BVTS [B, V, 1, H, W]
                 prediction = self.model(current_state)
-                target = rollout_targets[:, t]
 
-                # Accumulate loss
-                total_loss += self.loss_fn(prediction, target)
+                # prediction: [B, V, 1, H, W] -> squeeze time dim for comparison
+                pred_frame = prediction[:, :, 0]
 
+                # target frame: rollout_targets[:, :, t] -> [B, V, H, W]
+                target_frame = rollout_targets[:, :, t]
+
+                # Accumulate loss (compare per-channel tensors)
+                total_loss += self.loss_fn(pred_frame, target_frame)
+
+                # Next input is the predicted frame (keep as [B,V,1,H,W])
                 current_state = prediction
 
-            # Average over timesteps
-            avg_loss = total_loss / num_steps
-        
+            avg_loss = total_loss / float(num_steps)
+
         return avg_loss

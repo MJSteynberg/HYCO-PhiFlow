@@ -208,3 +208,8 @@ class BatchConcatenationConverter:
             )
 
         return True
+
+
+def make_batch_converter(field_metadata: Dict[str, FieldMetadata]) -> BatchConcatenationConverter:
+    """Factory helper returning a BatchConcatenationConverter instance."""
+    return BatchConcatenationConverter(field_metadata)

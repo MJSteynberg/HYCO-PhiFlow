@@ -302,9 +302,46 @@ class HybridTrainer(AbstractTrainer):
                 device=str(self.device),
                 batch_size=batch_size,
             )
-            
-            logger.debug(f"  Generated {len(inputs_tensor)} synthetic predictions")
-            return list(zip(inputs_tensor, targets_tensor))
+
+            # Normalization / validation: model.generate_predictions may return
+            # batched tensors or lists. We normalize to a list of (initial, target)
+            # tuples where each element is a CPU tensor in a compact layout that
+            # FieldDataset.set_augmented_predictions can accept (shapes like
+            # [C,1,H,W], [C,T,H,W] or [T,C,H,W]). This avoids fragile heuristics
+            # elsewhere in the pipeline.
+            normalized = []
+
+            # If model returned tensors (not lists), try to handle common layouts
+            if isinstance(inputs_tensor, torch.Tensor) and isinstance(targets_tensor, torch.Tensor):
+                # Common case: batched outputs [B, C, T, H, W] or [B, C, 1, H, W]
+                if inputs_tensor.dim() == 5 and targets_tensor.dim() == 5:
+                    B = inputs_tensor.shape[0]
+                    for i in range(B):
+                        init = inputs_tensor[i].detach().cpu()
+                        targ = targets_tensor[i].detach().cpu()
+                        # If time dim for init is >1, select only first timestep
+                        normalized.append((init, targ))
+                else:
+                    # Fallback: treat as single sample
+                    normalized.append((inputs_tensor.detach().cpu(), targets_tensor.detach().cpu()))
+
+            else:
+                # If lists were returned, coerce items to tensors on CPU
+                try:
+                    for a, b in zip(inputs_tensor, targets_tensor):
+                        a_t = a.detach().cpu() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
+                        b_t = b.detach().cpu() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
+                        normalized.append((a_t, b_t))
+                except Exception:
+                    # As a last resort, zip and cast
+                    for pair in zip(inputs_tensor, targets_tensor):
+                        a, b = pair
+                        a_t = a.detach().cpu() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
+                        b_t = b.detach().cpu() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
+                        normalized.append((a_t, b_t))
+
+            logger.debug(f"  Generated {len(normalized)} synthetic predictions")
+            return normalized
     
     # ==================== PHASE 4: PHYSICAL MODEL TRAINING ====================
     

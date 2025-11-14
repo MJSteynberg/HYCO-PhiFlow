@@ -65,18 +65,35 @@ class SyntheticModel(nn.Module, ABC):
         static fields, and adds the result to the input tensor `x`.
 
         Args:
-            x: Input tensor of shape [B, C, H, W], where C is the total
-               number of channels (dynamic and static).
+            x: Input tensor. Expected shape:
+               - BVTS: [B, V, T, H, W] where V==channels per-frame and T is time.
 
         Returns:
-            Output tensor of the same shape [B, C, H, W], representing the
+            Output tensor in BVTS layout [B, V, T, H, W] representing the
             next state.
         """
-        dynamic_out = self.net(x)
-        out = torch.empty_like(x)
-        out[:, self._dynamic_slice] = dynamic_out
-        out[:, self.num_dynamic_channels:] = x[:, self.num_dynamic_channels:]
-        return out
+        # Handle BVTS input: [B, V, T, H, W]
+        if x.dim() == 5:
+            B, V, T, H, W = x.shape
+
+            # Move time into batch: [B*T, V, H, W]
+            reshaped_in = x.permute(0, 2, 1, 3, 4).reshape(B * T, V, H, W)
+
+            # Run through network which expects [batch, channels, H, W]
+            dynamic_out = self.net(reshaped_in)
+
+            # dynamic_out: [B*T, num_dynamic_channels, H, W]
+            out_frames = torch.empty_like(reshaped_in)
+            out_frames[:, self._dynamic_slice] = dynamic_out
+            out_frames[:, self.num_dynamic_channels:] = reshaped_in[ : , self.num_dynamic_channels:]
+
+            # Reshape back to BVTS: [B, V, T, H, W]
+            out = out_frames.reshape(B, T, V, H, W).permute(0, 2, 1, 3, 4).contiguous()
+            return out
+        # Enforce BVTS-only inputs for the migrated codebase.
+        raise ValueError(
+            f"SyntheticModel.forward expects BVTS-shaped inputs [B,V,T,H,W]; got tensor with dim={x.dim()}"
+        )
 
 
     @torch.no_grad()
@@ -151,7 +168,11 @@ class SyntheticModel(nn.Module, ABC):
         # Return only the filled prefix in case num_generate was not perfectly
         # filled by the loader (due to rounding or selection).
         self.logger.debug(f"generate_predictions: actually generated {idx} samples (requested {num_generate})")
-        return all_inputs[:idx], all_predictions[:idx]
+
+        # Normalize outputs to CPU, detached tensors. Returning CPU tensors
+        # simplifies downstream code (HybridTrainer / FieldDataset) which
+        # expects to receive CPU-side tensors that it can further process.
+        return all_inputs[:idx].detach().cpu(), all_predictions[:idx].detach().cpu()
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):
