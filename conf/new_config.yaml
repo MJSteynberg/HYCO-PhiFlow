@@ -1,0 +1,59 @@
+data:
+  data_dir: 'data/'
+  dset_name: 'advection'
+  fields: ['density', 'velocity']
+  fields_scheme: 'dvv'
+  fields_type: 'DSS'
+  num_simulations: 10
+  total_steps: 100
+  # Removed batch size and saved interval since they should not be required.
+
+model:
+  physical:
+    name: 'AdvectionModel'
+    domain: 
+      size_x: 100
+      size_y: 100
+    resolution:
+      x: 128
+      y: 128
+    dt: 0.5
+    pde_params:
+      advection_coeff: 1.0
+    # Removed fields, fields_scheme, and fields_type since they are now specified in data.
+  synthetic:
+    name: 'UNet'
+    model_path: 'models/synthetic_model.pth' # model_path and model_save_path should be the same ad only known as model_path
+    architecture: 
+      levels: 4
+      filters: 64
+      batch_norm: true
+
+trainer:
+  batch_size: 32 # This is now the batch size for all models
+  rollout_steps: 4 # This is now the num_predict_steps for all models
+  train_sim: [1]
+  device: 'cuda:0'
+  physical: 
+    epochs: 1 # If used in hybrid mode, this is the number of epochs per cycle
+    learnable_parameters:
+      - name: 'advection_coeff'
+        initial_guess: 0.5
+    method: 'L-BFGS-B'
+    abs_tol: 1e-4
+    max_iterations: 5
+  # Print freq and checkpoint freq removed
+  synthetic:
+    epochs: 10
+    learning_rate: 0.0001
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  # Validation things removed as well as checkpoint and print freq
+  hybrid:
+    cycles: 10 # Number of hybrid training cycles
+    warmup: 5 # Number of initial synthetic training epochs before hybrid cycle. Replaces warmup_synthetic_epochs
+    data_access: 'both' # Options: 'real_only', 'synthetic_only', 'both'
+    augmentation:
+      alpha: 0.1
+      

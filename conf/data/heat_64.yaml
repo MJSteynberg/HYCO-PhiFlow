@@ -1,7 +1,0 @@
-data_dir: 'data/'
-dset_name: 'heat_64'
-fields: ['temp']
-fields_scheme: 't'
-cache_dir: 'data/cache'
-validate_cache: true
-auto_clear_invalid: true

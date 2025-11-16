@@ -3,5 +3,4 @@ dset_name: 'smoke_256'
 fields: ['density', 'velocity', 'inflow']
 fields_scheme: 'dVVi'
 cache_dir: 'data/cache'
-validate_cache: true
-auto_clear_invalid: true
+

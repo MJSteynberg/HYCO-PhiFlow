@@ -38,6 +38,97 @@ Plan — high-level phases
    - Draft YAML examples and typed dataclasses for each area.
    - Decide on the strategy for environment variables, sensitive secrets, and optional components.
 
+   Simplified Configuration Strategy (reduce file count)
+   --------------------------------------------------
+
+   Goal: reduce the number of YAML files while keeping flexibility for overrides and readability. This will lower cognitive burden and make the repository easier to maintain.
+
+   Key ideas:
+   - Use a single monolithic `conf/config.yaml` as the canonical config for default values, organized into top-level sections: `data`, `model`, `trainer`, `generation`, `evaluation`, `logging`.
+   - Keep `conf/defaults.yaml` minimal; it points to `conf/config.yaml` and optionally a small `conf/experiments.yaml` that maps named experiments to particular `config` top-level keys.
+   - Keep a limited number of optional group files only when they're necessary to support Hydra-style overrides (e.g., `conf/experiments/*.yaml` with only a handful of variants), but prefer nested keys inside the monolithic config for variant selection.
+   - Use typed dataclasses to map nested YAML sections (Hydra structured config) and allow users to override nested keys with e.g. `python run.py +model.hidden_size=128` without needing per-file configs.
+
+   Pros:
+   - Fewer files makes discovery easier and simplifies maintenance.
+   - Easier to keep defaults in one place and keep versioned changes in a single file.
+   - Still supports overrides and variant-based selection via a compact mapping file.
+
+   Cons / Trade-offs:
+   - Hydra’s group/file system is less used; selecting variants via `python run.py experiment=advection` will require mapping support in `conf/experiments.yaml` or in code.
+   - Large `config.yaml` can become unwieldy if truly massive; adopt clear top-level sections and keep comments per section to mitigate.
+
+   Simplified layout proposal:
+   - `conf/defaults.yaml` -> minimal Hydra defaults, e.g.:
+      - defaults:
+            - _self_:
+                  - config: config
+            - experiment: default
+   - `conf/config.yaml` -> monolithic defaults with sections for `data`, `model`, `trainer`, etc.
+   - `conf/experiments.yaml` -> small mapping of experiment names to values under the monolithic `config` (not separate files per experiment)
+   - `conf/secrets.template.yaml` -> template for secrets only (never committed with values)
+
+   Example `conf/config.yaml` snippet (minimal):
+   ```yaml
+   data:
+      name: advection_128
+      batch_size: 16
+      path: data/advection_128
+
+   model:
+      architecture: unet
+      hidden_size: 64
+      num_layers: 4
+
+   trainer:
+      optimizer: adam
+      lr: 1e-3
+      epochs: 100
+
+   logging:
+      level: INFO
+      save_dir: outputs/
+
+   evaluation:
+      metrics: [mse]
+   ```
+
+   `conf/experiments.yaml` (small):
+   ```yaml
+   default:
+      data:
+         name: advection_128
+         path: data/advection_128
+      trainer:
+         lr: 1e-3
+
+   advection_fast:
+      data:
+         name: advection_128
+         batch_size: 32
+      trainer:
+         lr: 5e-4
+   ```
+
+   Migration approach for reduced file count:
+   - Add a script `scripts/consolidate-configs.py` to:
+      1. Load all files in `conf/` (existing structure).
+      2. Produce a merged `conf/config.yaml` with nested sections mapping dataset and variant keys.
+      3. Produce `conf/experiments.yaml` as a mapping of experiment names to small patches.
+      4. Create a `--dry-run` option so maintainers can review changes.
+   - Keep compatibility: when reading configs, support both monolithic `config.yaml` and the old style. Add deprecation warnings in logs.
+
+   Implementation details and small utility additions:
+   - Provide a helper `src/config/utils.py` with `load_config` and `map_legacy_keys(config)`.
+   - Add a `scripts/inventory-configs.py` tool that prints YAML keys and their usage locations, so we can decide how to consolidate safely.
+
+   Acceptance criteria specific to simplified layout:
+   - Number of config files under `conf/` is reduced by at least 50% (or down to a small, agreed-upon set).
+   - `conf/config.yaml` contains everything needed to run `run.py` by default.
+   - `conf/experiments.yaml` contains named experiment patches for reproducibility.
+   - All tests and scripts can load either monolithic configs or legacy grouped YAML with warnings.
+
+
 3. Implement typed configs & validation (2-4 days)
    - Add a `dataclasses`/`pydantic` module to define typed configs.
    - Add Hydra config group files referencing the typed configs.
@@ -125,3 +216,15 @@ Notes
 - If you prefer Pydantic over dataclasses, it can also be used, but please ensure consistent representation.
 
 That's the plan. If you'd like, I can begin by performing the inventory step (creating a script and listing all config files and their YAML keys) and generate the first PR with typed dataclasses; tell me if that's the next immediate action you want.
+
+Progress — scripts and inventory
+-------------------------------
+- Implemented an inventory script at `scripts/inventory-configs.py` that prints top-level and nested keys from YAML files under `conf/`.
+- Implemented a consolidation script at `scripts/consolidate-configs.py` that merges grouped YAMLs into a monolithic `config_new.yaml` and `experiments_new.yaml` with a dry-run option.
+- Both scripts should be run inside the project's `phi-env` conda environment (to ensure required dependencies like PyYAML are available):
+   - `conda activate phi-env`
+   - `python scripts/inventory-configs.py --path conf/ --format text`
+   - `python scripts/consolidate-configs.py --path conf/ --out-dir conf/ --dry-run`
+
+Next suggested action
+- If you like the proposed consolidation, we can safely write `conf/config_new.yaml` and `conf/experiments_new.yaml` by running the consolidation script without `--dry-run` and `--overwrite` to confirm; then adopt them as `conf/config.yaml` and `conf/experiments.yaml` after a small verification step and commit.
