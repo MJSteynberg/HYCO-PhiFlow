@@ -2,9 +2,9 @@
 FieldDataset - Refactored for Synthetic Prediction Augmentation
 
 Key Changes:
-- Augmented data = synthetically-generated predictions (pre-windowed)
-- Predictions stored as pre-converted Fields (no repeated conversion)
-- _get_augmented_sample() returns pre-windowed Field pairs
+- Augmented data = synthetically-generated prediction trajectories
+- Trajectories stored in cache format: {'tensor_data': {field: [C, T, H, W]}}
+- _get_augmented_sample() applies windowing to trajectories
 - Clear distinction maintained between real and synthetically-generated data
 """
 
@@ -16,8 +16,7 @@ from phi.torch.flow import *
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
-from src.utils.field_conversion import FieldMetadata, make_converter, make_batch_converter
-from src.utils.field_conversion.validation import assert_bvts_format, BVTSValidationError
+from src.utils.field_conversion import FieldMetadata
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,9 +26,9 @@ class FieldDataset(AbstractDataset):
     """
     PyTorch Dataset that returns PhiFlow Fields for physical training.
     
-    Augmentation source: Synthetically-generated predictions
-    - Stored as pre-converted Field pairs (initial_fields, target_fields)
-    - Already windowed (no windowing needed)
+    Augmentation source: Synthetically-generated prediction trajectories
+    - Stored as cache-format dicts: {'tensor_data': {field: [C, T, H, W]}}
+    - Windowed on-the-fly during access
     - Remain distinguishable via _is_augmented_prediction()
     """
     
@@ -47,6 +46,7 @@ class FieldDataset(AbstractDataset):
     ):
         """Initialize FieldDataset."""
         self._field_metadata_cache = None
+        self._num_augmented_trajectories = 0
         
         logger.debug("Setting up FieldDataset...")
         num_frames, num_real, augmented_samples, index_mapper = self._setup_dataset(
@@ -106,10 +106,7 @@ class FieldDataset(AbstractDataset):
             raw_samples = AugmentationHandler.load_augmentation(
                 augmentation_config, num_real, num_predict_steps, field_names
             )
-            # Process samples if needed
-            augmented_samples = [
-                self._process_augmented_sample(sample) for sample in raw_samples
-            ]
+            augmented_samples = raw_samples  # Already in correct format
         
         return num_frames, num_real, augmented_samples, index_mapper
     
@@ -147,19 +144,20 @@ class FieldDataset(AbstractDataset):
         """
         sim_idx, start_frame = self._compute_sim_and_frame(idx)
         data = self._cached_load_simulation(sim_idx)
-        # convert to cuda This is temporary!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
+        # Move to GPU if needed (temporary)
         for name in data["tensor_data"]:
             data["tensor_data"][name] = data["tensor_data"][name].to("cuda")
 
         # Reconstruct field metadata
         field_metadata = self._reconstruct_metadata(data)
         
-        # Convert initial state
+        # Convert initial state (single frame)
         initial_fields = self._tensors_to_fields(
             data, field_metadata, start_frame, start_frame + 1
         )
-        initial_fields = {name: fields[0] for name, fields in initial_fields.items()}
-        # Convert target rollout
+        
+        # Convert target rollout (multiple frames)
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
         target_fields = self._tensors_to_fields(
@@ -172,7 +170,8 @@ class FieldDataset(AbstractDataset):
         """
         Get a synthetically-generated prediction sample.
         
-        These are already in Field format and pre-windowed, so just return directly.
+        UPDATED: Now handles trajectory format with windowing.
+        Trajectories are stored as cache-format dicts that can be indexed.
         
         Args:
             idx: Index within augmented samples
@@ -180,138 +179,130 @@ class FieldDataset(AbstractDataset):
         Returns:
             Tuple of (initial_fields, target_fields) as Fields
         """
-        sim_idx, start_frame = self._compute_sim_and_frame(idx)
-        data = self.augmented_samples[sim_idx]
+        # Compute which trajectory and which window within that trajectory
+        samples_per_traj = self.num_frames - self.num_predict_steps
+        if samples_per_traj <= 0:
+            raise ValueError(
+                f"Invalid configuration: num_frames={self.num_frames} must be > "
+                f"num_predict_steps={self.num_predict_steps}"
+            )
+        
+        traj_idx = idx // samples_per_traj
+        window_start = idx % samples_per_traj
+        
+        if traj_idx >= self._num_augmented_trajectories:
+            raise IndexError(
+                f"Augmented index {idx} out of range "
+                f"(trajectory {traj_idx} >= {self._num_augmented_trajectories})"
+            )
+        
+        # Get the trajectory data (in cache format)
+        trajectory_data = self.augmented_samples[traj_idx]
+        
+        # Extract tensor_data
+        if isinstance(trajectory_data, dict) and 'tensor_data' in trajectory_data:
+            tensor_data = trajectory_data['tensor_data']
+        else:
+            # Assume it's already tensor_data
+            tensor_data = trajectory_data
+        
+        # Move to GPU if needed (temporary)
+        for field_name in self.field_names:
+            if isinstance(tensor_data[field_name], torch.Tensor):
+                tensor_data[field_name] = tensor_data[field_name].to("cuda")
+        
+        # Get field metadata for conversion
         field_metadata = self._get_field_metadata()
-        print(data[0].shape, data[1].shape)
-        # Convert initial state
+        
+        # Convert windowed portion to Fields
+        # tensor_data format: {field_name: tensor[C, T, H, W]}
+        
+        # Extract initial state (single frame at window_start)
         initial_fields = self._tensors_to_fields(
-            data, field_metadata, start_frame, start_frame + 1
+            trajectory_data,
+            field_metadata,
+            window_start,
+            window_start + 1
         )
-        initial_fields = {name: fields[0] for name, fields in initial_fields.items()}
-        # Convert target rollout
-        target_start = start_frame + 1
-        target_end = start_frame + 1 + self.num_predict_steps
+        # Extract target trajectory
+        target_start = window_start + 1
+        target_end = window_start + 1 + self.num_predict_steps
         target_fields = self._tensors_to_fields(
-            data, field_metadata, target_start, target_end
+            trajectory_data,
+            field_metadata,
+            target_start,
+            target_end
         )
-
+        
         return initial_fields, target_fields
+
     # ==================== Augmentation Management ====================
 
-    def set_augmented_predictions(
+    def set_augmented_trajectories(
         self,
-        tensor_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
+        trajectory_rollouts: List[Dict[str, torch.Tensor]]
     ):
         """
-        Set augmented predictions with pre-conversion to Fields.
+        Set augmented data from synthetically-generated prediction trajectories.
         
-        Converts all tensor predictions to Fields in a single batch operation,
-        eliminating repeated conversions on every dataset access.
-        
-        Args:
-            tensor_predictions: List of (initial_tensor, target_tensor) tuples
-        """
-        # Store converted Fields
-
-        self.augmented_samples = tensor_predictions
-        self.num_augmented = len(tensor_predictions)
-        self._total_length = self._compute_length()
-        
-        logger.debug(f"Set {self.num_augmented} augmented predictions (as Fields)")
-
-    def _set_augmented_predictions(
-        self,
-        tensor_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
-    ):
-        """
-        Set augmented predictions with pre-conversion to Fields.
-        
-        Converts all tensor predictions to Fields in a single batch operation,
-        eliminating repeated conversions on every dataset access.
+        NEW BEHAVIOR:
+        - Input: List of cache-format dicts with tensor trajectories
+        - Format: [{'tensor_data': {field_name: tensor[C, T, H, W]}}]
+        - Trajectories can be windowed using the same indexing logic
         
         Args:
-            tensor_predictions: List of (initial_tensor, target_tensor) tuples
+            trajectory_rollouts: List of trajectory dicts in cache format
         """
-
-        if not tensor_predictions:
+        if not trajectory_rollouts:
             self.augmented_samples = []
             self.num_augmented = 0
+            self._num_augmented_trajectories = 0
             self._total_length = self._compute_length()
             return
         
-        logger.debug(f"Converting {len(tensor_predictions)} synthetic predictions to Fields...")
+        logger.debug(f"Setting {len(trajectory_rollouts)} synthetic prediction trajectories...")
         
-        # Get field metadata and create batch converter ONCE
-        field_metadata = self._get_field_metadata()
-        # Convert all predictions
-        field_predictions = []
-        for idx, (initial_tensor, target_tensor) in enumerate(tensor_predictions):
-            if idx % 50 == 0 and idx > 0:
-                logger.debug(f"  Converted {idx}/{len(tensor_predictions)} predictions...")
-
-
-            fields = self._convert_tensor_to_fields_optimized(
-                initial_tensor, target_tensor, field_metadata
+        # Store trajectories directly (already in cache format)
+        self.augmented_samples = trajectory_rollouts
+        self._num_augmented_trajectories = len(trajectory_rollouts)
+        
+        # Calculate total augmented samples (with windowing)
+        # Each trajectory of length T can produce (T - num_predict_steps) windows
+        first_traj = trajectory_rollouts[0]
+        
+        # Extract tensor_data to check trajectory length
+        if isinstance(first_traj, dict) and 'tensor_data' in first_traj:
+            first_field = list(first_traj['tensor_data'].values())[0]
+        else:
+            first_field = list(first_traj.values())[0]
+        
+        traj_length = first_field.shape[1]  # T dimension in [C, T, H, W]
+        
+        samples_per_trajectory = traj_length - self.num_predict_steps
+        if samples_per_trajectory <= 0:
+            logger.warning(
+                f"Trajectory length {traj_length} too short for "
+                f"num_predict_steps={self.num_predict_steps}"
             )
-            field_predictions.append(fields)
-        # Store converted Fields
-        self.augmented_samples = field_predictions
-        self.num_augmented = len(field_predictions)
+            self.num_augmented = 0
+        else:
+            self.num_augmented = self._num_augmented_trajectories * samples_per_trajectory
+        
+        # Recompute total length
         self._total_length = self._compute_length()
         
-        logger.debug(f"Set {self.num_augmented} augmented predictions (as Fields)")
+        logger.debug(
+            f"Set {self._num_augmented_trajectories} synthetic trajectories "
+            f"({self.num_augmented} windowed samples, {samples_per_trajectory} per trajectory)"
+        )
 
-    def _normalize_prediction_tensors(self, initial_tensor: torch.Tensor, target_tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Lightweight normalization for incoming synthetic prediction tensors.
-
-        This harmonizes a few common layouts produced by generators so the
-        deterministic converter can interpret them. We avoid heavy logic here
-        because `_convert_tensor_to_fields_optimized` performs strict checks.
-        """
-        # If provided as [B, C, T, H, W] with batch=1, drop the sim-batch
-        if initial_tensor is not None and isinstance(initial_tensor, torch.Tensor):
-            if initial_tensor.dim() == 5 and initial_tensor.shape[0] == 1:
-                initial_tensor = initial_tensor.squeeze(0)
-
-        if target_tensor is not None and isinstance(target_tensor, torch.Tensor):
-            if target_tensor.dim() == 5 and target_tensor.shape[0] == 1:
-                target_tensor = target_tensor.squeeze(0)
-
-        return initial_tensor, target_tensor
-
-    def clear_augmented_predictions(self):
-        """Clear all augmented predictions."""
+    def clear_augmented_trajectories(self):
+        """Clear all augmented trajectories."""
         self.augmented_samples = []
         self.num_augmented = 0
+        self._num_augmented_trajectories = 0
         self._total_length = self._compute_length()
-        logger.debug("Cleared augmented predictions")
-
-    def _convert_tensor_to_fields_optimized(
-        self,
-        input_tensor: torch.Tensor,
-        target_tensor: torch.Tensor,
-        field_metadata: Dict
-    ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
-        """
-        Optimized conversion using pre-created batch_converter.
-        
-        Args:
-            input_tensor: Initial state [C_all, H, W]
-            target_tensor: Target states [T, C_all, H, W]
-            batch_converter: Pre-created batch converter (reused)
-            field_metadata: Pre-fetched field metadata (reused)
-        
-        Returns:
-            Tuple of (initial_fields, target_fields)
-        """
-        print(input_tensor.shape, target_tensor.shape)
-
-        initial_tensor = math.tensor(input_tensor, channel("vector"), batch("time"),  spatial(*field_metadata.spatial_dims))
-        target_tensor = math.tensor(target_tensor, channel("vector"), batch("time"), spatial(*field_metadata.spatial_dims))
-        initiel_field = CenteredGrid(initial_tensor, field_metadata.extrapolation, bounds=field_metadata.domain)
-        target_field = CenteredGrid(target_tensor, field_metadata.extrapolation, bounds=field_metadata.domain)
-        return 
+        logger.debug("Cleared augmented trajectories")
 
     # ==================== Helper Methods ====================
     
@@ -347,20 +338,15 @@ class FieldDataset(AbstractDataset):
             sample_tensor = data["tensor_data"][name]
             tensor_shape = sample_tensor.shape
             spatial_dims = meta["spatial_dims"]
-            # Determine spatial offset depending on tensor layout:
-            # BVTS: [B, C, T, H, W] -> spatial starts at index 3
-            # Per-field 4D (no batch) [C, T, H, W] -> spatial starts at index 2
-            # Single-frame: [C, H, W] -> spatial starts at index 1
+            
+            # Determine spatial offset depending on tensor layout
             if isinstance(sample_tensor, torch.Tensor):
-                if sample_tensor.dim() == 5:
-                    spatial_offset = 3
-                elif sample_tensor.dim() == 4:
-                    spatial_offset = 2
+                if sample_tensor.dim() == 4:
+                    spatial_offset = 2  # [C, T, H, W]
                 elif sample_tensor.dim() == 3:
-                    spatial_offset = 1
+                    spatial_offset = 1  # [C, H, W]
                 else:
-                    # Fallback: assume spatial begins at index 2
-                    spatial_offset = 2
+                    spatial_offset = 2  # Fallback
             else:
                 spatial_offset = 2
 
@@ -381,27 +367,109 @@ class FieldDataset(AbstractDataset):
         field_metadata: Dict[str, FieldMetadata],
         start_frame: int,
         end_frame: int
-    ) -> Dict[str, List[Field]]:
-        """Convert per-sample tensors [V, T, H, W] to Fields."""
+    ) -> Dict[str, Field]:
+        """
+        Convert windowed tensors to Fields.
+        
+        Args:
+            data: Data dict with 'tensor_data'
+            field_metadata: Metadata for reconstruction
+            start_frame: Start of time window
+            end_frame: End of time window (exclusive)
+            
+        Returns:
+            Dict mapping field names to Field objects
+        """
         fields_dict = {}
         
         for name in self.field_names:
-            sample_tensor = data["tensor_data"][name]  # [V, T, H, W]
+            sample_tensor = data["tensor_data"][name]  # [C, T, H, W]
             
             # Validate shape
             assert sample_tensor.dim() == 4, \
-                f"Expected per-sample [V, T, H, W], got {sample_tensor.shape}"
+                f"Expected tensor [C, T, H, W], got {sample_tensor.shape}"
             
             # Slice time window
             field_meta = field_metadata[name]
-            window_tensor = math.tensor(sample_tensor[:, start_frame:end_frame, :, :], channel("vector"), batch("time"), spatial(*field_meta.spatial_dims))  # [V, T_window, H, W]
-            window_field = CenteredGrid(window_tensor, field_meta.extrapolation, bounds=field_meta.domain)
+            window_tensor = sample_tensor[:, start_frame:end_frame, :, :]  # [C, T_window, H, W]
             
-
-            logger.debug(f"FieldDataset._tensors_to_fields: field '{name}' window shape: {window_tensor}")
+            # Create PhiML tensor with explicit dimensions
+            phiml_tensor = math.tensor(
+                window_tensor, 
+                channel("vector"), 
+                batch("time"), 
+                spatial(*field_meta.spatial_dims)
+            )
+            
+            # Create Field
+            window_field = CenteredGrid(
+                phiml_tensor, 
+                field_meta.extrapolation, 
+                bounds=field_meta.domain
+            )
+            
             fields_dict[name] = window_field
         
         return fields_dict
+        
+    def _tensor_to_field_single(
+        self,
+        tensor: torch.Tensor,
+        metadata: FieldMetadata
+    ) -> Field:
+        """
+        Convert single-frame tensor to Field.
+        
+        Args:
+            tensor: Tensor [C, 1, H, W]
+            metadata: Field metadata
+            
+        Returns:
+            Field object
+        """  # [C, H, W]
+        
+        # Create PhiML tensor with explicit dimensions
+        phiml_tensor = math.tensor(
+            tensor,
+            channel("vector"),
+            batch("time"),
+            spatial(*metadata.spatial_dims)
+        )
+        
+        # Create Field
+        return CenteredGrid(
+            phiml_tensor,
+            metadata.extrapolation,
+            bounds=metadata.domain
+        )
+
+    def _tensor_to_field_sequence(
+        self,
+        tensor: torch.Tensor,
+        metadata: FieldMetadata
+    ) -> List[Field]:
+        """
+        Convert multi-frame tensor to list of Fields.
+        
+        Args:
+            tensor: Tensor [C, T, H, W]
+            metadata: Field metadata
+            
+        Returns:
+            List of Field objects, one per timestep
+        """
+        phiml_tensor = math.tensor(
+            tensor,
+            channel("vector"),
+            batch("time"),
+            spatial(*metadata.spatial_dims)
+        )
+
+        return CenteredGrid(
+            phiml_tensor,
+            metadata.extrapolation,
+            bounds=metadata.domain
+        )
         
     def _get_field_metadata(self) -> Dict[str, FieldMetadata]:
         """Get field metadata (cached)."""

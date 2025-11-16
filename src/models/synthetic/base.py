@@ -1,7 +1,7 @@
 # In src/models/synthetic/base.py
 
 from abc import ABC
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import torch.nn as nn
 import torch
@@ -99,83 +99,90 @@ class SyntheticModel(nn.Module, ABC):
         return out
 
 
+    # In src/models/synthetic/base.py
+
     @torch.no_grad()
     def generate_predictions(
         self,
-        real_dataset,
-        alpha: float,
+        trajectories: List[Dict[str, torch.Tensor]],
         device: str = "cuda",
-        batch_size: int = 32,
+        batch_size: int = 1,
     ):
         """
-        OPTIMIZED: Pre-allocate tensors, avoid list appends.
+        Generate one-step predictions from physical model trajectories.
+        
+        NEW BEHAVIOR:
+        - Takes physical trajectories directly (not through dataset)
+        - For each trajectory, generates one-step predictions autoregressively
+        - Returns as trajectory format: [initial_real, pred_from_real, pred_from_pred, ...]
+        - This allows the same windowing logic via indexing
+        
+        Args:
+            trajectories: List of trajectory dicts in cache format
+                        Format: [{'tensor_data': {field_name: tensor[C, T, H, W]}}]
+            device: Device to run predictions on
+            batch_size: Batch size for inference (currently unused, could batch multiple trajectories)
+            
+        Returns:
+            List of prediction trajectories in BVTS format [1, V, T, H, W]
         """
         self.eval()
         self.to(device)
-
-        # If dataset exposes `num_augmented` and it is > 0, prefer that.
-        num_augmented = getattr(real_dataset, 'num_augmented', 0)
-        num_generate = int(num_augmented)
-
-        if num_generate == 0:
-            self.logger.warning("Alpha too small, no samples will be generated")
-            return torch.empty(0), torch.empty(0)
-
-        # Get sample shape
-        sample_input, _ = real_dataset[0]
-        input_shape = sample_input.shape
-
-        # PRE-ALLOCATE full tensors (MUCH FASTER!)
-        all_inputs = torch.empty(
-            num_generate, *input_shape, 
-            dtype=sample_input.dtype, 
-            device=device
-        )
-        all_predictions = torch.empty(
-            num_generate, *input_shape,
-            dtype=sample_input.dtype,
-            device=device
-        )
-
-        # Select diverse indices. If augmented samples are present, we want to
-        # select indices only from the augmented-region of the dataset so the
-        # synthetic predictions correspond to physically-generated trajectories.
-        total_aug = num_augmented
-        aug_start = len(real_dataset) - total_aug
-        indices = [aug_start + i for i in range(total_aug)]
-
-        subset = torch.utils.data.Subset(real_dataset, indices)
         
-        # Enable pin_memory for faster transfer
-        loader = DataLoader(
-            subset, 
-            batch_size=batch_size, 
-            shuffle=False,
-            pin_memory=(device != 'cpu'),
-            num_workers=0  # Can be increased if data loading is bottleneck
-        )
-        idx = 0
-        for batch_inputs, _ in loader:
-            batch_size_actual = batch_inputs.size(0)
+        if not trajectories:
+            self.logger.warning("No trajectories provided for prediction generation")
+            return []
+        
+        self.logger.debug(f"Generating predictions from {len(trajectories)} physical trajectories")
+        
+        prediction_trajectories = []
+        
+        for traj_idx, trajectory_dict in enumerate(trajectories):
+            # Extract tensor_data from cache format
+            if isinstance(trajectory_dict, dict) and 'tensor_data' in trajectory_dict:
+                tensor_data = trajectory_dict['tensor_data']
+            else:
+                tensor_data = trajectory_dict
             
-            # Non-blocking transfer for async GPU copy
-            batch_inputs = batch_inputs.to(device, non_blocking=True)
-            batch_predictions = self(batch_inputs)
-
-            # Direct copy to pre-allocated tensor
-            all_inputs[idx:idx + batch_size_actual] = batch_inputs
-            all_predictions[idx:idx + batch_size_actual] = batch_predictions
+            # Concatenate all fields along channel dimension
+            # Each field: [C, T, H, W]
+            field_tensors = [tensor_data[field_name] for field_name in sorted(tensor_data.keys())]
+            full_trajectory = torch.cat(field_tensors, dim=0)  # [C_all, T, H, W]
             
-            idx += batch_size_actual
-
-        # Return only the filled prefix in case num_generate was not perfectly
-        # filled by the loader (due to rounding or selection).
-        self.logger.debug(f"generate_predictions: actually generated {idx} samples (requested {num_generate})")
-
-        # Normalize outputs to CPU, detached tensors. Returning CPU tensors
-        # simplifies downstream code (HybridTrainer / FieldDataset) which
-        # expects to receive CPU-side tensors that it can further process.
-        return all_inputs[:idx].detach(), all_predictions[:idx].detach()
+            # Move to device
+            full_trajectory = full_trajectory.to(device, non_blocking=True)
+            
+            # Get trajectory length
+            num_steps = full_trajectory.shape[1]  # T dimension
+            
+            # Extract real initial condition (first frame)
+            initial_real = full_trajectory[:, 0:1, :, :]  # [C_all, 1, H, W]
+            # Build prediction trajectory: [initial_real, pred1, pred2, ...]
+            trajectory_frames = [initial_real]  # Start with real initial [C_all, H, W]
+            current_state = initial_real # [1, C_all, 1, H, W]
+            
+            with torch.amp.autocast(enabled=True, device_type=device):
+                # Generate predictions for remaining timesteps
+                for t in range(1, num_steps):
+                    # One-step prediction
+                    next_state = self(current_state.unsqueeze(0)).squeeze(0) # [C_all, 1, H, W]
+                    # Store prediction (squeeze time dim)
+                    trajectory_frames.append(next_state)  # [C_all, H, W]
+                    
+                    # Use prediction as next input
+                    current_state = full_trajectory[:, t:t+1, :, :]  # Teacher forcing with real data
+            
+            # Stack into trajectory: [T, C_all, H, W]
+            trajectory_tensor = torch.cat(trajectory_frames, dim=1)
+            # Store as CPU tensor
+            prediction_trajectories.append(trajectory_tensor.cpu())
+            
+            if (traj_idx + 1) % 50 == 0:
+                self.logger.debug(f"  Generated {traj_idx + 1}/{len(trajectories)} predictions")
+        
+        self.logger.debug(f"Generated {len(prediction_trajectories)} prediction trajectories")
+        
+        return prediction_trajectories
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):

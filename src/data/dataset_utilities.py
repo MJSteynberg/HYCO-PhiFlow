@@ -469,23 +469,16 @@ def field_collate_fn(field_batch: List[Tuple[Dict[str, Field], Dict[str, List[Fi
         (batched_initial, batched_targets) with batch dimension in Fields
     """
 
-    logger.info(f"Device field_collate_fn: batching {field_batch} ")
-    initial_fields_list, target_fields_list = zip(*field_batch)
+    initial_fields, target_fields = zip(*field_batch)
     
     # Stack initial fields
-    field_names = initial_fields_list[0].keys()
+    field_names = initial_fields[0].keys()
     stacked_initial = {}
-    for name in field_names:
-        fields_to_stack = [sample[name] for sample in initial_fields_list]
-        stacked_initial[name] = stack(fields_to_stack, batch('batch'))
-    
-    # Stack target sequences
     stacked_targets = {}
     for name in field_names:
-        sample_sequences = []
-        for sample_targets in target_fields_list:
-            time_stacked = stack(sample_targets[name], batch('time'))
-            sample_sequences.append(time_stacked)
-        stacked_targets[name] = stack(sample_sequences, batch('batch'))
-    
+        initial = [sample[name] for sample in initial_fields]
+        targets = [sample[name] for sample in target_fields]
+        stacked_initial[name] = stack(initial, batch('batch'))
+        stacked_targets[name] = stack(targets, batch('batch'))
+  
     return stacked_initial, stacked_targets

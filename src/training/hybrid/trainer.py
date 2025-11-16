@@ -282,88 +282,100 @@ class HybridTrainer(AbstractTrainer):
     
     # ==================== PHASE 3: SYNTHETIC PREDICTION GENERATION ====================
     
-    def _generate_synthetic_predictions(self) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+# In src/training/hybrid/trainer.py
+# Update the _generate_synthetic_predictions method
+
+# In src/training/hybrid/trainer.py
+# Update the _generate_synthetic_predictions method
+
+    def _generate_synthetic_predictions(self) -> List[torch.Tensor]:
         """
-        Generate windowed synthetic predictions as tensors.
+        Generate windowed synthetic predictions as trajectories.
+        
+        NEW BEHAVIOR:
+        - Passes physical trajectories directly to synthetic model
+        - No dataset indexing involved - uses raw augmented_samples
+        - Returns trajectories in BVTS format that can be windowed
+        - Format: [1, V, T, H, W] where T is trajectory length
         
         Returns:
-            List of (initial_state, targets) tuples
+            List of prediction trajectory tensors in BVTS format
         """
         with self.managed_memory_phase("Synthetic Prediction"):
             self.synthetic_model.to(self.device)
             self.synthetic_model.eval()
             
-            batch_size = self.trainer_config["batch_size"]
+            # Get physical trajectories directly from TensorDataset
+            # These are stored in augmented_samples as cache-format dicts
+            physical_trajectories = self._base_tensor_dataset.augmented_samples
+            
+            if not physical_trajectories:
+                logger.warning("No physical trajectories available for synthetic prediction")
+                return []
+            
+            logger.debug(f"  Using {len(physical_trajectories)} physical trajectories as input")
             
             # Use model's built-in generation method
-            inputs_tensor, targets_tensor = self.synthetic_model.generate_predictions(
-                real_dataset=self._base_tensor_dataset,
-                alpha=self.alpha,
+            # Pass trajectories directly, not through dataset indexing
+            prediction_trajectories = self.synthetic_model.generate_predictions(
+                trajectories=physical_trajectories,
                 device=str(self.device),
-                batch_size=batch_size,
+                batch_size=1,  # Could batch multiple trajectories if needed
             )
-            # Normalization / validation: model.generate_predictions may return
-            # batched tensors or lists. We normalize to a list of (initial, target)
-            # tuples where each element is a CPU tensor in a compact layout that
-            # FieldDataset.set_augmented_predictions can accept (shapes like
-            # [C,1,H,W], [C,T,H,W] or [T,C,H,W]). This avoids fragile heuristics
-            # elsewhere in the pipeline.
-            normalized = []
+            
+            logger.debug(f"  Generated {len(prediction_trajectories)} synthetic prediction trajectories")
+            return prediction_trajectories
 
-            # If model returned tensors (not lists), try to handle common layouts
-            if isinstance(inputs_tensor, torch.Tensor) and isinstance(targets_tensor, torch.Tensor):
-                # Common case: batched outputs [B, C, T, H, W] or [B, C, 1, H, W]
-                if inputs_tensor.dim() == 5 and targets_tensor.dim() == 5:
-                    B = inputs_tensor.shape[0]
-                    for i in range(B):
-                        init = inputs_tensor[i].detach()
-                        targ = targets_tensor[i].detach()
-                        # If time dim for init is >1, select only first timestep
-                        normalized.append((init, targ))
-                else:
-                    # Fallback: treat as single sample
-                    normalized.append((inputs_tensor.detach(), targets_tensor.detach()))
 
-            else:
-                # If lists were returned, coerce items to tensors on CPU
-                try:
-                    for a, b in zip(inputs_tensor, targets_tensor):
-                        a_t = a.detach() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
-                        b_t = b.detach() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
-                        normalized.append((a_t, b_t))
-                except Exception:
-                    # As a last resort, zip and cast
-                    for pair in zip(inputs_tensor, targets_tensor):
-                        a, b = pair
-                        a_t = a.detach() if isinstance(a, torch.Tensor) else torch.as_tensor(a)
-                        b_t = b.detach() if isinstance(b, torch.Tensor) else torch.as_tensor(b)
-                        normalized.append((a_t, b_t))
-
-            logger.debug(f"  Generated {len(normalized)} synthetic predictions")
-            return normalized
-    
-    # ==================== PHASE 4: PHYSICAL MODEL TRAINING ====================
-    
     def _train_physical_model(
         self,
-        synthetic_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
+        synthetic_predictions: List[torch.Tensor]
     ) -> float:
         """
         Train physical model on real + synthetic predictions.
         
-        FieldDataset handles conversion from tensor predictions to Fields.
+        UPDATED: Now handles prediction trajectories instead of pre-windowed samples.
+        FieldDataset will handle windowing using set_augmented_trajectories.
         """
-        logger.info(len(synthetic_predictions))
         if len(self.physical_trainer.learnable_params) == 0:
             logger.info("No learnable parameters, skipping physical training")
             return 0.0
-    
+
         with self.managed_memory_phase("Physical Training", clear_cache=False):
             # Set access policy
             access_policy = self._get_access_policy(for_synthetic=False)
             
-            # Set augmented predictions (converts to Fields internally)
-            self._base_field_dataset.set_augmented_predictions(synthetic_predictions)
+            # NEW: Convert BVTS trajectories to cache-format dicts for FieldDataset
+            cache_format_trajectories = []
+            cfg_helper = ConfigHelper(self.config)
+            field_names = cfg_helper.get_field_names()
+            
+            for traj_tensor in synthetic_predictions:
+                # traj_tensor: [1, V, T, H, W] in BVTS format
+                # Squeeze batch dimension
+                traj_tensor = traj_tensor.squeeze(0)  # [V, T, H, W]
+                
+                # Split into per-field tensors based on channel counts
+                field_trajectories = {}
+                channel_idx = 0
+                
+                for field_name in field_names:
+                    # Get number of channels for this field
+                    if field_name in self.synthetic_model.output_specs:
+                        num_channels = self.synthetic_model.output_specs[field_name]
+                    else:
+                        num_channels = self.synthetic_model.input_specs[field_name]
+                    
+                    # Extract field channels
+                    field_tensor = traj_tensor[channel_idx:channel_idx + num_channels]  # [C, T, H, W]
+                    field_trajectories[field_name] = field_tensor
+                    channel_idx += num_channels
+                
+                # Create cache-format dict
+                cache_format_trajectories.append({'tensor_data': field_trajectories})
+            
+            # Set augmented trajectories (now in proper cache format)
+            self._base_field_dataset.set_augmented_trajectories(cache_format_trajectories)
             self._base_field_dataset.access_policy = access_policy
             
             logger.debug(
@@ -371,7 +383,8 @@ class HybridTrainer(AbstractTrainer):
                 f"{self._base_field_dataset.num_augmented} augmented = "
                 f"{len(self._base_field_dataset)} total samples"
             )
-            # Create dataloader with custom collate function
+            
+            # Create dataloader
             from src.data.dataset_utilities import field_collate_fn
             dataloader = DataLoader(
                 self._base_field_dataset,
@@ -380,6 +393,7 @@ class HybridTrainer(AbstractTrainer):
                 num_workers=0,
                 collate_fn=field_collate_fn
             )
+            
             # Train
             result = self.physical_trainer.train(
                 data_source=dataloader,
@@ -389,7 +403,7 @@ class HybridTrainer(AbstractTrainer):
             
             logger.debug(f"  Physical loss: {result['final_loss']:.6f}")
             return float(result['final_loss'])
-    
+        
     # ==================== UTILITIES ====================
     
     def _calculate_num_real_samples(self) -> int:

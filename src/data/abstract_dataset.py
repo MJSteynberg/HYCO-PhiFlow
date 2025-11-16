@@ -100,6 +100,7 @@ class AbstractDataset(Dataset, ABC):
                 raise IndexError(f"Index {idx} out of range [0, {self.num_real})")
             
             sample = self._get_real_sample(idx)
+            # logger.info(f"Accessed real sample: {sample}")
             return sample
         
         elif self.access_policy == "generated_only":
@@ -107,6 +108,7 @@ class AbstractDataset(Dataset, ABC):
                 raise IndexError(f"Index {idx} out of range [0, {self.num_augmented})")
             
             sample = self._get_augmented_sample(idx)
+            # logger.info(f"Accessed augmented sample: {sample}")
             return sample
         
         else:  # 'both'
@@ -115,10 +117,12 @@ class AbstractDataset(Dataset, ABC):
             
             if idx < self.num_real:
                 sample = self._get_real_sample(idx)
+                # logger.info(f"Accessed real sample: {sample}")
                 return sample
             else:
                 aug_idx = idx - self.num_real
                 sample = self._get_augmented_sample(aug_idx)
+                # logger.info(f"Accessed augmented sample: {sample}")
                 return sample
 
     def _compute_length(self) -> int:
