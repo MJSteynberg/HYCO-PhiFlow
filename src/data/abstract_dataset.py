@@ -9,6 +9,7 @@ Key Changes:
 """
 
 from typing import List, Optional, Dict, Any, Tuple
+import random
 from abc import ABC, abstractmethod
 from torch.utils.data import Dataset
 from functools import lru_cache
@@ -275,3 +276,167 @@ class AbstractDataset(Dataset, ABC):
             return
         
         self._index_mapper.resample(seed)
+
+    # ==================== Dataset Builder Utilities (migrated) ====================
+
+    @staticmethod
+    def setup_cache(
+        data_manager: DataManager,
+        sim_indices: List[int],
+        field_names: List[str],
+        num_frames: Optional[int],
+        num_predict_steps: Optional[int] = None,
+    ) -> int:
+        """
+        Validate cache and determine num_frames using the DataManager.
+        This is the same logic previously in DatasetBuilder.setup_cache.
+        """
+        if num_frames is None:
+            logger.debug("num_frames not specified, determining from first simulation...")
+            first_sim_data = data_manager.load_simulation(
+                sim_indices[0], field_names=field_names, num_frames=None
+            )
+            sample_tensor = first_sim_data["tensor_data"][field_names[0]]
+            if isinstance(sample_tensor, torch.Tensor):
+                if sample_tensor.dim() >= 3:
+                    if sample_tensor.dim() == 5:
+                        num_frames = sample_tensor.shape[2]
+                    elif sample_tensor.dim() == 4:
+                        num_frames = sample_tensor.shape[1]
+                    elif sample_tensor.dim() == 3:
+                        num_frames = 1
+                    else:
+                        num_frames = sample_tensor.shape[0]
+                else:
+                    num_frames = 1
+            else:
+                raise RuntimeError("First simulation tensor is not a torch.Tensor")
+
+            logger.debug(f"Determined num_frames = {num_frames}")
+            del first_sim_data
+
+        if num_predict_steps is not None and num_frames < (num_predict_steps + 1):
+            logger.warning(
+                f"Discovered num_frames={num_frames} < required {num_predict_steps + 1}; attempting to reload simulation with larger frame count..."
+            )
+            try:
+                forced = data_manager.load_simulation(
+                    sim_indices[0], field_names=field_names, num_frames=(num_predict_steps + 1)
+                )
+                forced_tensor = forced["tensor_data"][field_names[0]]
+                if isinstance(forced_tensor, torch.Tensor):
+                    if forced_tensor.dim() == 5:
+                        num_frames = forced_tensor.shape[2]
+                    elif forced_tensor.dim() == 4:
+                        num_frames = forced_tensor.shape[1]
+                    elif forced_tensor.dim() == 3:
+                        num_frames = 1
+                    else:
+                        num_frames = forced_tensor.shape[0]
+                else:
+                    raise RuntimeError("Forced simulation tensor is not a torch.Tensor")
+
+                logger.debug(f"After forced reload, num_frames = {num_frames}")
+            except Exception as e:
+                logger.error(f"Failed to reload simulation to satisfy predict steps: {e}")
+                raise
+
+        uncached_sims = [
+            sim_idx for sim_idx in sim_indices if not data_manager.is_cached(sim_idx)
+        ]
+
+        if uncached_sims:
+            logger.info(f"Caching {len(uncached_sims)} simulations...")
+            for i, sim_idx in enumerate(uncached_sims, 1):
+                logger.debug(f"  [{i}/{len(uncached_sims)}] Caching simulation {sim_idx}...")
+                _ = data_manager.load_simulation(
+                    sim_idx, field_names=field_names, num_frames=num_frames
+                )
+            logger.debug("All simulations cached successfully!")
+        else:
+            logger.debug(f"All {len(sim_indices)} simulations already cached.")
+
+        return num_frames
+
+    @staticmethod
+    def compute_sliding_window(num_frames: int, num_predict_steps: int) -> int:
+        """
+        Compute samples per simulation for sliding window.
+        """
+        if num_frames < num_predict_steps + 1:
+            raise ValueError(
+                f"num_frames ({num_frames}) must be >= num_predict_steps + 1 ({num_predict_steps + 1})"
+            )
+
+        samples_per_sim = num_frames - num_predict_steps
+        if samples_per_sim <= 0:
+            raise ValueError(
+                f"Invalid sliding window: num_frames ({num_frames}) must be > num_predict_steps ({num_predict_steps})"
+            )
+
+        return samples_per_sim
+
+
+class FilteringManager:
+    """
+    Manages percentage-based filtering of real data.
+
+    Responsibilities:
+    - Apply percentage filter to create index mapping
+    - Resample indices for different epochs
+    - Map filtered indices to actual indices
+    """
+
+    def __init__(
+        self,
+        total_samples: int,
+        percentage: float,
+        seed: Optional[int] = None,
+    ):
+        """
+        Initialize filtering manager.
+        """
+        if not 0.0 < percentage <= 1.0:
+            raise ValueError(
+                f"percentage must be in (0.0, 1.0], got {percentage}"
+            )
+
+        self.total_samples = total_samples
+        self.percentage = percentage
+        self.num_samples = int(total_samples * percentage)
+
+        # Generate initial index mapping
+        self._active_indices = self._generate_indices(seed)
+
+    def _generate_indices(self, seed: Optional[int]) -> List[int]:
+        """Generate random indices."""
+        if seed is not None:
+            random.seed(seed)
+
+        all_indices = list(range(self.total_samples))
+        random.shuffle(all_indices)
+        return sorted(all_indices[: self.num_samples])
+
+    def get_actual_index(self, filtered_idx: int) -> int:
+        """Map filtered index to actual index."""
+        if filtered_idx >= self.num_samples:
+            raise IndexError(
+                f"Filtered index {filtered_idx} out of range [0, {self.num_samples})"
+            )
+        return self._active_indices[filtered_idx]
+
+    def resample(self, seed: Optional[int] = None):
+        """Resample the subset of data."""
+        self._active_indices = self._generate_indices(seed)
+        logger.debug(
+            f"Resampled indices: using {self.num_samples}/{self.total_samples} "
+            f"samples ({self.percentage*100:.1f}%)"
+        )
+
+    def get_info(self) -> Dict[str, Any]:
+        """Get information about filtering."""
+        return {
+            "total_samples": self.total_samples,
+            "filtered_samples": self.num_samples,
+            "percentage": self.percentage,
+        }

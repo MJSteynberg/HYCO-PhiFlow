@@ -4,7 +4,7 @@ from typing import Dict, Any
 import torch
 import torch.nn as nn
 from phiml.nn import res_net
-from src.models.registry import ModelRegistry
+from src.models import ModelRegistry
 from src.models.synthetic.base import SyntheticModel
 
 

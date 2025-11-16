@@ -8,19 +8,115 @@ Key Changes:
 - Clear distinction maintained between real and synthetically-generated data
 """
 
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
+from dataclasses import dataclass
+from phi.math import Shape
+from phi.field._field_math import Extrapolation
 import torch
 from phi.field import Field
 from phi.torch.flow import *
 
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
-from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager, FieldMetadata
+from .abstract_dataset import FilteringManager
+from .augmentation_manager import AugmentationHandler
 from src.utils.logger import get_logger
 from phi.geom import Box
 from phi.math import spatial
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class FieldMetadata:
+    """
+    Metadata needed to reconstruct a PhiFlow Field from a tensor.
+    """
+
+    domain: Box
+    resolution: Shape
+    extrapolation: Union[Extrapolation, str]
+    field_type: str  # 'centered' or 'staggered'
+    spatial_dims: Tuple[str, ...]
+    channel_dims: Tuple[str, ...]
+
+    @classmethod
+    def from_field(cls, field: Field) -> "FieldMetadata":
+        field_type = "staggered" if field.is_staggered else "centered"
+        return cls(
+            domain=field.bounds,
+            resolution=field.resolution,
+            extrapolation=field.extrapolation,
+            field_type=field_type,
+            spatial_dims=tuple(field.shape.spatial.names),
+            channel_dims=(tuple(field.shape.channel.names) if field.shape.channel else ()),
+        )
+
+    @classmethod
+    def from_cache_metadata(
+        cls, cached_meta: Dict, domain: Box, resolution: Shape
+    ) -> "FieldMetadata":
+        from phi.math import extrapolation as extrap_module
+
+        extrap_str = cached_meta.get("extrapolation", "ZERO")
+        extrapolation_map = {
+            "ZERO": extrap_module.ZERO,
+            "BOUNDARY": extrap_module.BOUNDARY,
+            "PERIODIC": extrap_module.PERIODIC,
+            "zero-gradient": extrap_module.ZERO_GRADIENT,
+            "ZERO_GRADIENT": extrap_module.ZERO_GRADIENT,
+        }
+
+        if extrap_str in extrapolation_map:
+            extrapolation = extrapolation_map[extrap_str]
+        else:
+            for key in extrapolation_map:
+                if key in extrap_str.upper():
+                    extrapolation = extrapolation_map[key]
+                    break
+            else:
+                extrapolation = extrap_module.ZERO
+
+        field_type = cached_meta.get("field_type", "centered")
+
+        return cls(
+            domain=domain,
+            resolution=resolution,
+            extrapolation=extrapolation,
+            field_type=field_type,
+            spatial_dims=tuple(cached_meta.get("spatial_dims", ["x", "y"])),
+            channel_dims=tuple(cached_meta.get("channel_dims", [])),
+        )
+
+
+def create_field_metadata_from_model(
+    model, field_names: list[str], field_types: Dict[str, str] = None
+) -> Dict[str, FieldMetadata]:
+    """
+    Create FieldMetadata for each field from a PhysicalModel instance.
+    """
+    from phi.math import extrapolation
+
+    field_types = field_types or {}
+
+    metadata_dict = {}
+    for field_name in field_names:
+        field_type = field_types.get(field_name, "centered")
+        if "velocity" in field_name.lower():
+            channel_dims = ("vector",)
+        else:
+            channel_dims = ()
+
+        metadata_dict[field_name] = FieldMetadata(
+            domain=model.domain,
+            resolution=model.resolution,
+            extrapolation=extrapolation.PERIODIC,
+            field_type=field_type,
+            spatial_dims=tuple(model.resolution.names),
+            channel_dims=channel_dims,
+        )
+
+    return metadata_dict
 
 
 class FieldDataset(AbstractDataset):
@@ -83,10 +179,13 @@ class FieldDataset(AbstractDataset):
         percentage_real_data: float,
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
         """Setup dataset components."""
-        builder = DatasetBuilder(data_manager)
-        
-        num_frames = builder.setup_cache(sim_indices, field_names, num_frames, num_predict_steps)
-        samples_per_sim = builder.compute_sliding_window(num_frames, num_predict_steps)
+        # Use helper methods from AbstractDataset instead of DatasetBuilder
+        num_frames = AbstractDataset.setup_cache(
+            data_manager, sim_indices, field_names, num_frames, num_predict_steps
+        )
+        samples_per_sim = AbstractDataset.compute_sliding_window(
+            num_frames, num_predict_steps
+        )
         total_real_samples = len(sim_indices) * samples_per_sim
         
         # Setup filtering

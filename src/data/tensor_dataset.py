@@ -14,7 +14,8 @@ from phi.field import Field
 
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
-from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
+from .abstract_dataset import FilteringManager
+from .augmentation_manager import AugmentationHandler
 from src.utils.logger import get_logger, logging
 
 logger = get_logger(__name__)
@@ -88,10 +89,13 @@ class TensorDataset(AbstractDataset):
         percentage_real_data: float,
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
         """Setup dataset components."""
-        builder = DatasetBuilder(data_manager)
-
-        num_frames = builder.setup_cache(sim_indices, field_names, num_frames, num_predict_steps)
-        samples_per_sim = builder.compute_sliding_window(num_frames, num_predict_steps)
+        # Use helper functions from AbstractDataset instead of DatasetBuilder
+        num_frames = AbstractDataset.setup_cache(
+            data_manager, sim_indices, field_names, num_frames, num_predict_steps
+        )
+        samples_per_sim = AbstractDataset.compute_sliding_window(
+            num_frames, num_predict_steps
+        )
         total_real_samples = len(sim_indices) * samples_per_sim
         
         # Setup filtering

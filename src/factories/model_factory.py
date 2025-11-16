@@ -2,7 +2,7 @@
 
 from typing import Dict, Any
 import torch.nn as nn
-from src.models.registry import ModelRegistry
+from src.models import ModelRegistry
 
 
 class ModelFactory:

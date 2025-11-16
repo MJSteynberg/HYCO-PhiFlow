@@ -14,13 +14,9 @@ Concrete implementations:
 """
 
 from src.training.abstract_trainer import AbstractTrainer
-from src.training.tensor_trainer import TensorTrainer
-from src.training.field_trainer import FieldTrainer
 from src.training.hybrid import HybridTrainer
 
 __all__ = [
     "AbstractTrainer",
-    "TensorTrainer",
-    "FieldTrainer",
     "HybridTrainer",
 ]

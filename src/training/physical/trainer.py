@@ -13,14 +13,16 @@ from phi.math import math, Tensor
 
 # --- Repo Imports ---
 from src.models import ModelRegistry
-from src.training.field_trainer import FieldTrainer
+from src.training.abstract_trainer import AbstractTrainer
 from src.utils.logger import get_logger
 from torch.utils.data import DataLoader
+
+from tqdm import tqdm
 
 logger = get_logger(__name__)
 
 
-class PhysicalTrainer(FieldTrainer):
+class PhysicalTrainer(AbstractTrainer):
     """
     Solves an inverse problem for a PhysicalModel using cached data
     from DataManager/FieldDataset.
@@ -44,26 +46,99 @@ class PhysicalTrainer(FieldTrainer):
             learnable_params: List of PhiFlow Tensors for learnable parameters
         """
         # Initialize base trainer with model and params
-        super().__init__(config, model, learnable_params)
-        
-        # Placeholder
-        self.batch_size = 1000
+        super().__init__(config)
 
-    def _train_epoch(self, data_source: DataLoader) -> float:
+        # --- Derive all parameters from config ---
+        self.data_config = config["data"]
+        self.model_config = config["model"]["physical"]
+        self.trainer_config = config["trainer_params"]
+
+        # --- Data specifications ---
+        self.field_names: List[str] = self.data_config["fields"]
+        self.dset_name = self.data_config["dset_name"]
+        self.data_dir = self.data_config["data_dir"]
+
+        # -- Store model and parameters ---
+        self.model = model
+        self.learnable_params = [p['initial_guess'] for p in learnable_params]
+        self.param_names = [p["name"] for p in learnable_params]
+
+        # Create optimizer
+        self.optimizer = self._create_optimizer()
+ 
+        # Results storage
+        self.final_loss: float = 0.0
+        self.training_history: List[float] = []
+
+        self.best_val_loss = float("inf")
+        self.best_epoch = 0
+
+        # --- Get parameters ---
+        self.num_predict_steps= self.trainer_config["num_predict_steps"]
+
+    #########################
+    # Training Loop Methods #
+    #########################
+
+    def train(self, data_source: DataLoader, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """
-        Train using a DataLoader that provides pre-collated batches.
+        Execute training for specified number of epochs with provided data.
+
+        Args:
+            data_source: Iterable yielding (initial_fields, target_fields) tuples
+                        Note: NO weights - all samples treated equally!
+            num_epochs: Number of epochs to train
+
+        Returns:
+            Dictionary with training results including losses and metrics
         """
-        total_loss = 0.0
 
-        # The data_source is now a DataLoader
-        for stacked_initial, stacked_targets in data_source:
-            # Optimize over the entire batch
-            batch_loss = self._optimize_batch(stacked_initial, stacked_targets)
+        results = {
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs,
+            "best_epoch": 0,
+            "best_val_loss": float("inf"),
+        }
 
-            total_loss += batch_loss
+        disable_tqdm = not verbose
+        pbar = tqdm(
+            range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
+        )
 
+        for epoch in pbar:
+            start_time = time.time()
+            train_loss = 0.0
 
-        return total_loss
+            for stacked_initial, stacked_targets in data_source:
+                batch_loss = self._optimize_batch(stacked_initial, stacked_targets)
+                train_loss += batch_loss
+
+            results["train_losses"].append(train_loss)
+            results["epochs"].append(epoch + 1)
+
+            if train_loss < self.best_val_loss:
+                self.best_val_loss = train_loss
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
+
+            epoch_time = time.time() - start_time
+
+            # Update progress bar
+            postfix_dict = {
+                "train_loss": f"{train_loss:.6f}",
+                "time": f"{epoch_time:.2f}s",
+            }
+
+            postfix_dict["best_epoch"] = self.best_epoch
+
+            pbar.set_postfix(postfix_dict)
+
+        final_loss = results["train_losses"][-1]
+        results["final_loss"] = final_loss
+
+        return results
 
     def _optimize_batch(
         self,
@@ -92,7 +167,7 @@ class PhysicalTrainer(FieldTrainer):
                 Scalar loss (averaged over batch dimension)
             """
             # Update model parameters
-            self._update_model_params(learnable_tensors)
+            self._update_params(learnable_tensors)
             
             # Initialize loss accumulator (scalar)
             total_loss = math.tensor(0.0)
@@ -107,9 +182,13 @@ class PhysicalTrainer(FieldTrainer):
                 current_state = self.model.forward(current_state)
                 
                 # Compute loss for this timestep
-                step_loss = self._compute_step_loss(
-                    current_state, target_fields, step
-                )
+                step_loss = math.tensor(0.0)
+                for field_name, gt_field in target_fields.items():
+                    target = gt_field.time[step]
+                    prediction = current_state[field_name]
+                    field_loss = l2_loss(prediction - target)
+                    field_loss = math.mean(field_loss, dim="batch,time")
+                    step_loss += field_loss
                 total_loss += step_loss
             
             # Average over timesteps
@@ -126,53 +205,12 @@ class PhysicalTrainer(FieldTrainer):
         
         # Compute final loss
         final_loss = loss_function(*estimated_params)
-        # Update parameters
-        self.update_optimizer_params(list(estimated_params))
-        return self._tensor_to_float(final_loss)
+        return float(final_loss)
 
-    def _compute_step_loss(
-        self,
-        current_state: Dict[str, Field],
-        target_fields: Dict[str, Field],
-        step: int,
-    ) -> Tensor:
-        """
-        Compute L2 loss for a timestep across batch.
-        
-        Args:
-            current_state: Current predictions [samples, x, y]
-            target_fields: Ground truth [samples, time, x, y]
-            step: Current timestep index
-        
-        Returns:
-            Scalar loss (automatically averaged over batch)
-        """
-        step_loss = math.tensor(0.0)
-        
-        for field_name, gt_field in target_fields.items():
-            # Extract target for this timestep
-            # gt_field has shape [samples, time, x, y]
-            # We want [samples, x, y]
-            target = gt_field.time[step]
-            
-            # Current prediction
-            prediction = current_state[field_name]
-            
-            # Compute difference
-            # Both have shape [samples, x, y]
-            diff = prediction - target
-            
-            # L2 loss (automatically handles batch dimension)
-            field_loss = l2_loss(diff)
-            
-            # Sum over spatial dimensions, average over samples
-            # PhiML automatically reduces over batch dimensions in math.sum
-            field_loss = math.mean(field_loss, dim="batch,time")
-            step_loss += field_loss
-        return step_loss    
-
-    
-    def _update_model_params(self, learnable_tensors: Tuple[Tensor, ...]):
+    #############
+    # Utilities #
+    #############
+    def _update_params(self, learnable_tensors: Tuple[Tensor, ...]):
         """
         Update model's learnable parameters.
 
@@ -181,23 +219,38 @@ class PhysicalTrainer(FieldTrainer):
         """
         for param_name, param_value in zip(self.param_names, learnable_tensors):
             setattr(self.model, param_name, param_value)
-    
-    def _run_optimization(self, loss_function: callable) -> Tuple[Tensor, ...]:
-        """
-        Run PhiML optimization with error handling.
 
-        Args:
-            loss_function: Loss function to minimize
+        self.learnable_params = learnable_tensors
+        self.optimizer.x0 = learnable_tensors
+
+    def _create_optimizer(self):
+        """
+        Create optimizer for learnable parameters.
 
         Returns:
-            Tuple of optimized parameter tensors
+            PhiFlow optimizer instance
         """
-        try:
-            # Run optimization with optional monitoring
-            estimated_params = minimize(loss_function, self.optimizer)
-            return estimated_params
+        method = self.trainer_config['method']
+        abs_tol = self.trainer_config['abs_tol']
+        max_iterations = self.trainer_config['max_iterations']
 
-        except Exception as e:
-            logger.error(f"Optimization failed: {e}")
-            # Return initial parameters as fallback
-            return tuple(self.learnable_params)
+        optimizer = math.Solve(
+            method=method,
+            abs_tol=abs_tol,
+            x0=self.learnable_params,
+            max_iterations=max_iterations,
+            suppress=(math.NotConverged,),
+        )
+        return optimizer
+    
+
+    def get_current_params(self) -> Dict[str, Tensor]:
+        """
+        Get current learnable parameters as a dictionary.
+
+        Returns:
+            Dictionary mapping parameter names to current values
+        """
+        return {name: param for name, param in zip(self.param_names, self.learnable_params)}
+    
+

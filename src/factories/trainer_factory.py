@@ -122,115 +122,11 @@ class TrainerFactory:
 
         return trainer
 
-    @staticmethod
-    def create_data_loader_for_synthetic(
-        config: Dict[str, Any],
-        sim_indices: List[int] = None,
-        batch_size: int = None,
-        shuffle: bool = True,
-        use_sliding_window: bool = True,
-    ) -> DataLoader:
-        """
-        Create DataLoader for synthetic training with optional augmentation.
+    # NOTE: create_data_loader_for_synthetic has been removed. Use DataLoaderFactory.create(config, mode='tensor') instead.
 
-        DEPRECATED: Use DataLoaderFactory.create(config, mode='tensor') instead.
-        This method is kept for backward compatibility but will be removed in a future version.
+    # NOTE: create_dataset_for_physical has been removed. Use DataLoaderFactory.create(config, mode='field') instead.
 
-        Args:
-            config: Full configuration dictionary
-            sim_indices: Simulation indices to load (defaults to train_sim from config)
-            batch_size: Batch size (defaults to config batch_size)
-            shuffle: Whether to shuffle data
-            use_sliding_window: Whether to use sliding window (default True for Phase 1)
-
-        Returns:
-            DataLoader with TensorDataset
-        """
-        warnings.warn(
-            "create_data_loader_for_synthetic is deprecated. "
-            "Use DataLoaderFactory.create(config, mode='tensor') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        # Use new DataLoaderFactory
-        return DataLoaderFactory.create(
-            config=config,
-            mode="tensor",
-            sim_indices=sim_indices,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            use_sliding_window=use_sliding_window,
-        )
-
-    @staticmethod
-    def create_dataset_for_physical(
-        config: Dict[str, Any],
-        sim_indices: List[int] = None,
-        use_sliding_window: bool = True,
-    ) -> FieldDataset:
-        """
-        Create FieldDataset for physical training (returns fields, not tensors).
-
-        DEPRECATED: Use DataLoaderFactory.create(config, mode='field') instead.
-        This method is kept for backward compatibility but will be removed in a future version.
-
-        Args:
-            config: Full configuration dictionary
-            sim_indices: Simulation indices to load (defaults to train_sim from config)
-            use_sliding_window: Whether to use sliding window (default True for Phase 1)
-
-        Returns:
-            FieldDataset (new simplified version)
-        """
-        warnings.warn(
-            "create_dataset_for_physical is deprecated. "
-            "Use DataLoaderFactory.create(config, mode='field') instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        # Use new DataLoaderFactory which returns FieldDataset directly
-        return DataLoaderFactory.create(
-            config=config,
-            mode="field",
-            sim_indices=sim_indices,
-            use_sliding_window=use_sliding_window,
-            batch_size=None,  # Physical training doesn't use batching
-        )
-
-    @staticmethod
-    def generate_augmented_cache(
-        config: Dict[str, Any],
-        model: torch.nn.Module,
-        model_type: str = "synthetic",
-        force_regenerate: bool = False,
-    ) -> int:
-        """
-        Generate and cache augmented predictions for training.
-
-        DEPRECATED: This method is deprecated and not yet updated for the new architecture.
-        Cache generation is now handled differently in hybrid training.
-
-        Args:
-            config: Full configuration dictionary
-            model: Trained model to generate predictions
-            model_type: 'synthetic' or 'physical'
-            force_regenerate: If True, clear existing cache and regenerate
-
-        Returns:
-            Number of samples generated and cached
-        """
-        warnings.warn(
-            "generate_augmented_cache is deprecated and not yet updated for the new architecture. "
-            "Cache generation is now handled differently in hybrid training.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        raise NotImplementedError(
-            "generate_augmented_cache is not yet implemented in the new architecture. "
-            "Augmentation is now handled directly via augmentation_config in datasets."
-        )
+    # NOTE: generate_augmented_cache has been removed; use hybrid pipeline or augmentation configs instead.
 
     @staticmethod
     def create_hybrid_trainer(config: Dict[str, Any]):

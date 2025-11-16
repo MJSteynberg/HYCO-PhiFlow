@@ -6,10 +6,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from tqdm import tqdm
 
 # Import tensor trainer (new hierarchy)
-from src.training.tensor_trainer import TensorTrainer
+from src.training.abstract_trainer import AbstractTrainer
 from torch.utils.data import DataLoader
 
 
@@ -19,7 +20,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class SyntheticTrainer(TensorTrainer):
+class SyntheticTrainer(AbstractTrainer):
     """
     Tensor-based trainer for synthetic models using DataManager pipeline.
 
@@ -40,42 +41,123 @@ class SyntheticTrainer(TensorTrainer):
             model: Pre-created synthetic model (e.g., UNet)
         """
         # Initialize base trainer with model
-        super().__init__(config, model)
+        super().__init__(config)
+
+        # --- Derive all parameters from config ---
+        self.data_config = config["data"]
+        self.model_config = config["model"]["synthetic"]
+        self.trainer_config = config["trainer_params"]
+
+        # --- Data specifications ---
+        self.field_names: List[str] = self.data_config["fields"]
+        self.dset_name = self.data_config["dset_name"]
+        self.data_dir = self.data_config["data_dir"]
+
+        # --- Checkpoint path ---
+        model_save_name = self.model_config["model_save_name"]
+        model_path_dir = self.model_config["model_path"]
+        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
+        os.makedirs(model_path_dir, exist_ok=True)
+
+        # PyTorch-specific initialization
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Store model and move to device
+        self.model = model.to(self.device)
+        # --- Scheduler ---
+        epochs = self.trainer_config["epochs"]
+
+        self._setup(enabled=True, T_max=epochs)
+
+        # Validation state tracking
+        self.best_val_loss = float("inf")
+        self.best_epoch = 0
 
         # --- Loss function ---
         self.loss_fn = nn.MSELoss()  # Simple MSE for tensor-based training
 
-    def _train_epoch(self, data_source: DataLoader) -> float:
+
+    ####################
+    # Training Methods #
+    ####################
+
+    def train(self, data_source: DataLoader, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """
-        OPTIMIZED: Removed redundant time tracking, cleaner structure.
+        Execute training for specified number of epochs with provided data.
+
+        Args:
+            data_source: PyTorch DataLoader yielding (input, target) tuples
+            num_epochs: Number of epochs to train
+
+        Returns:
+            Dictionary with training results including losses and metrics
         """
-        self.model.train()
-        total_loss = 0.0
+        results = {
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs,
+            "best_epoch": 0,
+            "best_val_loss": float("inf"),
+        }
 
-        # Optional: Add progress bar
-        # pbar = tqdm(data_source, desc="Training", leave=False)
-        
-        for batch in data_source:
-            self.optimizer.zero_grad(set_to_none=True)  # More efficient
+        # Create progress bar for epochs (disable if suppress_training_logs is True)
+        disable_tqdm = not verbose
+        pbar = tqdm(
+            range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
+        )
 
-            # Compute loss using shared method
-            loss = self._compute_batch_loss(batch)
+        for epoch in pbar:
+            start_time = time.time()
+            # Training
+            self.model.train()
+            train_loss = 0.0
 
-            # AMP backward pass
-            self.scaler.scale(loss).backward()
-            
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            for batch in data_source:
+                self.optimizer.zero_grad(set_to_none=True)  # More efficient
+                loss = self._compute_loss(batch)
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                train_loss += loss.item()
+            # Update scheduler (moved to base class logic if needed)
+            if self.scheduler is not None:
+                self.scheduler.step()
 
-            total_loss += loss.item()
+            results["train_losses"].append(train_loss / len(data_source))
+            results["epochs"].append(epoch + 1)
 
-        # Update scheduler (moved to base class logic if needed)
-        if self.scheduler is not None:
-            self.scheduler.step()
+            # Track best model (based on train loss if no validation)
+            if train_loss / len(data_source) < self.best_val_loss:
+                self.best_val_loss = train_loss / len(data_source)
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
 
-        return total_loss / len(data_source)
+                self.save_checkpoint(
+                    epoch=epoch,
+                    loss=train_loss / len(data_source),
+                    optimizer_state=(
+                        self.optimizer.state_dict() if self.optimizer else None
+                    )
+                )
+            epoch_time = time.time() - start_time
 
-    def _compute_batch_loss(self, batch) -> torch.Tensor:
+            # Update progress bar
+            postfix_dict = {
+                "train_loss": f"{train_loss / len(data_source):.6f}",
+                "time": f"{epoch_time:.2f}s",
+            }
+
+            postfix_dict["best_epoch"] = self.best_epoch
+
+            pbar.set_postfix(postfix_dict)
+
+        final_loss = results["train_losses"][-1]
+
+        results["final_loss"] = final_loss
+        return results
+
+    def _compute_loss(self, batch) -> torch.Tensor:
         """
         OPTIMIZED: Better memory management, clearer autoregressive loop.
         """
@@ -84,17 +166,6 @@ class SyntheticTrainer(TensorTrainer):
         # Non-blocking transfer
         initial_state = initial_state.to(self.device, non_blocking=True)
         rollout_targets = rollout_targets.to(self.device, non_blocking=True)
-
-        # Enforce BVTS-only inputs: initial_state and rollout_targets must be
-        # BVTS-shaped tensors: [B, V, 1, H, W] and [B, V, T, H, W]. If not,
-        # raise a descriptive error to guide migration.
-        if not (initial_state.dim() == 5 and rollout_targets.dim() == 5):
-            raise ValueError(
-                f"Expected BVTS tensors for SyntheticTrainer (initial: 5D, targets: 5D), "
-                f"got initial.dim()={initial_state.dim()}, targets.dim()={rollout_targets.dim()}. "
-                "Ensure datasets and DataManager produce BVTS-shaped tensors [B,V,T,H,W]."
-            )
-
         num_steps = rollout_targets.shape[2]
 
         # BVTS autoregressive loop: current_state is [B, V, 1, H, W]
@@ -105,19 +176,140 @@ class SyntheticTrainer(TensorTrainer):
             for t in range(num_steps):
                 # Predict next frame as BVTS [B, V, 1, H, W]
                 prediction = self.model(current_state)
-
-                # prediction: [B, V, 1, H, W] -> squeeze time dim for comparison
-                pred_frame = prediction[:, :, 0]
-
-                # target frame: rollout_targets[:, :, t] -> [B, V, H, W]
-                target_frame = rollout_targets[:, :, t]
-
-                # Accumulate loss (compare per-channel tensors)
-                total_loss += self.loss_fn(pred_frame, target_frame)
-
-                # Next input is the predicted frame (keep as [B,V,1,H,W])
+                total_loss += self.loss_fn(prediction[:, :, 0], rollout_targets[:, :, t])
                 current_state = prediction
 
             avg_loss = total_loss / float(num_steps)
 
         return avg_loss
+    
+    #############
+    # Utilities #
+    #############
+    
+    def _setup(self, enabled: bool = True, **kwargs) -> torch.optim.Optimizer:
+        learning_rate = self.config['trainer_params']['learning_rate']
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.scaler = torch.amp.GradScaler(enabled=enabled)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, **kwargs
+            )
+
+    def save_checkpoint(
+        self,
+        epoch: int,
+        loss: float,
+        optimizer_state: Optional[Dict] = None,
+        additional_info: Optional[Dict] = None,
+    ):
+        """
+        Save PyTorch model checkpoint.
+
+        Args:
+            epoch: Current epoch number
+            loss: Current loss value
+            optimizer_state: Optimizer state dict (optional)
+            additional_info: Any additional information to save (optional)
+            is_best: If True, also save as 'best.pth'
+
+        Raises:
+            ValueError: If checkpoint_path is not set
+            RuntimeError: If model is not initialized
+        """
+
+        # Build checkpoint dictionary
+        checkpoint = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "loss": loss,
+            "config": self.config,
+        }
+
+        if optimizer_state is not None:
+            checkpoint["optimizer_state_dict"] = optimizer_state
+
+        if additional_info is not None:
+            checkpoint.update(additional_info)
+
+        torch.save(checkpoint, self.checkpoint_path)
+
+    def load_checkpoint(
+        self, path: Optional[Path] = None, strict: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Load PyTorch model checkpoint.
+
+        Args:
+            path: Path to checkpoint. If None, uses self.checkpoint_path
+            strict: Whether to strictly enforce that keys in checkpoint match
+                   keys in model (passed to model.load_state_dict)
+
+        Returns:
+            Checkpoint dictionary containing epoch, loss, config, etc.
+
+        Raises:
+            ValueError: If no checkpoint path provided
+            FileNotFoundError: If checkpoint file doesn't exist
+            RuntimeError: If model is not initialized
+        """
+
+        if path is None:
+            path = self.checkpoint_path
+
+        if not Path(path).exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+        checkpoint = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
+
+        return checkpoint
+
+    def get_parameter_count(self) -> int:
+        """
+        Get total number of model parameters.
+
+        Returns:
+            Total parameter count, or 0 if model not initialized
+        """
+        if self.model is None:
+            return 0
+        return sum(p.numel() for p in self.model.parameters())
+
+    def get_trainable_parameter_count(self) -> int:
+        """
+        Get number of trainable parameters.
+
+        Returns:
+            Trainable parameter count, or 0 if model not initialized
+        """
+        if self.model is None:
+            return 0
+        return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
+    def print_model_summary(self):
+        """
+        Print model summary information.
+
+        Displays:
+        - Model type
+        - Total parameters
+        - Trainable parameters
+        - Non-trainable parameters
+        - Device (CPU/CUDA)
+        """
+        if self.model is None:
+            logger.warning("Model not initialized")
+            return
+
+        total_params = self.get_parameter_count()
+        trainable_params = self.get_trainable_parameter_count()
+
+        logger.info("=" * 60)
+        logger.info("MODEL SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Model type: {self.model.__class__.__name__}")
+        logger.info(f"Total parameters: {total_params:,}")
+        logger.info(f"Trainable parameters: {trainable_params:,}")
+        logger.info(f"Non-trainable parameters: {total_params - trainable_params:,}")
+        logger.info(f"Device: {self.device}")
+        logger.info("=" * 60)

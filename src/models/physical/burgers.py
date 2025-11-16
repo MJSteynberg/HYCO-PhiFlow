@@ -9,7 +9,7 @@ from phi.math import Shape, Tensor, batch, math
 
 # --- Repo Imports ---
 from .base import PhysicalModel
-from src.models.registry import ModelRegistry
+from src.models import ModelRegistry
 
 
 @jit_compile
