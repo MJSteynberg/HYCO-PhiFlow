@@ -252,15 +252,6 @@ class DataManager:
                     frame=frame_idx,
                     convert_to_backend=True,  # Converts to torch backend
                 )
-                # Remember if the original field was staggered
-                if original_field_type is None:
-                    original_field_type = (
-                        "staggered" if field_obj.is_staggered else "centered"
-                    )
-
-                # Convert staggered grids to centered grids (like UNet does)
-                if field_obj.is_staggered:
-                    field_obj = field_obj.at_centers()
                 field_frames.append(field_obj)
 
             # Stack along time dimension
@@ -269,13 +260,7 @@ class DataManager:
             # Convert to tensor in VTS Layout
             dims = 'vector,time,' + ','.join(stacked_field.shape.spatial.names)
             tensor = stacked_field.values.native(dims)
-
-            logger.info(f"DataManager.load_and_cache_simulation: field '{field_name}' tensor shape: {tensor.shape}")
-
-            # Ensure tensor is on CPU for caching (for DataLoader pin_memory compatibility)
-            tensor = tensor.cpu()
-
-            tensor_data[field_name] = tensor
+            tensor_data[field_name] = tensor.cpu()
 
             # Extract metadata needed to reconstruct the Field
             # We need: shape, domain, resolution, extrapolation, boundary, field_type
@@ -340,7 +325,6 @@ class DataManager:
                     .get("physical", {})
                     .get("dt", 0.0),
                 },
-                # NEW: Data configuration
                 "data_config": {
                     "fields": field_names,
                     "fields_scheme": self.config.get("data", {}).get(
@@ -350,7 +334,6 @@ class DataManager:
                         "dset_name", "unknown"
                     ),
                 },
-                # NEW: Checksums for fast validation
                 "checksums": {
                     "pde_params_hash": compute_hash(
                         self.config.get("model", {})
@@ -370,10 +353,6 @@ class DataManager:
                 },
             },
         }
-
-        # On-disk cache: include layout metadata and BVTS-formatted tensors
-
-        # Save BVTS cache
         cache_path = self.get_cached_path(sim_index)
         torch.save(cache_data, cache_path)
 
@@ -406,7 +385,7 @@ class DataManager:
         # Return cached data (validated)
         return cached
 
-    def get_or_load_simulation(
+    def load_simulation(
         self, sim_index: int, field_names: List[str], num_frames: Optional[int] = None
     ) -> Dict[str, Any]:
         """

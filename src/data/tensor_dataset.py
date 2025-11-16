@@ -16,7 +16,6 @@ from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
 from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
 from src.utils.logger import get_logger, logging
-from src.utils.field_conversion.validation import assert_bvts_format
 
 logger = get_logger(__name__)
 
@@ -71,21 +70,9 @@ class TensorDataset(AbstractDataset):
         # Track number of augmented trajectories (for indexing)
         self._num_augmented_trajectories = len(augmented_samples)
         self._samples_per_trajectory = num_frames - num_predict_steps
-    # Dataset now assumes BVTS as the canonical in-memory layout.
-    # All simulation tensors returned by DataManager / builder are normalized
-    # to BVTS [B, V, T, *spatial].
+
 
         self._log_dataset_info()
-
-        # Normalize any augmented samples we received from the builder so that
-        # they follow the same tensor conventions as _load_simulation() returns.
-        # This prevents mixed-format augmented samples which can cause collate
-        # failures when batches mix real and generated data.
-        try:
-            self._normalize_all_augmented_samples()
-        except Exception:
-            # Fail-safe: don't raise during dataset construction; log instead
-            logger.debug("Failed to normalize augmented samples at init; continuing")
 
 
     # ==================== Setup ====================
@@ -152,7 +139,7 @@ class TensorDataset(AbstractDataset):
         
         Returns tensor_data dict directly.
         """
-        full_data = self.data_manager.get_or_load_simulation(
+        full_data = self.data_manager.load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         
@@ -263,7 +250,7 @@ class TensorDataset(AbstractDataset):
             if idx % 10 == 0 and idx > 0:
                 logger.debug(f"  Converted {idx}/{len(trajectory_rollouts)} trajectories...")
             
-            tensor_trajectory = self._convert_field_rollout_to_cache_format(rollout)
+            tensor_trajectory =  {field_name: rollout[field_name].values.native('vector,time,x,y') for field_name in self.field_names if field_name in rollout}
             converted_trajectories.append(tensor_trajectory)
         
         # Store trajectories
@@ -294,76 +281,6 @@ class TensorDataset(AbstractDataset):
         self._num_augmented_trajectories = 0
         self._total_length = self._compute_length()
         logger.debug("Cleared augmented trajectories")
-
-    def _convert_field_rollout_to_cache_format(
-        self,
-        rollout: Dict[str, Field]
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Convert a Field rollout to cache-compatible tensor format.
-        
-        Args:
-            rollout: Dict mapping field_name to Field[vector, time, x, y]
-        
-        Returns:
-            Dict with structure: {'tensor_data': {field_name: tensor[V, T, H, W]}}
-        """
-        
-        tensor_data = {field_name: rollout[field_name].values.native('vector,time,x,y') for field_name in self.field_names if field_name in rollout}
-        
-        return {'tensor_data': tensor_data}
-    # ==================== Normalization Utilities ====================
-
-    def _normalize_sim_tensor_data(self, sim_tensor_data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """
-        Normalize a simulation's `tensor_data` dict to the canonical BVTS format
-        used throughout the codebase: [B, C, T, *spatial].
-
-    This converts tensors to the canonical in-memory BVTS layout
-    using the converter helpers. If the BVTS helper is not available
-    a RuntimeError is raised to avoid silent misinterpretation.
-        """
-        try:
-            from src.utils.field_conversion.bvts import to_bvts, from_bvts
-        except Exception:
-            to_bvts = None
-            from_bvts = None
-
-        normalized = {}
-        for field, tensor in sim_tensor_data.items():
-            if not isinstance(tensor, torch.Tensor):
-                normalized[field] = tensor
-                continue
-
-            # Convert to BVTS canonical in-memory format [B, V, T, *spatial]
-            # We require the BVTS helper to be present; treat missing helper as
-            # a hard error to avoid silent misinterpretation.
-            if to_bvts is None:
-                raise RuntimeError(
-                    "BVTS conversion helper not available. Ensure 'src.utils.field_conversion.bvts.to_bvts' is importable."
-                )
-
-            normalized[field] = to_bvts(tensor)
-
-        return normalized
-
-    def _normalize_all_augmented_samples(self):
-        """Normalize all entries in self.augmented_samples in-place."""
-        if not hasattr(self, 'augmented_samples') or not self.augmented_samples:
-            return
-
-        normalized_list = []
-        for entry in self.augmented_samples:
-            if isinstance(entry, dict) and 'tensor_data' in entry:
-                normalized_list.append({'tensor_data': self._normalize_sim_tensor_data(entry['tensor_data'])})
-            elif isinstance(entry, dict):
-                # Possibly raw tensor_data
-                normalized_list.append({'tensor_data': self._normalize_sim_tensor_data(entry)})
-            else:
-                # Unknown format: keep as-is
-                normalized_list.append(entry)
-
-        self.augmented_samples = normalized_list
 
     # ==================== Utility Methods ====================
 

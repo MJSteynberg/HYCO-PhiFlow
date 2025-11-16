@@ -15,9 +15,10 @@ from phi.torch.flow import *
 
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
-from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager
-from src.utils.field_conversion import FieldMetadata
+from .dataset_utilities import DatasetBuilder, AugmentationHandler, FilteringManager, FieldMetadata
 from src.utils.logger import get_logger
+from phi.geom import Box
+from phi.math import spatial
 
 logger = get_logger(__name__)
 
@@ -130,7 +131,7 @@ class FieldDataset(AbstractDataset):
     
     def _load_simulation(self, sim_idx: int) -> Dict[str, Any]:
         """Load simulation data from cache."""
-        full_data = self.data_manager.get_or_load_simulation(
+        full_data = self.data_manager.load_simulation(
             sim_idx, field_names=self.field_names, num_frames=self.num_frames
         )
         return full_data
@@ -308,8 +309,7 @@ class FieldDataset(AbstractDataset):
     
     def _reconstruct_metadata(self, data: Dict[str, Any]) -> Dict[str, FieldMetadata]:
         """Reconstruct FieldMetadata from cached metadata."""
-        from phi.geom import Box
-        from phi.math import spatial
+
         
         field_metadata_dict = data["metadata"]["field_metadata"]
         field_metadata = {}
@@ -411,65 +411,6 @@ class FieldDataset(AbstractDataset):
             fields_dict[name] = window_field
         
         return fields_dict
-        
-    def _tensor_to_field_single(
-        self,
-        tensor: torch.Tensor,
-        metadata: FieldMetadata
-    ) -> Field:
-        """
-        Convert single-frame tensor to Field.
-        
-        Args:
-            tensor: Tensor [C, 1, H, W]
-            metadata: Field metadata
-            
-        Returns:
-            Field object
-        """  # [C, H, W]
-        
-        # Create PhiML tensor with explicit dimensions
-        phiml_tensor = math.tensor(
-            tensor,
-            channel("vector"),
-            batch("time"),
-            spatial(*metadata.spatial_dims)
-        )
-        
-        # Create Field
-        return CenteredGrid(
-            phiml_tensor,
-            metadata.extrapolation,
-            bounds=metadata.domain
-        )
-
-    def _tensor_to_field_sequence(
-        self,
-        tensor: torch.Tensor,
-        metadata: FieldMetadata
-    ) -> List[Field]:
-        """
-        Convert multi-frame tensor to list of Fields.
-        
-        Args:
-            tensor: Tensor [C, T, H, W]
-            metadata: Field metadata
-            
-        Returns:
-            List of Field objects, one per timestep
-        """
-        phiml_tensor = math.tensor(
-            tensor,
-            channel("vector"),
-            batch("time"),
-            spatial(*metadata.spatial_dims)
-        )
-
-        return CenteredGrid(
-            phiml_tensor,
-            metadata.extrapolation,
-            bounds=metadata.domain
-        )
         
     def _get_field_metadata(self) -> Dict[str, FieldMetadata]:
         """Get field metadata (cached)."""

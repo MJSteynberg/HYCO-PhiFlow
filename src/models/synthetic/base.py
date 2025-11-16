@@ -9,8 +9,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import logging
 
-from src.utils.field_conversion.validation import assert_bvts_format
-
 
 class SyntheticModel(nn.Module, ABC):
     """
@@ -74,9 +72,6 @@ class SyntheticModel(nn.Module, ABC):
             Output tensor in BVTS layout [B, V, T, H, W] representing the
             next state.
         """
-        # Enforce BVTS at entry
-        assert_bvts_format(x, context=f"{self.__class__.__name__}.forward input")
-
         # Guaranteed BVTS: [B, V, T, H, W]
         B, V, T, H, W = x.shape
 
@@ -92,10 +87,7 @@ class SyntheticModel(nn.Module, ABC):
         out_frames[:, self.num_dynamic_channels:] = reshaped_in[:, self.num_dynamic_channels:]
 
         # Reshape back to BVTS: [B, V, T, H, W]
-        out = out_frames.reshape(B, T, V, H, W).permute(0, 2, 1, 3, 4).contiguous()
-
-        # Enforce BVTS on output
-        assert_bvts_format(out, context=f"{self.__class__.__name__}.forward output")
+        out = out_frames.reshape(B, T, V, H, W).permute(0, 2, 1, 3, 4)
         return out
 
 
@@ -129,21 +121,9 @@ class SyntheticModel(nn.Module, ABC):
         self.eval()
         self.to(device)
         
-        if not trajectories:
-            self.logger.warning("No trajectories provided for prediction generation")
-            return []
-        
-        self.logger.debug(f"Generating predictions from {len(trajectories)} physical trajectories")
-        
         prediction_trajectories = []
         
-        for traj_idx, trajectory_dict in enumerate(trajectories):
-            # Extract tensor_data from cache format
-            if isinstance(trajectory_dict, dict) and 'tensor_data' in trajectory_dict:
-                tensor_data = trajectory_dict['tensor_data']
-            else:
-                tensor_data = trajectory_dict
-            
+        for tensor_data in trajectories:
             # Concatenate all fields along channel dimension
             # Each field: [C, T, H, W]
             field_tensors = [tensor_data[field_name] for field_name in sorted(tensor_data.keys())]
@@ -153,34 +133,22 @@ class SyntheticModel(nn.Module, ABC):
             full_trajectory = full_trajectory.to(device, non_blocking=True)
             
             # Get trajectory length
-            num_steps = full_trajectory.shape[1]  # T dimension
-            
-            # Extract real initial condition (first frame)
-            initial_real = full_trajectory[:, 0:1, :, :]  # [C_all, 1, H, W]
-            # Build prediction trajectory: [initial_real, pred1, pred2, ...]
-            trajectory_frames = [initial_real]  # Start with real initial [C_all, H, W]
-            current_state = initial_real # [1, C_all, 1, H, W]
+            num_steps = full_trajectory.shape[1] 
+
+            trajectory_frames = [full_trajectory[:, 0:1, :, :]] 
             
             with torch.amp.autocast(enabled=True, device_type=device):
                 # Generate predictions for remaining timesteps
-                for t in range(1, num_steps):
+                for t in range(num_steps-1):
                     # One-step prediction
-                    next_state = self(current_state.unsqueeze(0)).squeeze(0) # [C_all, 1, H, W]
+                    next_state = self(full_trajectory[:, t:t+1, :, :].unsqueeze(0)).squeeze(0)
                     # Store prediction (squeeze time dim)
-                    trajectory_frames.append(next_state)  # [C_all, H, W]
-                    
-                    # Use prediction as next input
-                    current_state = full_trajectory[:, t:t+1, :, :]  # Teacher forcing with real data
+                    trajectory_frames.append(next_state)  
             
-            # Stack into trajectory: [T, C_all, H, W]
             trajectory_tensor = torch.cat(trajectory_frames, dim=1)
             # Store as CPU tensor
             prediction_trajectories.append(trajectory_tensor.cpu())
-            
-            if (traj_idx + 1) % 50 == 0:
-                self.logger.debug(f"  Generated {traj_idx + 1}/{len(trajectories)} predictions")
         
-        self.logger.debug(f"Generated {len(prediction_trajectories)} prediction trajectories")
         
         return prediction_trajectories
 
