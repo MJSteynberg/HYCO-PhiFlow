@@ -14,7 +14,6 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.data import DataManager, TensorDataset, FieldDataset
-from src.config import ConfigHelper
 from src.utils.logger import get_logger
 from src.data.dataset_utilities import field_collate_fn, tensor_collate_fn
 
@@ -60,7 +59,7 @@ class DataLoaderFactory:
         sim_indices: Optional[List[int]] = None,
         batch_size: Optional[int] = None,
         shuffle: bool = True,
-        enable_augmentation: Optional[bool] = None,
+        enable_augmentation: bool = False,
         num_workers: int = 0,
         percentage_real_data: float = 1.0,
     ) -> Union[DataLoader, FieldDataset]:
@@ -119,60 +118,14 @@ class DataLoaderFactory:
         """
         logger.debug(f"Creating data loader (mode={mode})...")
 
-        # === Step 1: Extract configuration using ConfigHelper ===
-        cfg = ConfigHelper(config)
-
-        # Validate configuration
-        issues = cfg.validate()
-        if issues:
-            raise ValueError(
-                f"Invalid configuration:\n"
-                + "\n".join(f"  - {issue}" for issue in issues)
-            )
-
-        # Get parameters (use provided values or fall back to config)
-        sim_indices = (
-            sim_indices if sim_indices is not None else cfg.get_train_sim_indices()
-        )
-        batch_size = batch_size if batch_size is not None else cfg.get_batch_size()
-        enable_augmentation = (
-            enable_augmentation
-            if enable_augmentation is not None
-            else cfg.is_augmentation_enabled()
-        )
-
-        num_frames = None
-        num_predict_steps = cfg.get_num_predict_steps()
-
-        logger.debug(f"  Simulations: {len(sim_indices)}")
-        logger.debug(f"  Batch size: {batch_size}")
-        logger.debug(f"  Augmentation: {enable_augmentation}")
 
         # === Step 2: Create DataManager ===
-        data_manager = DataLoaderFactory._create_data_manager(config, cfg)
-
-        # === Step 3: Get field specifications ===
-        field_names = cfg.get_field_names()
-
-        # === Step 4: Get augmentation config ===
-        augmentation_config = None
-        if enable_augmentation:
-            augmentation_config = cfg.get_augmentation_config()
-            logger.debug(f"  Augmentation mode: {augmentation_config['mode']}")
-            logger.debug(f"  Augmentation alpha: {augmentation_config['alpha']}")
+        data_manager = DataLoaderFactory._create_data_manager(config)
 
         # === Step 5: Create dataset based on mode ===
         if mode == "tensor":
 
-            dataset = TensorDataset(
-                data_manager=data_manager,
-                sim_indices=sim_indices,
-                field_names=field_names,
-                num_frames=num_frames,
-                num_predict_steps=num_predict_steps,
-                augmentation_config=augmentation_config,
-                percentage_real_data=percentage_real_data,
-            )
+            dataset = TensorDataset(config, data_manager, enable_augmentation)
 
             # Wrap in DataLoader for batching
             logger.debug(f"  Created TensorDataset with {len(dataset)} samples")
@@ -193,22 +146,8 @@ class DataLoaderFactory:
             return data_loader
 
         elif mode == "field":
-            # Field mode: for physical (PDE-based) models
-            logger.debug(f"  Fields: {field_names}")
 
-            dataset = FieldDataset(
-                data_manager=data_manager,
-                sim_indices=sim_indices,
-                field_names=field_names,
-                num_frames=num_frames,
-                num_predict_steps=num_predict_steps,
-                augmentation_config=augmentation_config,
-                percentage_real_data=percentage_real_data,
-            )
-
-            # Return dataset directly (no DataLoader for field mode)
-            logger.debug(f"  Created FieldDataset with {len(dataset)} samples")
-            logger.debug(f"FieldDataset created successfully")
+            dataset = FieldDataset(config, data_manager, enable_augmentation)
 
             data_loader = DataLoader(
                 dataset,
@@ -224,7 +163,7 @@ class DataLoaderFactory:
             raise ValueError(f"Unknown mode: {mode}. Must be 'tensor' or 'field'.")
 
     @staticmethod
-    def _create_data_manager(config: dict, cfg: ConfigHelper) -> DataManager:
+    def _create_data_manager(config: dict) -> DataManager:
         """
         Create DataManager from configuration.
 
@@ -237,87 +176,7 @@ class DataLoaderFactory:
 
         Note: Cache creation and validation are always enabled (hardcoded).
         """
-        # Get paths
-        project_root = cfg.get_project_root()
-        raw_data_dir = project_root / cfg.get_raw_data_dir()
-        cache_dir = project_root / cfg.get_cache_dir()
 
-        # Get auto-clear setting
-        auto_clear_invalid = cfg.should_auto_clear_invalid()
+        return DataManager(config)
 
-        logger.debug(f"  Raw data: {raw_data_dir}")
-        logger.debug(f"  Cache: {cache_dir}")
 
-        return DataManager(
-            raw_data_dir=str(raw_data_dir),
-            cache_dir=str(cache_dir),
-            config=config,
-            auto_clear_invalid=auto_clear_invalid,
-        )
-
-    @staticmethod
-    def create_for_evaluation(
-        config: dict,
-        mode: Literal["tensor", "field"] = "tensor",
-        sim_indices: Optional[List[int]] = None,
-    ) -> Union[DataLoader, FieldDataset]:
-        """
-        Create a data loader/dataset for evaluation.
-
-        Convenience method that uses evaluation-specific defaults:
-        - No shuffling
-        - No augmentation
-        - Uses validation sim indices if not specified
-
-        Args:
-            config: Full configuration dictionary
-            mode: 'tensor' or 'field'
-            sim_indices: Simulation indices (default: validation sims from config)
-
-        Returns:
-            DataLoader or FieldDataset configured for evaluation
-        """
-        cfg = ConfigHelper(config)
-
-        # Use validation sims if not specified
-        if sim_indices is None:
-            sim_indices = cfg.get_val_sim_indices()
-            if not sim_indices:
-                logger.warning("No validation sims specified, using train sims")
-                sim_indices = cfg.get_train_sim_indices()
-
-        return DataLoaderFactory.create(
-            config=config,
-            mode=mode,
-            sim_indices=sim_indices,
-            shuffle=False,  # Don't shuffle for evaluation
-            enable_augmentation=False,  # No augmentation for evaluation
-        )
-
-    @staticmethod
-    def get_info(config: dict) -> dict:
-        """
-        Get information about what data loader would be created.
-
-        Useful for debugging and validation without actually creating the loader.
-
-        Args:
-            config: Full configuration dictionary
-
-        Returns:
-            Dictionary with data loader configuration information
-        """
-        cfg = ConfigHelper(config)
-
-        return {
-            "dataset_name": cfg.get_dataset_name(),
-            "model_type": cfg.get_model_type(),
-            "field_names": cfg.get_field_names(),
-            "train_sims": cfg.get_train_sim_indices(),
-            "val_sims": cfg.get_val_sim_indices(),
-            "batch_size": cfg.get_batch_size(),
-            "num_predict_steps": cfg.get_num_predict_steps(),
-            "use_sliding_window": cfg.should_use_sliding_window(),
-            "augmentation_enabled": cfg.is_augmentation_enabled(),
-            "augmentation_config": cfg.get_augmentation_config(),
-        }

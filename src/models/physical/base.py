@@ -18,19 +18,7 @@ class PhysicalModel(ABC):
     1. Be initialized from a configuration.
     2. Generate a batched initial state (t=0).
     3. Be advanced one time step.
-
-    Child classes should declare their PDE-specific parameters by overriding
-    the PDE_PARAMETERS class variable:
-
-    Example:
-        class BurgersModel(PhysicalModel):
-            PDE_PARAMETERS = {
-                'nu': {'type': float, 'default': 0.01}
-            }
     """
-
-    # Child classes override this to declare their PDE parameters
-    PDE_PARAMETERS: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self, config: Dict[str, Any]):
         """
@@ -43,78 +31,44 @@ class PhysicalModel(ABC):
                 - dt: float time step
                 - pde_params: Dict with model-specific parameters
         """
-        # Parse common configuration
-        self.domain = self._parse_domain(config["domain"])
-        self.resolution = self._parse_resolution(config["resolution"])
-        self.dt = float(config["dt"])
 
-        # Parse batch_size from pde_params (default: 1)
-        pde_params = config["pde_params"]
-        # Parse and validate PDE-specific parameters
-        self._parse_pde_parameters(pde_params)
+        self._parse_config(config)
 
-        self.logger = get_logger(__name__)
-        # Simple string representation to avoid Unicode superscript issues
-        self.logger.info(
-            f"Initialized {self.__class__.__name__} with resolution={tuple(self.resolution.sizes)}, dt={self.dt}"
-        )
 
-    def _parse_domain(self, domain_config: Dict[str, Any]) -> Box:
-        """Parse domain configuration into a Box object."""
-        size_x = domain_config["size_x"]
-        size_y = domain_config["size_y"]
-        return Box(x=size_x, y=size_y)
-
-    def _parse_resolution(self, resolution_config: Dict[str, Any]) -> Shape:
-        """Parse resolution configuration into a Shape object."""
-        x = resolution_config["x"]
-        y = resolution_config["y"]
-        return spatial(x=x, y=y)
-
-    def _parse_pde_parameters(self, pde_params: Dict[str, Any]):
+    def _parse_config(self, config: Dict[str, Any]):
         """
-        Parse and validate PDE-specific parameters based on PDE_PARAMETERS declaration.
-
-        Creates properties for each parameter with automatic getter/setter.
+        Parse configuration dictionary to setup model.
         """
-        for param_name, param_spec in self.PDE_PARAMETERS.items():
-            # Extract parameter specification
-            param_type = param_spec["type"]
-            default_value = param_spec["default"]
-            # Get value from config or use default
-            if param_name in pde_params:
-                value = pde_params[param_name]
-                # Convert to appropriate type
-                if param_type is not None:
-                    value = param_type(value)
-            elif default_value is not None:
-                value = default_value
-            else:
-                self.logger.error(
-                    f"Missing required PDE parameter '{param_name}'"
-                )
+        # Setup domain 
+        size_x = config["model"]["physical"]["domain"]["size_x"]
+        size_y = config["model"]["physical"]["domain"]["size_y"]
+        self.domain = Box(x=size_x, y=size_y)
 
-            # Store as private attribute
-            private_name = f"_{param_name}"
-            setattr(self, private_name, value)
+        # Setup resolution
+        res_x = config["model"]["physical"]["resolution"]["x"]
+        res_y = config["model"]["physical"]["resolution"]["y"]
+        self.resolution = spatial(x=res_x, y=res_y)
 
-            # Create property dynamically
-            self._create_property(param_name)
+        # Setup PDE parameters
+        pde_params = config["model"]["physical"]["pde_params"]
+        for param_name, value in pde_params.items():         
+            self._create_property(param_name, value)
+        self.dt = float(config["model"]["physical"]["dt"])
+        
 
-    def _create_property(self, param_name: str):
+    def _create_property(self, param_name: str, value: Any):
         """
         Dynamically create a property for a PDE parameter.
 
         This creates a getter and setter that access the private attribute.
         """
         private_name = f"_{param_name}"
-
+        setattr(self, private_name, value)
         # Create getter and setter functions
         def getter(self):
             return getattr(self, private_name)
 
         def setter(self, value):
-            # Re-validate if validator exists
             setattr(self, private_name, value)
 
         # Set property on the class (not instance)

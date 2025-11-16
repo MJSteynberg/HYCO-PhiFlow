@@ -41,14 +41,6 @@ class AdvectionModel(PhysicalModel):
     scaled by a learnable advection coefficient.
     """
 
-    # Declare PDE-specific parameters
-    PDE_PARAMETERS = {
-        "advection_coeff": {
-            "type": float,
-            "default": 1.0,
-        }
-    }
-
     def __init__(self, config: dict):
         """Initialize the advection model."""
         super().__init__(config)

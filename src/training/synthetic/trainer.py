@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from tqdm import tqdm
 
-# Import tensor trainer (new hierarchy)
-from src.training.abstract_trainer import AbstractTrainer
 from torch.utils.data import DataLoader
 
 
@@ -20,7 +18,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class SyntheticTrainer(AbstractTrainer):
+class SyntheticTrainer():
     """
     Tensor-based trainer for synthetic models using DataManager pipeline.
 
@@ -41,33 +39,13 @@ class SyntheticTrainer(AbstractTrainer):
             model: Pre-created synthetic model (e.g., UNet)
         """
         # Initialize base trainer with model
-        super().__init__(config)
+        super().__init__()
 
-        # --- Derive all parameters from config ---
-        self.data_config = config["data"]
-        self.model_config = config["model"]["synthetic"]
-        self.trainer_config = config["trainer_params"]
-
-        # --- Data specifications ---
-        self.field_names: List[str] = self.data_config["fields"]
-        self.dset_name = self.data_config["dset_name"]
-        self.data_dir = self.data_config["data_dir"]
-
-        # --- Checkpoint path ---
-        model_save_name = self.model_config["model_save_name"]
-        model_path_dir = self.model_config["model_path"]
-        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
-        os.makedirs(model_path_dir, exist_ok=True)
-
-        # PyTorch-specific initialization
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Store model and move to device
-        self.model = model.to(self.device)
-        # --- Scheduler ---
-        epochs = self.trainer_config["epochs"]
-
-        self._setup(enabled=True, T_max=epochs)
+        # Parse configuration and setup trainer
+        self.model = model
+        self._parse_config(config)
+        self._setup()
+        self.model.to(self.device)
 
         # Validation state tracking
         self.best_val_loss = float("inf")
@@ -75,6 +53,37 @@ class SyntheticTrainer(AbstractTrainer):
 
         # --- Loss function ---
         self.loss_fn = nn.MSELoss()  # Simple MSE for tensor-based training
+
+    def _parse_config(self, config):
+        """
+        Parse configuration for synthetic trainer.
+
+        Extracts relevant parameters from the config dictionary
+        and sets up internal variables.
+        """
+
+        # --- Data specifications ---
+        self.field_names: List[str] = config["data"]["fields"]
+        self.data_dir = config["data"]["data_dir"]
+        self.dset_name = config["data"]["dset_name"]
+        
+        # --- Checkpoint path ---
+        model_path_dir = config["model"]["synthetic"]["model_path"]
+        model_save_name = config["model"]["synthetic"]["model_save_name"]
+        
+        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
+        os.makedirs(model_path_dir, exist_ok=True)
+
+        # PyTorch-specific initialization
+        self.device = torch.device(config['trainer']['device'] if torch.cuda.is_available() else "cpu")
+        self.epochs = config['trainer']['synthetic']['epochs']
+        self.learning_rate = config['trainer']['synthetic']['learning_rate']
+
+    def _setup(self):
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        self.scaler = torch.amp.GradScaler(enabled=True)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.epochs)
 
 
     ####################
@@ -187,13 +196,7 @@ class SyntheticTrainer(AbstractTrainer):
     # Utilities #
     #############
     
-    def _setup(self, enabled: bool = True, **kwargs) -> torch.optim.Optimizer:
-        learning_rate = self.config['trainer_params']['learning_rate']
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.scaler = torch.amp.GradScaler(enabled=enabled)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, **kwargs
-            )
+
 
     def save_checkpoint(
         self,
@@ -222,7 +225,6 @@ class SyntheticTrainer(AbstractTrainer):
             "epoch": epoch,
             "model_state_dict": self.model.state_dict(),
             "loss": loss,
-            "config": self.config,
         }
 
         if optimizer_state is not None:

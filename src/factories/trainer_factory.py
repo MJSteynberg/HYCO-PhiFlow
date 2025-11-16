@@ -17,6 +17,7 @@ from src.factories.model_factory import ModelFactory
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.utils.logger import get_logger
 import warnings
+from src.training.hybrid import HybridTrainer
 
 logger = get_logger(__name__)
 
@@ -57,14 +58,7 @@ class TrainerFactory:
         Raises:
             ValueError: If model_type is unknown
         """
-        model_type = config["run_params"]["model_type"]
-
-        available = TrainerFactory.list_available_trainers()
-        if model_type not in available:
-            raise ValueError(
-                f"Unknown model_type '{model_type}'. " f"Available: {available}"
-            )
-
+        model_type = config["general"]["mode"]
         # Create trainer based on type
         if model_type == "synthetic":
             return TrainerFactory._create_synthetic_trainer(config)
@@ -108,25 +102,12 @@ class TrainerFactory:
         # Create model externally
         model = ModelFactory.create_physical_model(config)
 
-        # Extract learnable parameters from config
-        learnable_params = config["trainer_params"].get(
-            "learnable_parameters", []
-        )
 
-        if not learnable_params:
-            raise ValueError(
-                "No 'learnable_parameters' defined in trainer_params for physical training."
-            )
+    
         # Create trainer with model and params
-        trainer = PhysicalTrainer(config, model, learnable_params)
+        trainer = PhysicalTrainer(config, model)
 
         return trainer
-
-    # NOTE: create_data_loader_for_synthetic has been removed. Use DataLoaderFactory.create(config, mode='tensor') instead.
-
-    # NOTE: create_dataset_for_physical has been removed. Use DataLoaderFactory.create(config, mode='field') instead.
-
-    # NOTE: generate_augmented_cache has been removed; use hybrid pipeline or augmentation configs instead.
 
     @staticmethod
     def create_hybrid_trainer(config: Dict[str, Any]):
@@ -139,33 +120,19 @@ class TrainerFactory:
         Returns:
             HybridTrainer instance configured with both models
         """
-        from src.training.hybrid import HybridTrainer
-
-        logger.info("Creating hybrid trainer...")
-
         # Create synthetic model
         synthetic_model = ModelFactory.create_synthetic_model(config)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        synthetic_model.to(device)
 
         # Create physical model and learnable parameters
         physical_model = ModelFactory.create_physical_model(config)
-
-        # Extract learnable parameters from config (same as _create_physical_trainer)
-        learnable_params = config["trainer_params"].get(
-            "learnable_parameters", {}
-        )
-        # Create learnable parameter tensors (empty list if none defined, e.g., for advection)
 
         # Create hybrid trainer
         hybrid_trainer = HybridTrainer(
             config=config,
             synthetic_model=synthetic_model,
             physical_model=physical_model,
-            learnable_params=learnable_params,
         )
 
-        logger.info("Hybrid trainer created successfully")
         return hybrid_trainer
 
     @staticmethod

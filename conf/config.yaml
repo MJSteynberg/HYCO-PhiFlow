@@ -1,28 +1,60 @@
-defaults:
-  - data: burgers_128
-  - model/physical: burgers
-  - model/synthetic: unet
-  - trainer: synthetic
-  - generation: default
-  - evaluation: default
-  - logging: default
-  - _self_
-  - optional experiment: ???  # Specify with experiment=name
-  - override hydra/job_logging: default
-  - override hydra/hydra_logging: default
+general: 
+  experiment_name: 'advection_experiment'
+  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['generate', 'train']
 
-run_params:
-  experiment_name: ???  # Must be specified
-  notes: ""
-  mode: [train]
-  model_type: synthetic
+data:
+  data_dir: 'data/advection'
+  dset_name: 'advection'
+  fields: ['density', 'velocity']
+  fields_scheme: 'dvv'
+  fields_type: 'DSS'
+  num_simulations: 10
+  trajectory_length: 100
 
-# Cache configuration for augmented data
-# Note: Cache creation and validation are always enabled (hardcoded)
-cache:
-  root: "data/cache"
-  cleanup:
-    on_start: false  # Clear cache before training
-    on_error: false  # Clear cache if validation fails
+model:
+  physical:
+    name: 'AdvectionModel'
+    domain: 
+      size_x: 100
+      size_y: 100
+    resolution:
+      x: 128
+      y: 128
+    dt: 0.5
+    pde_params:
+      advection_coeff: 1.0
+  synthetic:
+    name: 'UNet'
+    model_path: 'results/models'
+    model_save_name: 'advection_unet_model' 
+    architecture: 
+      levels: 4
+      filters: 64
 
-project_root: ${hydra:runtime.cwd}
+trainer:
+  batch_size: 32
+  rollout_steps: 4 
+  train_sim: [1]
+  device: 'cuda:0'
+  data_access: 'both'
+  physical: 
+    epochs: 1 
+    learnable_parameters:
+      - name: 'advection_coeff'
+        initial_guess: 0.5
+    method: 'L-BFGS-B'
+    abs_tol: 1e-4
+    max_iterations: 5
+  synthetic:
+    epochs: 1
+    learning_rate: 0.0001
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  hybrid:
+    cycles: 10 
+    augmentation:
+      alpha: 0.1
+      cache_dir: data/cache/advection
+      

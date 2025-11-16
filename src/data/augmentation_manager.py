@@ -20,42 +20,38 @@ class AugmentationHandler:
 
     @staticmethod
     def load_augmentation(
-        config: Dict[str, Any],
+        cache_dir: str,
         num_real: int,
-        num_predict_steps: int,
+        rollout_steps: int,
+        alpha: float,
         field_names: List[str],
+        mode: str = "cache",
+        data: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
-        mode = config.get("mode", "cache")
-        alpha = config.get("alpha", 0.0)
-
-        logger.debug(f"Loading augmentation (mode={mode}, alpha={alpha})...")
 
         if mode == "memory":
             return AugmentationHandler._load_from_memory(
-                config, num_predict_steps, field_names
+                cache_dir, rollout_steps, field_names, data
             )
         elif mode == "cache":
             return AugmentationHandler._load_from_cache(
-                config, num_real, alpha
+                cache_dir, num_real, alpha
             )
         else:
             raise ValueError(f"Unknown augmentation mode: {mode}")
 
     @staticmethod
     def _load_from_memory(
-        config: Dict[str, Any],
-        num_predict_steps: int,
+        cache_dir: str,
+        rollout_steps: int,
         field_names: List[str],
+        data: Optional[Dict[str, Any]],
     ) -> List[Any]:
-        if "data" not in config:
-            raise ValueError("Augmentation mode 'memory' requires 'data' key")
-
-        data = config["data"]
 
         if AugmentationHandler._is_trajectory_data(data):
             logger.debug("  Processing raw trajectory data...")
             samples = AugmentationHandler._process_trajectory_data(
-                data, num_predict_steps, field_names
+                data, rollout_steps, field_names
             )
         else:
             samples = data
@@ -65,12 +61,9 @@ class AugmentationHandler:
 
     @staticmethod
     def _load_from_cache(
-        config: Dict[str, Any], num_real: int, alpha: float
+        cache_dir: str, num_real: int, alpha: float
     ) -> List[Any]:
-        if "cache_dir" not in config:
-            raise ValueError("Augmentation mode 'cache' requires 'cache_dir' key")
-
-        cache_dir = config["cache_dir"]
+        
         expected_count = int(num_real * alpha) if alpha > 0 else None
 
         cache_path = Path(cache_dir)
@@ -108,6 +101,7 @@ class AugmentationHandler:
         logger.debug(f"  Loaded {len(samples)} cached augmented samples")
         return samples
 
+        
     @staticmethod
     def _is_trajectory_data(data: Any) -> bool:
         if not isinstance(data, list) or len(data) == 0:

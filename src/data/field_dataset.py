@@ -41,9 +41,9 @@ class FieldMetadata:
     channel_dims: Tuple[str, ...]
 
     @classmethod
-    def from_field(cls, field: Field) -> "FieldMetadata":
+    def from_field(self, field: Field) -> "FieldMetadata":
         field_type = "staggered" if field.is_staggered else "centered"
-        return cls(
+        return self(
             domain=field.bounds,
             resolution=field.resolution,
             extrapolation=field.extrapolation,
@@ -54,7 +54,7 @@ class FieldMetadata:
 
     @classmethod
     def from_cache_metadata(
-        cls, cached_meta: Dict, domain: Box, resolution: Shape
+        self, cached_meta: Dict, domain: Box, resolution: Shape
     ) -> "FieldMetadata":
         from phi.math import extrapolation as extrap_module
 
@@ -79,7 +79,7 @@ class FieldMetadata:
 
         field_type = cached_meta.get("field_type", "centered")
 
-        return cls(
+        return self(
             domain=domain,
             resolution=resolution,
             extrapolation=extrapolation,
@@ -131,38 +131,14 @@ class FieldDataset(AbstractDataset):
     
     def __init__(
         self,
+        config: Dict[str, Any],
         data_manager: DataManager,
-        sim_indices: List[int],
-        field_names: List[str],
-        num_frames: Optional[int],
-        num_predict_steps: int,
-        augmentation_config: Optional[Dict[str, Any]] = None,
-        access_policy: str = "both",
-        max_cached_sims: int = 5,
-        percentage_real_data: float = 1.0,
+        enable_augmentation: bool,
     ):
         """Initialize FieldDataset."""
         self._field_metadata_cache = None
         self._num_augmented_trajectories = 0
-        
-        logger.debug("Setting up FieldDataset...")
-        num_frames, num_real, augmented_samples, index_mapper = self._setup_dataset(
-            data_manager, sim_indices, field_names, num_frames, num_predict_steps,
-            augmentation_config, percentage_real_data
-        )
-        
-        super().__init__(
-            data_manager=data_manager,
-            sim_indices=sim_indices,
-            field_names=field_names,
-            num_frames=num_frames,
-            num_predict_steps=num_predict_steps,
-            access_policy=access_policy,
-            num_real=num_real,
-            augmented_samples=augmented_samples,
-            index_mapper=index_mapper,
-            max_cached_sims=max_cached_sims,
-        )
+        super().__init__(config, data_manager, enable_augmentation)
         
         self._log_dataset_info()
 
@@ -174,20 +150,20 @@ class FieldDataset(AbstractDataset):
         sim_indices: List[int],
         field_names: List[str],
         num_frames: Optional[int],
-        num_predict_steps: int,
-        augmentation_config: Optional[Dict[str, Any]],
+        rollout_steps: int,
+        cache_dir: str,
         percentage_real_data: float,
+        enable_augmentation: bool,
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
         """Setup dataset components."""
         # Use helper methods from AbstractDataset instead of DatasetBuilder
         num_frames = AbstractDataset.setup_cache(
-            data_manager, sim_indices, field_names, num_frames, num_predict_steps
+            data_manager, sim_indices, field_names, num_frames, rollout_steps
         )
         samples_per_sim = AbstractDataset.compute_sliding_window(
-            num_frames, num_predict_steps
+            num_frames, rollout_steps
         )
         total_real_samples = len(sim_indices) * samples_per_sim
-        
         # Setup filtering
         index_mapper = None
         if percentage_real_data < 1.0:
@@ -202,11 +178,14 @@ class FieldDataset(AbstractDataset):
         
         # Setup augmentation (if provided)
         augmented_samples = []
-        if augmentation_config:
-            raw_samples = AugmentationHandler.load_augmentation(
-                augmentation_config, num_real, num_predict_steps, field_names
+        if enable_augmentation:
+            logger.debug(
+                f"  Loading augmented samples from cache "
+                f"({cache_dir}, alpha={percentage_real_data})..."
             )
-            augmented_samples = raw_samples  # Already in correct format
+            augmented_samples = AugmentationHandler.load_augmentation(
+                cache_dir, num_real, percentage_real_data
+            )  # Already in correct format
         
         return num_frames, num_real, augmented_samples, index_mapper
     
@@ -259,7 +238,7 @@ class FieldDataset(AbstractDataset):
         
         # Convert target rollout (multiple frames)
         target_start = start_frame + 1
-        target_end = start_frame + 1 + self.num_predict_steps
+        target_end = start_frame + 1 + self.rollout_steps
         target_fields = self._tensors_to_fields(
             data, field_metadata, target_start, target_end
         )
@@ -280,11 +259,11 @@ class FieldDataset(AbstractDataset):
             Tuple of (initial_fields, target_fields) as Fields
         """
         # Compute which trajectory and which window within that trajectory
-        samples_per_traj = self.num_frames - self.num_predict_steps
+        samples_per_traj = self.num_frames - self.rollout_steps + 1
         if samples_per_traj <= 0:
             raise ValueError(
                 f"Invalid configuration: num_frames={self.num_frames} must be > "
-                f"num_predict_steps={self.num_predict_steps}"
+                f"rollout_steps={self.rollout_steps}"
             )
         
         traj_idx = idx // samples_per_traj
@@ -295,7 +274,6 @@ class FieldDataset(AbstractDataset):
                 f"Augmented index {idx} out of range "
                 f"(trajectory {traj_idx} >= {self._num_augmented_trajectories})"
             )
-        
         # Get the trajectory data (in cache format)
         trajectory_data = self.augmented_samples[traj_idx]
         
@@ -326,7 +304,7 @@ class FieldDataset(AbstractDataset):
         )
         # Extract target trajectory
         target_start = window_start + 1
-        target_end = window_start + 1 + self.num_predict_steps
+        target_end = window_start + 1 + self.rollout_steps
         target_fields = self._tensors_to_fields(
             trajectory_data,
             field_metadata,
@@ -367,7 +345,7 @@ class FieldDataset(AbstractDataset):
         self._num_augmented_trajectories = len(trajectory_rollouts)
         
         # Calculate total augmented samples (with windowing)
-        # Each trajectory of length T can produce (T - num_predict_steps) windows
+        # Each trajectory of length T can produce (T - rollout_steps) windows
         first_traj = trajectory_rollouts[0]
         
         # Extract tensor_data to check trajectory length
@@ -378,19 +356,17 @@ class FieldDataset(AbstractDataset):
         
         traj_length = first_field.shape[1]  # T dimension in [C, T, H, W]
         
-        samples_per_trajectory = traj_length - self.num_predict_steps
+        samples_per_trajectory = traj_length - self.rollout_steps
         if samples_per_trajectory <= 0:
             logger.warning(
                 f"Trajectory length {traj_length} too short for "
-                f"num_predict_steps={self.num_predict_steps}"
+                f"rollout_steps={self.rollout_steps}"
             )
             self.num_augmented = 0
         else:
             self.num_augmented = self._num_augmented_trajectories * samples_per_trajectory
         
-        # Recompute total length
         self._total_length = self._compute_length()
-        
         logger.debug(
             f"Set {self._num_augmented_trajectories} synthetic trajectories "
             f"({self.num_augmented} windowed samples, {samples_per_trajectory} per trajectory)"
@@ -561,6 +537,6 @@ class FieldDataset(AbstractDataset):
             f"  samples={len(self)} (real={self.num_real}, aug={self.num_augmented}),\n"
             f"  fields={len(self.field_names)},\n"
             f"  frames={self.num_frames},\n"
-            f"  predict_steps={self.num_predict_steps}\n"
+            f"  predict_steps={self.rollout_steps}\n"
             f")"
         )

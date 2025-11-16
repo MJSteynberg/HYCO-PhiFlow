@@ -22,7 +22,7 @@ from tqdm import tqdm
 logger = get_logger(__name__)
 
 
-class PhysicalTrainer(AbstractTrainer):
+class PhysicalTrainer():
     """
     Solves an inverse problem for a PhysicalModel using cached data
     from DataManager/FieldDataset.
@@ -36,45 +36,67 @@ class PhysicalTrainer(AbstractTrainer):
     data passed via train(). Always uses sliding window.
     """
 
-    def __init__(self, config: Dict[str, Any], model, learnable_params: Dict[str, Tensor]):
+    def __init__(self, config: Dict[str, Any], model):
         """
         Initializes the trainer with external model and learnable parameters.
 
         Args:
             config: Full configuration dictionary
             model: Pre-created physical model
-            learnable_params: List of PhiFlow Tensors for learnable parameters
+            learnable_parameters: List of PhiFlow Tensors for learnable parameters
         """
-        # Initialize base trainer with model and params
-        super().__init__(config)
 
         # --- Derive all parameters from config ---
-        self.data_config = config["data"]
-        self.model_config = config["model"]["physical"]
-        self.trainer_config = config["trainer_params"]
-
-        # --- Data specifications ---
-        self.field_names: List[str] = self.data_config["fields"]
-        self.dset_name = self.data_config["dset_name"]
-        self.data_dir = self.data_config["data_dir"]
-
-        # -- Store model and parameters ---
         self.model = model
-        self.learnable_params = [p['initial_guess'] for p in learnable_params]
-        self.param_names = [p["name"] for p in learnable_params]
 
-        # Create optimizer
-        self.optimizer = self._create_optimizer()
+        self._parse_config(config)
+        self._setup()
  
         # Results storage
         self.final_loss: float = 0.0
         self.training_history: List[float] = []
-
         self.best_val_loss = float("inf")
         self.best_epoch = 0
 
-        # --- Get parameters ---
-        self.num_predict_steps= self.trainer_config["num_predict_steps"]
+    def _parse_config(self, config: Dict[str, Any]):
+        """
+        Parse configuration dictionary to setup trainer parameters.
+
+        Args:
+            config: Full configuration dictionary
+        """
+
+        # --- Data specifications ---
+        self.field_names: List[str] = config['data']["fields"]
+        self.data_dir = config['data']["data_dir"]
+        self.dset_name = config['data']["dset_name"]
+        
+        # -- Store model and parameters ---
+        learnable_parameters = config['trainer']['physical']['learnable_parameters']
+        self.learnable_parameters = [p['initial_guess'] for p in learnable_parameters]
+        self.param_names = [p["name"] for p in learnable_parameters]
+        self.rollout_steps = config['trainer']['rollout_steps']
+
+        # --- Trainer specifications ---
+        self.method = config['trainer']['physical']['method']
+        self.abs_tol = config['trainer']['physical']['abs_tol']
+        self.max_iterations = config['trainer']['physical']['max_iterations']
+
+    def _setup(self):
+        """
+        Create optimizer for learnable parameters.
+
+        Returns:
+            PhiFlow optimizer instance
+        """
+        self.optimizer = math.Solve(
+            method=self.method,
+            abs_tol=self.abs_tol,
+            x0=self.learnable_parameters,
+            max_iterations=self.max_iterations,
+            suppress=(math.NotConverged,),
+        )
+
 
     #########################
     # Training Loop Methods #
@@ -176,7 +198,7 @@ class PhysicalTrainer(AbstractTrainer):
             # initial_fields already has batch dimension [samples, x, y]
             current_state = initial_fields
             
-            for step in range(self.num_predict_steps):
+            for step in range(self.rollout_steps):
                 # Forward step operates on batch dimension automatically!
                 # current_state: [samples, x, y] → [samples, x, y]
                 current_state = self.model.forward(current_state)
@@ -192,7 +214,7 @@ class PhysicalTrainer(AbstractTrainer):
                 total_loss += step_loss
             
             # Average over timesteps
-            avg_loss = total_loss / self.num_predict_steps
+            avg_loss = total_loss / self.rollout_steps
             # Loss is already averaged over batch dimension by PhiML operations
             return avg_loss
         
@@ -201,7 +223,7 @@ class PhysicalTrainer(AbstractTrainer):
             estimated_params = minimize(loss_function, self.optimizer)
         except Exception as e:
             logger.error(f"Batched optimization failed: {e}")
-            estimated_params = tuple(self.learnable_params)
+            estimated_params = tuple(self.learnable_parameters)
         
         # Compute final loss
         final_loss = loss_function(*estimated_params)
@@ -220,28 +242,10 @@ class PhysicalTrainer(AbstractTrainer):
         for param_name, param_value in zip(self.param_names, learnable_tensors):
             setattr(self.model, param_name, param_value)
 
-        self.learnable_params = learnable_tensors
+        self.learnable_parameters = learnable_tensors
         self.optimizer.x0 = learnable_tensors
 
-    def _create_optimizer(self):
-        """
-        Create optimizer for learnable parameters.
-
-        Returns:
-            PhiFlow optimizer instance
-        """
-        method = self.trainer_config['method']
-        abs_tol = self.trainer_config['abs_tol']
-        max_iterations = self.trainer_config['max_iterations']
-
-        optimizer = math.Solve(
-            method=method,
-            abs_tol=abs_tol,
-            x0=self.learnable_params,
-            max_iterations=max_iterations,
-            suppress=(math.NotConverged,),
-        )
-        return optimizer
+    
     
 
     def get_current_params(self) -> Dict[str, Tensor]:
@@ -251,6 +255,6 @@ class PhysicalTrainer(AbstractTrainer):
         Returns:
             Dictionary mapping parameter names to current values
         """
-        return {name: param for name, param in zip(self.param_names, self.learnable_params)}
+        return {name: param for name, param in zip(self.param_names, self.learnable_parameters)}
     
 

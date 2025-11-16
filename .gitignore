@@ -3,6 +3,7 @@
 /results/*
 /outputs/*
 /logs/*
+/old_config/*
 
 # Python cache files
 __pycache__/

@@ -36,25 +36,12 @@ def main(cfg: DictConfig) -> None:
     config = OmegaConf.to_container(cfg, resolve=True)
     config["project_root"] = str(PROJECT_ROOT)
 
-    # Configure logging from config
-    log_config = config.get("logging", {})
-    log_level = getattr(logging, log_config.get("root_level", "INFO"))
-    logger.setLevel(log_level)
+    tasks = config["general"]["tasks"]
 
-    # Apply module-specific log levels
-    module_levels = log_config.get("module_levels", {})
-    for module_name, level_str in module_levels.items():
-        module_logger = logging.getLogger(module_name)
-        module_logger.setLevel(getattr(logging, level_str))
-
-    tasks = config["run_params"]["mode"]
-
-    if isinstance(tasks, str):
-        tasks = [tasks]
 
     logger.info(f"Starting HYCO-PhiFlow with tasks: {tasks}")
     logger.info(
-        f"Experiment: {config['run_params'].get('experiment_name', 'unknown')}"
+        f"Experiment: {config['general'].get('experiment_name', 'unknown')}"
     )
 
     # Execute tasks
@@ -71,9 +58,9 @@ def main(cfg: DictConfig) -> None:
             trainer = TrainerFactory.create_trainer(config)
             
             # Create data loader/dataset based on model type using NEW DataLoaderFactory
-            model_type = config["run_params"]["model_type"]
+            mode = config["general"]["mode"]
             
-            if model_type == "synthetic":
+            if mode == "synthetic":
                 # Create DataLoader for synthetic training using DataLoaderFactory
                 data_loader = DataLoaderFactory.create(
                     config,
@@ -85,7 +72,7 @@ def main(cfg: DictConfig) -> None:
                 num_epochs = config["trainer_params"]["epochs"]
                 trainer.train(data_source=data_loader, num_epochs=num_epochs)
                 
-            elif model_type == "physical":
+            elif mode == "physical":
                 # Create FieldDataset for physical training using DataLoaderFactory
                 dataset = DataLoaderFactory.create(
                     config,
@@ -98,7 +85,7 @@ def main(cfg: DictConfig) -> None:
                 num_epochs = config["trainer_params"].get("epochs", 1)
                 trainer.train(data_source=dataset, num_epochs=num_epochs)
                 
-            elif model_type == "hybrid":
+            elif mode == "hybrid":
                 # Phase 3: Hybrid training with data augmentation
                 # HybridTrainer manages data creation internally
                 # Just call train() with no arguments
@@ -106,7 +93,7 @@ def main(cfg: DictConfig) -> None:
                 trainer.train()
             
             else:
-                raise ValueError(f"Unknown model_type: {model_type}")
+                raise ValueError(f"Unknown mode: {mode}")
 
 
         elif task == "evaluate":

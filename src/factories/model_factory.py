@@ -19,9 +19,7 @@ class ModelFactory:
         Returns:
             Physical model instance
         """
-        model_config = config["model"]["physical"]
-        model_name = model_config["name"]
-        return ModelRegistry.get_physical_model(model_name, model_config)
+        return ModelRegistry.get_physical_model(config)
 
     @staticmethod
     def create_synthetic_model(config: Dict[str, Any]) -> nn.Module:
@@ -34,9 +32,8 @@ class ModelFactory:
         Returns:
             Synthetic model instance
         """
-        model_config = config["model"]
-        model_name = model_config['synthetic']['name']
-        return ModelRegistry.get_synthetic_model(model_name, model_config)
+        print( "Creating synthetic model..." )
+        return ModelRegistry.get_synthetic_model(config)
 
     @staticmethod
     def list_available_models():

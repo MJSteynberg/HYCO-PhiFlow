@@ -46,10 +46,7 @@ class DataManager:
 
     def __init__(
         self,
-        raw_data_dir: str,
-        cache_dir: str,
         config: Dict[str, Any],
-        auto_clear_invalid: bool = False,
     ):
         """
         Initialize the DataManager.
@@ -64,16 +61,28 @@ class DataManager:
 
         Note: Cache creation and validation are always enabled (hardcoded).
         """
-        self.raw_data_dir = Path(raw_data_dir)
-        self.cache_dir = Path(cache_dir)
-        self.config = config
-        self.auto_clear_invalid = auto_clear_invalid
+
+        self._parse_config(config)
 
         # Create cache validator
         self.validator = CacheValidator(config)
 
-        # Always create cache directory if it doesn't exist (hardcoded behavior)
+
+    def _parse_config(self, config: Dict[str, Any]):
+        """
+        Parse configuration dictionary to setup DataManager.
+        """
+        self.raw_data_dir = Path(config["data"]["data_dir"])
+        self.cache_dir = Path(config["trainer"]['hybrid']['augmentation']['cache_dir'])
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.dset_name = config["data"]['dset_name']
+        self.pde_name = config["model"]["physical"]["name"]
+        self.pde_params = config["model"]["physical"]["pde_params"]
+        self.fields_scheme = config["data"]["fields_scheme"]
+        self.resolution = config["model"]["physical"]["resolution"]
+        self.dt = config["model"]["physical"]["dt"]
+        self.domain = config["model"]["physical"]["domain"]
+
 
     def get_cached_path(self, sim_index: int) -> Path:
         """
@@ -85,13 +94,7 @@ class DataManager:
         Returns:
             Path object for the cached file
         """
-        # Handle both flat and nested config structures
-        if "dset_name" in self.config:
-            dataset_name = self.config["dset_name"]
-        else:
-            dataset_name = self.config.get("data", {}).get("dset_name", "default")
-
-        cache_subdir = self.cache_dir / dataset_name
+        cache_subdir = self.cache_dir / self.dset_name
         cache_subdir.mkdir(parents=True, exist_ok=True)
         return cache_subdir / f"sim_{sim_index:06d}.pt"
 
@@ -135,21 +138,19 @@ class DataManager:
                 cached_fields = set(cached_data["tensor_data"].keys())
                 requested_fields = set(field_names)
                 if cached_fields != requested_fields:
-                    if self.auto_clear_invalid:
-                        logger.warning(
-                            f"Cache invalid for sim_{sim_index:06d}: field mismatch. Removing..."
-                        )
-                        cache_path.unlink()
+                    logger.warning(
+                        f"Cache invalid for sim_{sim_index:06d}: field mismatch. Removing..."
+                    )
+                    cache_path.unlink()
                     return False
 
             if num_frames is not None:
                 cached_num_frames = metadata.get("num_frames", 0)
                 if cached_num_frames < num_frames:
-                    if self.auto_clear_invalid:
-                        logger.warning(
-                            f"Cache invalid for sim_{sim_index:06d}: insufficient frames. Removing..."
-                        )
-                        cache_path.unlink()
+                    logger.warning(
+                        f"Cache invalid for sim_{sim_index:06d}: insufficient frames. Removing..."
+                    )
+                    cache_path.unlink()
                     return False
 
             # Enhanced validation (always performed - hardcoded)
@@ -159,15 +160,11 @@ class DataManager:
                 )
 
                 if not is_valid:
-                    if self.auto_clear_invalid:
-                        logger.warning(
-                            f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}. Removing..."
-                        )
-                        cache_path.unlink()
-                    else:
-                        logger.warning(
-                            f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}"
-                        )
+                    
+                    logger.warning(
+                        f"Cache invalid for sim_{sim_index:06d}: {', '.join(reasons)}. Removing..."
+                    )
+                    cache_path.unlink()
                     return False
 
             return True
@@ -175,12 +172,11 @@ class DataManager:
         except Exception as e:
             # If we can't load/validate, treat as not cached
             logger.error(f"Error validating cache for sim_{sim_index:06d}: {e}")
-            if self.auto_clear_invalid:
-                logger.info(f"Removing corrupted cache...")
-                try:
-                    cache_path.unlink()
-                except:
-                    pass
+            logger.info(f"Removing corrupted cache...")
+            try:
+                cache_path.unlink()
+            except:
+                pass
             return False
 
     def load_and_cache_simulation(
@@ -309,46 +305,26 @@ class DataManager:
                 "frame_indices": frames_to_load,
                 # NEW: Generation parameters for validation
                 "generation_params": {
-                    "pde_name": self.config.get("model", {})
-                    .get("physical", {})
-                    .get("name", "unknown"),
-                    "pde_params": self.config.get("model", {})
-                    .get("physical", {})
-                    .get("pde_params", {}),
-                    "domain": self.config.get("model", {})
-                    .get("physical", {})
-                    .get("domain", {}),
-                    "resolution": self.config.get("model", {})
-                    .get("physical", {})
-                    .get("resolution", {}),
-                    "dt": self.config.get("model", {})
-                    .get("physical", {})
-                    .get("dt", 0.0),
+                    "pde_name": self.pde_name,
+                    "pde_params": self.pde_params,
+                    "domain": self.domain,
+                    "resolution": self.resolution,
+                    "dt": self.dt
                 },
                 "data_config": {
                     "fields": field_names,
-                    "fields_scheme": self.config.get("data", {}).get(
-                        "fields_scheme", "unknown"
-                    ),
-                    "dset_name": self.config.get("data", {}).get(
-                        "dset_name", "unknown"
-                    ),
+                    "fields_scheme": self.fields_scheme,
+                    "dset_name": self.dset_name,
                 },
                 "checksums": {
                     "pde_params_hash": compute_hash(
-                        self.config.get("model", {})
-                        .get("physical", {})
-                        .get("pde_params", {})
+                        self.pde_params
                     ),
                     "resolution_hash": compute_hash(
-                        self.config.get("model", {})
-                        .get("physical", {})
-                        .get("resolution", {})
+                            self.resolution
                     ),
                     "domain_hash": compute_hash(
-                        self.config.get("model", {})
-                        .get("physical", {})
-                        .get("domain", {})
+                        self.domain
                     ),
                 },
             },

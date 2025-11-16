@@ -21,11 +21,11 @@ from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 from src.data import TensorDataset, FieldDataset
 from src.utils.logger import get_logger, logging
-from src.config import ConfigHelper
 from phi.math import Tensor
 from phi.flow import Field
 from torch.utils.data import DataLoader
 from src.factories.dataloader_factory import DataLoaderFactory
+from src.data.dataset_utilities import field_collate_fn
 
 logger = get_logger(__name__)
 
@@ -46,7 +46,6 @@ class HybridTrainer(AbstractTrainer):
         config: Dict[str, Any],
         synthetic_model: nn.Module,
         physical_model,
-        learnable_params: Dict[str, Tensor],
     ):
         """Initialize hybrid trainer with both models."""
         super().__init__(config)
@@ -54,13 +53,10 @@ class HybridTrainer(AbstractTrainer):
         # Store models
         self.synthetic_model = synthetic_model
         self.physical_model = physical_model
-        self.learnable_params = learnable_params
-
         # Parse configuration
-        self._parse_config()
+        self._parse_config(config)
 
-        # Setup device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+       
 
         # Pre-create base datasets
         self._base_tensor_dataset = None
@@ -69,66 +65,57 @@ class HybridTrainer(AbstractTrainer):
 
         # Create component trainers
         self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
-        self.physical_trainer = PhysicalTrainer(config, physical_model, learnable_params)
+        self.physical_trainer = PhysicalTrainer(config, physical_model)
 
         # Training state
         self.current_cycle = 0
         self.best_synthetic_loss = float("inf")
         self.best_physical_loss = float("inf")
 
-    def _parse_config(self):
+    def _parse_config(self, config: Dict[str, Any]):
         """Extract all configuration parameters."""
-        self.trainer_config = self.config["trainer_params"]
-        self.hybrid_config = self.trainer_config["hybrid"]
-        self.aug_config = self.trainer_config["augmentation"]
-        self.generation_config = self.config["generation_params"]
-        
-        self.num_cycles = self.hybrid_config["num_cycles"]
-        self.synthetic_epochs_per_cycle = self.hybrid_config["synthetic_epochs_per_cycle"]
-        self.physical_epochs_per_cycle = self.hybrid_config["physical_epochs_per_cycle"]
-        self.warmup_synthetic_epochs = self.hybrid_config["warmup_synthetic_epochs"]
-        
-        self.alpha = self.aug_config["alpha"]
-        self.real_data_access = self.hybrid_config["real_data_access"]
-        self._validate_real_data_access()
+        self.config = config
+        # Hybrid training parameters
+        self.cycles = config['trainer']['hybrid']['cycles']
+        self.warmup = config['trainer']['hybrid']['warmup']
+        self.synthetic_epochs = config['trainer']['synthetic']['epochs']
+        self.physical_epochs = config['trainer']['physical']['epochs']
+        self.alpha = config['trainer']['hybrid']['augmentation']['alpha']
+        self.real_data_access = config['trainer']['data_access']
+        self.device = torch.device(config['trainer']['device'] if torch.cuda.is_available() else "cpu")
 
-    def _validate_real_data_access(self):
-        """Validate real_data_access parameter."""
-        valid_options = ["both", "synthetic_only", "physical_only", "neither"]
-        if self.real_data_access not in valid_options:
-            raise ValueError(
-                f"Invalid real_data_access: '{self.real_data_access}'. "
-                f"Must be one of {valid_options}"
-            )
+        # Data config
+        self.train_sim = config['trainer']['train_sim']
+        self.alpha = config['trainer']["hybrid"]["augmentation"]['alpha']
+        self.field_names = config['data']['fields']
+        self.batch_size = config['trainer']['batch_size']
+        self.trajectory_length = config['data']['trajectory_length']
+        self.rollout_steps = config['trainer']['rollout_steps']
+        self.learnable_parameters = config['trainer']['physical']['learnable_parameters']
+
 
     def _initialize_datasets(self):
         """Pre-create base datasets that will be reused."""
-        logger.info("Initializing reusable datasets...")
-
-        train_sim_indices = self.trainer_config["train_sim"]
-        percentage_real_data = self.trainer_config["percentage_real_data"]
-        
-        # Create base datasets (without augmentation)
         tensor_result = self._create_dataset(
-            train_sim_indices,
+            self.train_sim,
             return_fields=False,
-            percentage_real_data=percentage_real_data
+            alpha=self.alpha
         )
         self._base_tensor_dataset = tensor_result.dataset
         
         field_result = self._create_dataset(
-            train_sim_indices,
+            self.train_sim,
             return_fields=True,
-            percentage_real_data=percentage_real_data
+            alpha=self.alpha
         )
         self._base_field_dataset = field_result.dataset
 
     def train(self):
         """Main training loop."""
-        if self.warmup_synthetic_epochs > 0:
+        if self.warmup > 0:
             self._run_warmup()
         
-        pbar = tqdm(range(self.num_cycles), desc="Hybrid Cycles", unit="cycle")
+        pbar = tqdm(range(self.cycles), desc="Hybrid Cycles", unit="cycle")
         
         for cycle in pbar:
             self.current_cycle = cycle
@@ -144,21 +131,21 @@ class HybridTrainer(AbstractTrainer):
 
     def _run_warmup(self):
         """Warmup phase - train synthetic model on real data only."""
-        logger.info(f"Running warmup for {self.warmup_synthetic_epochs} epochs...")
+        logger.info(f"Running warmup for {self.warmup} epochs...")
         
         self._base_tensor_dataset.access_policy = "real_only"
         
         warmup_dataloader = DataLoader(
             self._base_tensor_dataset,
-            batch_size=self.trainer_config["batch_size"],
+            batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.trainer_config.get("num_workers", 0),
+            num_workers=0,
             pin_memory=True
         )
         
         self.synthetic_trainer.train(
             data_source=warmup_dataloader,
-            num_epochs=self.warmup_synthetic_epochs,
+            num_epochs=self.warmup,
             verbose=True
         )
 
@@ -167,7 +154,7 @@ class HybridTrainer(AbstractTrainer):
     def _run_cycle(self) -> Tuple[float, float]:
         """Execute one complete hybrid training cycle."""
         logger.debug(f"\n{'='*60}")
-        logger.debug(f"CYCLE {self.current_cycle + 1}/{self.num_cycles}")
+        logger.debug(f"CYCLE {self.current_cycle + 1}/{self.cycles}")
         logger.debug(f"{'='*60}")
         
         # Phase 1: Generate physical trajectories (as Field rollouts)
@@ -216,26 +203,19 @@ class HybridTrainer(AbstractTrainer):
             num_real_samples = self._calculate_num_real_samples()
             num_synthetic_samples = int(num_real_samples * self.alpha)
             
-            trajectory_length = self.generation_config["total_steps"]
-            samples_per_trajectory = trajectory_length - self.trainer_config["num_predict_steps"]
+            samples_per_trajectory = self.trajectory_length - self.rollout_steps
             num_trajectories = max(1, (num_synthetic_samples + samples_per_trajectory - 1) // samples_per_trajectory)
-            
-            logger.debug(
-                f"  Generating {num_trajectories} trajectories "
-                f"(~{num_synthetic_samples} samples after windowing)"
-            )
             
             # Generate batched rollout
             initial_state = self.physical_model.get_random_state(batch_size=num_trajectories)
-            rollout = self.physical_model.rollout(initial_state, num_steps=trajectory_length)
+            rollout = self.physical_model.rollout(initial_state, num_steps=self.trajectory_length)
             
             # Split into list of individual trajectories
-            field_names = ConfigHelper(self.config).get_field_names()
             rollouts = []
             
             for traj_idx in range(num_trajectories):
                 trajectory = {}
-                for field_name in field_names:
+                for field_name in self.field_names:
                     trajectory[field_name] = rollout[field_name].batch[traj_idx]
                 rollouts.append(trajectory)
             
@@ -264,16 +244,16 @@ class HybridTrainer(AbstractTrainer):
             # Create dataloader
             dataloader = DataLoader(
                 self._base_tensor_dataset,
-                batch_size=self.trainer_config["batch_size"],
+                batch_size=self.batch_size,
                 shuffle=True,
-                num_workers=self.trainer_config.get("num_workers", 0),
+                num_workers=0,
                 pin_memory=True
             )
             
             # Train
             result = self.synthetic_trainer.train(
                 data_source=dataloader,
-                num_epochs=self.synthetic_epochs_per_cycle,
+                num_epochs=self.synthetic_epochs,
                 verbose=False
             )
             
@@ -337,7 +317,7 @@ class HybridTrainer(AbstractTrainer):
         UPDATED: Now handles prediction trajectories instead of pre-windowed samples.
         FieldDataset will handle windowing using set_augmented_trajectories.
         """
-        if len(self.physical_trainer.learnable_params) == 0:
+        if len(self.physical_trainer.learnable_parameters) == 0:
             logger.info("No learnable parameters, skipping physical training")
             return 0.0
 
@@ -347,9 +327,6 @@ class HybridTrainer(AbstractTrainer):
             
             # NEW: Convert BVTS trajectories to cache-format dicts for FieldDataset
             cache_format_trajectories = []
-            cfg_helper = ConfigHelper(self.config)
-            field_names = cfg_helper.get_field_names()
-            
             for traj_tensor in synthetic_predictions:
                 # traj_tensor: [1, V, T, H, W] in BVTS format
                 # Squeeze batch dimension
@@ -359,7 +336,7 @@ class HybridTrainer(AbstractTrainer):
                 field_trajectories = {}
                 channel_idx = 0
                 
-                for field_name in field_names:
+                for field_name in self.field_names:
                     # Get number of channels for this field
                     if field_name in self.synthetic_model.output_specs:
                         num_channels = self.synthetic_model.output_specs[field_name]
@@ -375,6 +352,7 @@ class HybridTrainer(AbstractTrainer):
                 cache_format_trajectories.append({'tensor_data': field_trajectories})
             
             # Set augmented trajectories (now in proper cache format)
+
             self._base_field_dataset.set_augmented_trajectories(cache_format_trajectories)
             self._base_field_dataset.access_policy = access_policy
             
@@ -385,10 +363,10 @@ class HybridTrainer(AbstractTrainer):
             )
             
             # Create dataloader
-            from src.data.dataset_utilities import field_collate_fn
+            
             dataloader = DataLoader(
                 self._base_field_dataset,
-                batch_size=self.trainer_config["batch_size"],
+                batch_size=self.batch_size,
                 shuffle=True,
                 num_workers=0,
                 collate_fn=field_collate_fn
@@ -397,7 +375,7 @@ class HybridTrainer(AbstractTrainer):
             # Train
             result = self.physical_trainer.train(
                 data_source=dataloader,
-                num_epochs=self.physical_epochs_per_cycle,
+                num_epochs=self.physical_epochs,
                 verbose=False
             )
             
@@ -425,7 +403,7 @@ class HybridTrainer(AbstractTrainer):
         self,
         sim_indices: List[int],
         return_fields: bool = False,
-        percentage_real_data: float = 1.0
+        alpha: float = 1.0
     ):
         """Create dataset using DataLoaderFactory."""
         mode = "field" if return_fields else "tensor"
@@ -435,8 +413,8 @@ class HybridTrainer(AbstractTrainer):
             mode=mode,
             sim_indices=sim_indices,
             enable_augmentation=False,
-            batch_size=self.trainer_config["batch_size"],
-            percentage_real_data=percentage_real_data
+            batch_size=self.batch_size,
+            percentage_real_data=alpha
         )
         
         return result

@@ -47,7 +47,7 @@ class AbstractTrainer(ABC):
                    This should include data, model, and trainer parameters.
         """
         self._config = config
-        self._project_root = config.get("project_root", ".")
+        self._project_root = config["project_root"]
 
     @abstractmethod
     def train(self) -> Dict[str, Any]:

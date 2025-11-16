@@ -35,15 +35,17 @@ class UNet(SyntheticModel):
         # Call parent constructor to set up base attributes
         super().__init__(config)
 
-        # Get architecture params (with defaults for backwards compatibility)
-        levels = config["synthetic"]['architecture']["levels"]
-        filters = config["synthetic"]['architecture']["filters"]
-
         # Build the U-Net using PhiML's u_net
         self.net = u_net(
             in_channels=sum(self.input_specs.values()),
             out_channels=sum(self.output_specs.values()),
-            levels=levels,
-            filters=filters,
+            levels=self.levels,
+            filters=self.filters,
             batch_norm=True,
         )
+
+    def _parse_config(self, config):
+        # Ensure base parsing (input/output specs) runs
+        super()._parse_config(config)
+        self.levels = config['model']["synthetic"]['architecture']["levels"]
+        self.filters = config['model']["synthetic"]['architecture']["filters"]

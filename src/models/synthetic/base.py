@@ -29,30 +29,29 @@ class SyntheticModel(nn.Module, ABC):
         Initializes the synthetic model.
 
         Args:
-            config: A dictionary containing model-specific configurations.
-                    Expected to contain 'input_specs' and 'output_specs'
-                    dictionaries, e.g., {'density': 1, 'velocity': 2}.
+
         """
         super().__init__()
-        self.config = config
-        self.logger = logging.getLogger(__name__)
-
-        self.input_specs = {
-        field: config['physical']['fields_scheme'].lower().count(field[0].lower())
-        for field in config['physical']['fields']
-        if field
-        }
-        self.output_specs = {
-        field: config['physical']['fields_scheme'].lower().count(field[0].lower())
-        for i, field in enumerate(config['physical']['fields'])
-        if field and config['physical']['fields_type'][i].upper() == 'D'
-        }
+        print("Parsing config in SyntheticModel")
+        self._parse_config(config)
+        
         # Calculate channel counts for padding
         self.num_dynamic_channels = sum(self.output_specs.values())
         self.num_static_channels = sum(self.input_specs.values()) - self.num_dynamic_channels
         self._dynamic_slice = slice(0, self.num_dynamic_channels)
-        
 
+        
+        
+    def _parse_config(self, config: Dict[str, Any]):
+        """
+        Parse configuration dictionary to setup model.
+        """
+        self.input_specs = {field: config['data']['fields_scheme'].lower().count(field[0].lower())
+            for field in config['data']['fields'] if field}
+        
+        self.output_specs = {field: config['data']['fields_scheme'].lower().count(field[0].lower())
+            for i, field in enumerate(config['data']['fields'])
+            if field and config['data']['fields_type'][i].upper() == 'D'}
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -134,7 +133,6 @@ class SyntheticModel(nn.Module, ABC):
             
             # Get trajectory length
             num_steps = full_trajectory.shape[1] 
-
             trajectory_frames = [full_trajectory[:, 0:1, :, :]] 
             
             with torch.amp.autocast(enabled=True, device_type=device):

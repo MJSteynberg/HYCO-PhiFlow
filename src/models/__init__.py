@@ -33,73 +33,75 @@ class ModelRegistry:
 	_synthetic_models: Dict[str, Type] = {}
 
 	@classmethod
-	def register_physical(cls, name: str) -> Callable:
+	def register_physical(self, name: str) -> Callable:
 		def decorator(model_class: Type) -> Type:
-			if name in cls._physical_models:
+			if name in self._physical_models:
 				logger.warning(f"Overwriting physical model '{name}'")
-			cls._physical_models[name] = model_class
+			self._physical_models[name] = model_class
 			logger.debug(f"Registered physical model: {name}")
 			return model_class
 
 		return decorator
 
 	@classmethod
-	def register_synthetic(cls, name: str) -> Callable:
+	def register_synthetic(self, name: str) -> Callable:
 		def decorator(model_class: Type) -> Type:
-			if name in cls._synthetic_models:
+			if name in self._synthetic_models:
 				logger.warning(f"Overwriting synthetic model '{name}'")
-			cls._synthetic_models[name] = model_class
+			self._synthetic_models[name] = model_class
 			logger.debug(f"Registered synthetic model: {name}")
 			return model_class
 
 		return decorator
 
 	@classmethod
-	def get_physical_model(cls, name: str, config: Dict[str, Any]):
-		if name not in cls._physical_models:
-			available = ", ".join(cls._physical_models.keys()) or "none"
+	def get_physical_model(self, config: Dict[str, Any]):
+		name = config["model"]["physical"]["name"]
+		if name not in self._physical_models:
+			available = ", ".join(self._physical_models.keys()) or "none"
 			raise ValueError(
 				f"Physical model '{name}' not found in registry. "
 				f"Available models: {available}"
 			)
 
-		model_class = cls._physical_models[name]
+		model_class = self._physical_models[name]
 		logger.debug(f"Creating physical model: {name}")
 		return model_class(config)
 
 	@classmethod
-	def get_synthetic_model(cls, name: str, config: Dict[str, Any]):
-		if name not in cls._synthetic_models:
-			available = ", ".join(cls._synthetic_models.keys()) or "none"
+	def get_synthetic_model(self, config: Dict[str, Any]):
+		name = config["model"]["synthetic"]["name"]
+		if name not in self._synthetic_models:
+			available = ", ".join(self._synthetic_models.keys()) or "none"
 			raise ValueError(
 				f"Synthetic model '{name}' not found in registry. "
 				f"Available models: {available}"
 			)
 
-		model_class = cls._synthetic_models[name]
+		model_class = self._synthetic_models[name]
 		logger.debug(f"Creating synthetic model: {name}")
 		return model_class(config)
 
 	@classmethod
-	def list_physical_models(cls) -> List[str]:
-		return sorted(cls._physical_models.keys())
+	def list_physical_models(self) -> List[str]:
+		return sorted(self._physical_models.keys())
 
 	@classmethod
-	def list_synthetic_models(cls) -> List[str]:
-		return sorted(cls._synthetic_models.keys())
+	def list_synthetic_models(self) -> List[str]:
+		return sorted(self._synthetic_models.keys())
 
 	@classmethod
-	def is_physical_model_registered(cls, name: str) -> bool:
-		return name in cls._physical_models
+	def is_physical_model_registered(self, name: str) -> bool:
+		return name in self._physical_models
 
 	@classmethod
-	def is_synthetic_model_registered(cls, name: str) -> bool:
-		return name in cls._synthetic_models
+	def is_synthetic_model_registered(self, name: str) -> bool:
+		return name in self._synthetic_models
 
 	@classmethod
-	def clear_registry(cls):
-		cls._physical_models.clear()
-		cls._synthetic_models.clear()
+	def clear_registry(self):
+		self._physical_models.clear()
+		self._synthetic_models.clear()
 		logger.debug("Cleared model registry")
 
 

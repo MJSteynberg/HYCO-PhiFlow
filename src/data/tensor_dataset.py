@@ -33,45 +33,17 @@ class TensorDataset(AbstractDataset):
     
     def __init__(
         self,
+        config: Dict[str, Any],
         data_manager: DataManager,
-        sim_indices: List[int],
-        field_names: List[str],
-        num_frames: Optional[int],
-        num_predict_steps: int,
-        augmentation_config: Optional[Dict[str, Any]] = None,
-        access_policy: str = "both",
-        max_cached_sims: int = 5,
-        pin_memory: bool = True,
-        percentage_real_data: float = 1.0,
+        enable_augmentation: bool,
     ):
         """Initialize TensorDataset."""
-        self.pin_memory = pin_memory and torch.cuda.is_available()
-        
-        # Setup dataset using builder
-        logger.debug("Setting up TensorDataset...")
-        num_frames, num_real, augmented_samples, index_mapper = self._setup_dataset(
-            data_manager, sim_indices, field_names, num_frames, num_predict_steps,
-            augmentation_config, percentage_real_data
-        )
-        
-        # Call parent constructor
-        super().__init__(
-            data_manager=data_manager,
-            sim_indices=sim_indices,
-            field_names=field_names,
-            num_frames=num_frames,
-            num_predict_steps=num_predict_steps,
-            access_policy=access_policy,
-            num_real=num_real,
-            augmented_samples=augmented_samples,
-            index_mapper=index_mapper,
-            max_cached_sims=max_cached_sims,
-        )
+        super().__init__(config, data_manager, enable_augmentation)
+        self.pin_memory = torch.cuda.is_available()
         
         # Track number of augmented trajectories (for indexing)
-        self._num_augmented_trajectories = len(augmented_samples)
-        self._samples_per_trajectory = num_frames - num_predict_steps
-
+        self._num_augmented_trajectories = len(self.augmented_samples)
+        self._samples_per_trajectory = self.num_frames - self.rollout_steps
 
         self._log_dataset_info()
 
@@ -84,17 +56,18 @@ class TensorDataset(AbstractDataset):
         sim_indices: List[int],
         field_names: List[str],
         num_frames: Optional[int],
-        num_predict_steps: int,
-        augmentation_config: Optional[Dict[str, Any]],
+        rollout_steps: int,
+        cache_dir: Optional[Dict[str, Any]],
         percentage_real_data: float,
+        enable_augmentation: bool,
     ) -> Tuple[int, int, List[Any], Optional[FilteringManager]]:
         """Setup dataset components."""
         # Use helper functions from AbstractDataset instead of DatasetBuilder
         num_frames = AbstractDataset.setup_cache(
-            data_manager, sim_indices, field_names, num_frames, num_predict_steps
+            data_manager, sim_indices, field_names, num_frames, rollout_steps
         )
         samples_per_sim = AbstractDataset.compute_sliding_window(
-            num_frames, num_predict_steps
+            num_frames, rollout_steps
         )
         total_real_samples = len(sim_indices) * samples_per_sim
         
@@ -112,10 +85,14 @@ class TensorDataset(AbstractDataset):
         
         # Setup augmentation (if provided)
         augmented_samples = []
-        if augmentation_config:
-            augmented_samples = AugmentationHandler.load_augmentation(
-                augmentation_config, num_real, num_predict_steps, field_names
+        if enable_augmentation:
+            logger.debug(
+                f"  Loading augmented samples from cache "
+                f"({cache_dir}, alpha={percentage_real_data})..."
             )
+            augmented_samples = AugmentationHandler.load_augmentation(
+                cache_dir, num_real, percentage_real_data, percentage_real_data, field_names
+            )            
         
         return num_frames, num_real, augmented_samples, index_mapper
     
@@ -149,7 +126,6 @@ class TensorDataset(AbstractDataset):
         
         sim_data = full_data["tensor_data"]
 
-
         if self.pin_memory:
             sim_data = {field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_data.items()}
 
@@ -174,7 +150,7 @@ class TensorDataset(AbstractDataset):
         # Extract window
         initial_state = all_data[:, start_frame:start_frame+1, :, :]  # [V, 1, H, W]
         target_start = start_frame + 1
-        target_end = start_frame + 1 + self.num_predict_steps
+        target_end = start_frame + 1 + self.rollout_steps
         rollout_targets = all_data[:, target_start:target_end, :, :]  # [V, T_pred, H, W]
         
         return initial_state, rollout_targets
@@ -222,7 +198,7 @@ class TensorDataset(AbstractDataset):
 
         initial_state = all_data[:, window_start : window_start + 1]  # [C_all, 1, H, W]
         target_start = window_start + 1
-        target_end = window_start + 1 + self.num_predict_steps
+        target_end = window_start + 1 + self.rollout_steps
         rollout_targets = all_data[:, target_start:target_end]  # [C_all, T_pred, H, W]
 
         return initial_state, rollout_targets
@@ -326,7 +302,7 @@ class TensorDataset(AbstractDataset):
             f"  augmented_trajectories={self._num_augmented_trajectories},\n"
             f"  fields={len(self.field_names)},\n"
             f"  frames={self.num_frames},\n"
-            f"  predict_steps={self.num_predict_steps},\n"
+            f"  predict_steps={self.rollout_steps},\n"
             f"  pin_memory={self.pin_memory}\n"
             f")"
         )

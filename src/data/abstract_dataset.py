@@ -39,49 +39,44 @@ class AbstractDataset(Dataset, ABC):
     
     __slots__ = (
         'data_manager', 'sim_indices', 'field_names', 'num_frames',
-        'num_predict_steps', 'max_cached_sims', 'access_policy',
+        'rollout_steps', 'max_cached_sims', 'access_policy',
         'num_real', 'augmented_samples', 'num_augmented',
         '_cached_load_simulation', '_total_length', '_index_mapper'
     )
 
     def __init__(
         self,
+        config: Dict[str, Any],
         data_manager: DataManager,
-        sim_indices: List[int],
-        field_names: List[str],
-        num_frames: int,
-        num_predict_steps: int,
-        access_policy: str,
-        num_real: int,
-        augmented_samples: List[Any],
-        index_mapper: Optional[Any],
-        max_cached_sims: int = 5,
+        enable_augmentation: bool,
     ):
         """Initialize the abstract dataset."""
-        if access_policy not in ("both", "real_only", "generated_only"):
-            raise ValueError(
-                f"Invalid access_policy: '{access_policy}'. "
-                f"Must be one of ['both', 'real_only', 'generated_only']"
-            )
         
         self.data_manager = data_manager
-        self.sim_indices = sim_indices
-        self.field_names = field_names
-        self.num_frames = num_frames
-        self.num_predict_steps = num_predict_steps
-        self.access_policy = access_policy
-        self.num_real = num_real
-        self.augmented_samples = augmented_samples
-        self.num_augmented = len(augmented_samples)
-        self._index_mapper = index_mapper
-        self.max_cached_sims = max_cached_sims
-        
+        self.enable_augmentation = enable_augmentation
+        self._parse_config(config)
+        self.num_augmented = len(self.augmented_samples)
         # Create LRU cache
-        self._cached_load_simulation = lru_cache(maxsize=max_cached_sims)(
+        self._cached_load_simulation = lru_cache(maxsize=self.max_cached_sims)(
             self._load_simulation
         )
         
         self._total_length = self._compute_length()
+
+    def _parse_config(self, config: Dict[str, Any]):
+        self.sim_indices = config["trainer"]["train_sim"]
+        self.field_names = config["data"]["fields"]
+        self.rollout_steps = config["trainer"]["rollout_steps"]
+        self.num_frames = config["data"]["trajectory_length"]
+        self.access_policy = config["trainer"]["data_access"]
+        self.percentage_real_data = config["trainer"]['hybrid']['augmentation']['alpha']
+        self.cache_dir = config["trainer"]['hybrid']['augmentation']['cache_dir']
+        self.max_cached_sims = 10
+        # Call the dataset setup utility
+        self.num_frames, self.num_real, self.augmented_samples, self._index_mapper = self._setup_dataset(
+            self.data_manager, self.sim_indices, self.field_names, self.num_frames, self.rollout_steps,
+            self.cache_dir, self.percentage_real_data, self.enable_augmentation
+        )
 
     # ==================== Dataset Interface ====================
 
@@ -210,7 +205,7 @@ class AbstractDataset(Dataset, ABC):
         Returns:
             Tuple of (sim_idx, start_frame)
         """
-        samples_per_sim = self.num_frames - self.num_predict_steps
+        samples_per_sim = self.num_frames - self.rollout_steps
         if samples_per_sim <= 0:
             return self.sim_indices[0], 0
 
@@ -244,7 +239,7 @@ class AbstractDataset(Dataset, ABC):
             "access_policy": self.access_policy,
             "num_simulations": len(self.sim_indices),
             "num_frames": self.num_frames,
-            "num_predict_steps": self.num_predict_steps,
+            "rollout_steps": self.rollout_steps,
             "field_names": self.field_names,
             "lru_cache_size": cache_info.maxsize,
             "lru_cache_current": cache_info.currsize,
@@ -285,7 +280,7 @@ class AbstractDataset(Dataset, ABC):
         sim_indices: List[int],
         field_names: List[str],
         num_frames: Optional[int],
-        num_predict_steps: Optional[int] = None,
+        rollout_steps: Optional[int] = None,
     ) -> int:
         """
         Validate cache and determine num_frames using the DataManager.
@@ -315,13 +310,13 @@ class AbstractDataset(Dataset, ABC):
             logger.debug(f"Determined num_frames = {num_frames}")
             del first_sim_data
 
-        if num_predict_steps is not None and num_frames < (num_predict_steps + 1):
+        if rollout_steps is not None and num_frames < (rollout_steps + 1):
             logger.warning(
-                f"Discovered num_frames={num_frames} < required {num_predict_steps + 1}; attempting to reload simulation with larger frame count..."
+                f"Discovered num_frames={num_frames} < required {rollout_steps + 1}; attempting to reload simulation with larger frame count..."
             )
             try:
                 forced = data_manager.load_simulation(
-                    sim_indices[0], field_names=field_names, num_frames=(num_predict_steps + 1)
+                    sim_indices[0], field_names=field_names, num_frames=(rollout_steps + 1)
                 )
                 forced_tensor = forced["tensor_data"][field_names[0]]
                 if isinstance(forced_tensor, torch.Tensor):
@@ -359,19 +354,19 @@ class AbstractDataset(Dataset, ABC):
         return num_frames
 
     @staticmethod
-    def compute_sliding_window(num_frames: int, num_predict_steps: int) -> int:
+    def compute_sliding_window(num_frames: int, rollout_steps: int) -> int:
         """
         Compute samples per simulation for sliding window.
         """
-        if num_frames < num_predict_steps + 1:
+        if num_frames < rollout_steps + 1:
             raise ValueError(
-                f"num_frames ({num_frames}) must be >= num_predict_steps + 1 ({num_predict_steps + 1})"
+                f"num_frames ({num_frames}) must be >= rollout_steps + 1 ({rollout_steps + 1})"
             )
 
-        samples_per_sim = num_frames - num_predict_steps
+        samples_per_sim = num_frames - rollout_steps
         if samples_per_sim <= 0:
             raise ValueError(
-                f"Invalid sliding window: num_frames ({num_frames}) must be > num_predict_steps ({num_predict_steps})"
+                f"Invalid sliding window: num_frames ({num_frames}) must be > rollout_steps ({rollout_steps})"
             )
 
         return samples_per_sim
