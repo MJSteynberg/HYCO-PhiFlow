@@ -435,33 +435,57 @@ from phi.torch.flow import stack, batch
 from typing import List, Dict, Tuple
 from phi.field import Field
 
-def field_collate_fn(samples: List[Tuple[Dict[str, Field], Dict[str, List[Field]]]]):
+# In dataset_utilities.py or dataloader_factory.py
+
+def tensor_collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]):
     """
-    Custom collate function for the FieldDataset.
-    Takes a list of single samples and stacks them into a batch.
-    """
-    # 1. Unzip the list of samples into initial states and target sequences
-    initial_fields_list, target_fields_list = zip(*samples)
+    Collate per-sample tensors [V, T, H, W] into batches [B, V, T, H, W].
     
-    # --- 2. Process Initial Fields (Logic from _stack_samples) ---
+    Args:
+        batch: List of (initial, targets) tuples, each [V, T, H, W]
+    
+    Returns:
+        (batched_initial, batched_targets) each [B, V, T, H, W]
+    """
+    initials, targets = zip(*batch)
+
+    logger.info(f"Device tensor_collate_fn: batching {len(batch)} samples on device {initials[0].device, targets[0].device}, ")
+    
+    # Stack along new batch dimension
+    batched_initial = torch.stack(initials, dim=0)  # [B, V, T_init, H, W]
+    batched_targets = torch.stack(targets, dim=0)   # [B, V, T_pred, H, W]
+    
+    return batched_initial, batched_targets
+
+
+def field_collate_fn(field_batch: List[Tuple[Dict[str, Field], Dict[str, List[Field]]]]):
+    """
+    Collate per-sample Fields into batched Fields.
+    
+    Args:
+        batch: List of (initial_fields, target_fields) tuples
+    
+    Returns:
+        (batched_initial, batched_targets) with batch dimension in Fields
+    """
+
+    logger.info(f"Device field_collate_fn: batching {field_batch} ")
+    initial_fields_list, target_fields_list = zip(*field_batch)
+    
+    # Stack initial fields
     field_names = initial_fields_list[0].keys()
     stacked_initial = {}
     for name in field_names:
-        # Collect all initial fields for this name from all samples in the batch
         fields_to_stack = [sample[name] for sample in initial_fields_list]
-        # Stack them along a new 'batch' dimension
-        stacked_initial[name] = stack(fields_to_stack, batch('batch')) # Using 'batch' as the dim name
-
-    # --- 3. Process Target Fields (Logic from _stack_target_sequences) ---
+        stacked_initial[name] = stack(fields_to_stack, batch('batch'))
+    
+    # Stack target sequences
     stacked_targets = {}
     for name in field_names:
         sample_sequences = []
         for sample_targets in target_fields_list:
-            # For each sample, stack its time sequence
-            time_stacked_field = stack(sample_targets[name], batch('time'))
-            sample_sequences.append(time_stacked_field)
-        
+            time_stacked = stack(sample_targets[name], batch('time'))
+            sample_sequences.append(time_stacked)
         stacked_targets[name] = stack(sample_sequences, batch('batch'))
-
-    # 4. Return the complete, collated batch
+    
     return stacked_initial, stacked_targets

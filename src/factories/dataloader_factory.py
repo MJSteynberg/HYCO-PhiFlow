@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from src.data import DataManager, TensorDataset, FieldDataset
 from src.config import ConfigHelper
 from src.utils.logger import get_logger
-from src.data.dataset_utilities import field_collate_fn
+from src.data.dataset_utilities import field_collate_fn, tensor_collate_fn
 from src.utils.field_conversion.validation import validate_bvts_dataset
 
 logger = get_logger(__name__)
@@ -185,6 +185,7 @@ class DataLoaderFactory:
                 dataset,
                 batch_size=batch_size,
                 shuffle=shuffle,
+                collate_fn=tensor_collate_fn,
                 num_workers=num_workers,
                 pin_memory=torch.cuda.is_available(),
             )

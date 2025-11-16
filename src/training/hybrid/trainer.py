@@ -353,6 +353,7 @@ class HybridTrainer(AbstractTrainer):
         
         FieldDataset handles conversion from tensor predictions to Fields.
         """
+        logger.info(len(synthetic_predictions))
         if len(self.physical_trainer.learnable_params) == 0:
             logger.info("No learnable parameters, skipping physical training")
             return 0.0

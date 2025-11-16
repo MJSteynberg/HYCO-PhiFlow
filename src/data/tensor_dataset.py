@@ -158,9 +158,9 @@ class TensorDataset(AbstractDataset):
         
         sim_data = full_data["tensor_data"]
 
-        # Always return BVTS in-memory. Convert cached tensors to BVTS using the
+
         if self.pin_memory:
-            sim_data = {field: tensor.unsqueeze(0).pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_data.items()}
+            sim_data = {field: tensor.pin_memory() if isinstance(tensor, torch.Tensor) else tensor for field, tensor in sim_data.items()}
 
         return sim_data
     
@@ -173,57 +173,19 @@ class TensorDataset(AbstractDataset):
         """
         sim_idx, start_frame = self._compute_sim_and_frame(idx)
         sim_data = self._cached_load_simulation(sim_idx)
+
         
         # Concatenate all fields
         all_field_tensors = [sim_data[name] for name in self.field_names]
 
-        # Expect BVTS tensors: [B, C_all, T, H, W]
-        all_data = torch.cat(all_field_tensors, dim=1)  # [B, C_all, T, H, W]
+        all_data = torch.cat(all_field_tensors, dim=0)  # [C_all, T, H, W]
 
-        # initial_state: keep time as length-1 dimension -> [B, C_all, 1, H, W]
-        initial_state = all_data[:, :, start_frame : start_frame + 1]
-
-        # Validate BVTS contract for concatenated data
-        assert_bvts_format(all_data, context="TensorDataset._extract_sample all_data")
-
+        # Extract window
+        initial_state = all_data[:, start_frame:start_frame+1, :, :]  # [V, 1, H, W]
         target_start = start_frame + 1
         target_end = start_frame + 1 + self.num_predict_steps
-        rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
-
-        # Ensure we return a batched BVTS tensor [B, C_all, T, H, W].
-        # If the data is missing an explicit batch dim (e.g. [C,T,H,W]),
-        # add B=1. If it's missing a time dim (e.g. [C,H,W]) add T=1.
-        def _ensure_bvts(t: torch.Tensor) -> torch.Tensor:
-            if not isinstance(t, torch.Tensor):
-                raise RuntimeError("Expected torch.Tensor in TensorDataset sample")
-            if t.dim() == 5:
-                return t
-            if t.dim() == 4:
-                # [C, T, H, W] -> [1, C, T, H, W]
-                return t.unsqueeze(0)
-            if t.dim() == 3:
-                # [C, H, W] -> [1, C, 1, H, W]
-                return t.unsqueeze(0).unsqueeze(2)
-            raise RuntimeError(f"Unsupported tensor dimensionality for BVTS enforcement: {t.dim()}D")
-
-        initial_state = _ensure_bvts(initial_state)
-        rollout_targets = _ensure_bvts(rollout_targets)
-
-        # Convert to per-sample format (remove simulation-batch dim B==1).
-        def _to_per_sample(t: torch.Tensor) -> torch.Tensor:
-            # t is guaranteed to be 5D here
-            if t.dim() == 5:
-                if t.size(0) == 1:
-                    return t.squeeze(0)  # -> [C, T, H, W]
-                else:
-                    raise ValueError(
-                        f"TensorDataset produced multi-sim tensor with B>1; expected per-sample tensors. Got {t.shape}"
-                    )
-            return t
-
-        initial_state = _to_per_sample(initial_state)
-        rollout_targets = _to_per_sample(rollout_targets)
-
+        rollout_targets = all_data[:, target_start:target_end, :, :]  # [V, T_pred, H, W]
+        
         return initial_state, rollout_targets
     
     def _get_augmented_sample(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -258,55 +220,19 @@ class TensorDataset(AbstractDataset):
         else:
             # Assume it's already tensor_data
             tensor_data = trajectory_data
-
-        # Defensive normalization: ensure the augmented trajectory's tensor_data
-        # matches the dataset mode (BVTS). This handles the case where
-        # augmented_samples were loaded from external sources with differing conventions.
-        tensor_data = self._normalize_sim_tensor_data(tensor_data)
         
         # Concatenate all fields
-        all_field_tensors = [tensor_data[name].unsqueeze(0) for name in self.field_names]
+        all_field_tensors = [tensor_data[name] for name in self.field_names]
 
         # Augmented trajectories are stored in BVTS cache-format and have been
-        # normalized by _normalize_sim_tensor_data earlier. Expect [B, C_all, T, H, W]
-        all_data = torch.cat(all_field_tensors, dim=1)  # [B, C_all, T, H, W]
+        # normalized by _normalize_sim_tensor_data earlier. Expect [C_all, T, H, W]
+        all_data = torch.cat(all_field_tensors, dim=0).cpu()  # [C_all, T, H, W]
 
-        # Validate BVTS contract for augmented trajectory data
-        assert_bvts_format(all_data, context="TensorDataset._get_augmented_sample all_data")
 
-        initial_state = all_data[:, :, window_start : window_start + 1]  # [B, C_all, 1, H, W]
+        initial_state = all_data[:, window_start : window_start + 1]  # [C_all, 1, H, W]
         target_start = window_start + 1
         target_end = window_start + 1 + self.num_predict_steps
-        rollout_targets = all_data[:, :, target_start:target_end]  # [B, C_all, T_pred, H, W]
-
-        # Ensure returned augmented sample tensors are BVTS-shaped [B,C,T,H,W].
-        def _ensure_bvts(t: torch.Tensor) -> torch.Tensor:
-            if not isinstance(t, torch.Tensor):
-                raise RuntimeError("Expected torch.Tensor in TensorDataset augmented sample")
-            if t.dim() == 5:
-                return t
-            if t.dim() == 4:
-                return t.unsqueeze(0)
-            if t.dim() == 3:
-                return t.unsqueeze(0).unsqueeze(2)
-            raise RuntimeError(f"Unsupported tensor dimensionality for BVTS enforcement: {t.dim()}D")
-
-        initial_state = _ensure_bvts(initial_state)
-        rollout_targets = _ensure_bvts(rollout_targets)
-
-        # Convert to per-sample format (remove simulation-batch dim B==1).
-        def _to_per_sample(t: torch.Tensor) -> torch.Tensor:
-            if t.dim() == 5:
-                if t.size(0) == 1:
-                    return t.squeeze(0)
-                else:
-                    raise ValueError(
-                        f"TensorDataset augmented sample produced multi-sim tensor with B>1; expected per-sample tensors. Got {t.shape}"
-                    )
-            return t
-
-        initial_state = _to_per_sample(initial_state)
-        rollout_targets = _to_per_sample(rollout_targets)
+        rollout_targets = all_data[:, target_start:target_end]  # [C_all, T_pred, H, W]
 
         return initial_state, rollout_targets
 
@@ -377,94 +303,15 @@ class TensorDataset(AbstractDataset):
         Convert a Field rollout to cache-compatible tensor format.
         
         Args:
-            rollout: Dict mapping field_name to Field[time, x, y]
+            rollout: Dict mapping field_name to Field[vector, time, x, y]
         
         Returns:
-            Dict with structure: {'tensor_data': {field_name: tensor[T, C, H, W]}}
+            Dict with structure: {'tensor_data': {field_name: tensor[V, T, H, W]}}
         """
-        from src.utils.field_conversion import make_converter
         
-        tensor_data = {}
-        
-        for field_name in self.field_names:
-            if field_name not in rollout:
-                continue
-            
-            field_traj = rollout[field_name]
-            num_timesteps = field_traj.shape.get_size('time')
-            
-            # Try batch conversion first (optimization)
-            trajectory_tensor = self._try_batch_convert_trajectory(
-                field_traj, num_timesteps
-            )
-            
-            if trajectory_tensor is None:
-                # Fallback to sequential conversion
-                trajectory_tensor = self._convert_trajectory_sequential(
-                    field_traj, num_timesteps
-                )
-            
-            tensor_data[field_name] = trajectory_tensor.cpu()
+        tensor_data = {field_name: rollout[field_name].values.native('vector,time,x,y') for field_name in self.field_names if field_name in rollout}
         
         return {'tensor_data': tensor_data}
-
-    def _try_batch_convert_trajectory(
-        self,
-        field_traj: Field,
-        num_timesteps: int
-    ) -> Optional[torch.Tensor]:
-        """
-        Try to convert entire trajectory at once (fastest path).
-        
-        Returns:
-            Tensor [T, C, H, W] or None if batch conversion not possible
-        """
-        try:
-            if hasattr(field_traj, 'values') and hasattr(field_traj.values, '_native'):
-                native_tensor = field_traj.values._native
-                
-                if native_tensor.dim() == 4:  # Vector field [x, y, vector, time]
-                    tensor = native_tensor.permute(3, 2, 0, 1)  # -> [time, vector, x, y]
-                elif native_tensor.dim() == 3:  # Scalar field [x, y, time]
-                    tensor = native_tensor.permute(2, 0, 1).unsqueeze(1)  # -> [time, 1, x, y]
-                else:
-                    return None
-                
-                if tensor.shape[0] == num_timesteps:
-                    return tensor
-            
-            return None
-        except Exception:
-            return None
-
-    def _convert_trajectory_sequential(
-        self,
-        field_traj: Field,
-        num_timesteps: int
-    ) -> torch.Tensor:
-        """
-        Convert trajectory one timestep at a time (fallback).
-        
-        Returns:
-            Tensor [T, C, H, W]
-        """
-        from src.utils.field_conversion import make_converter
-        
-        first_field = field_traj.time[0]
-        converter = make_converter(first_field)
-        
-        tensors = []
-        for t in range(num_timesteps):
-            field_t = field_traj.time[t]
-            tensor_t = converter.field_to_tensor(field_t, ensure_cpu=True)
-            
-            if tensor_t.dim() == 4:
-                tensor_t = tensor_t.squeeze(0)
-            
-            tensors.append(tensor_t)
-        
-        return torch.stack(tensors, dim=0)
-
     # ==================== Normalization Utilities ====================
 
     def _normalize_sim_tensor_data(self, sim_tensor_data: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

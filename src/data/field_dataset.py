@@ -11,6 +11,7 @@ Key Changes:
 from typing import List, Optional, Dict, Any, Tuple
 import torch
 from phi.field import Field
+from phi.torch.flow import *
 
 from .abstract_dataset import AbstractDataset
 from .data_manager import DataManager
@@ -179,18 +180,47 @@ class FieldDataset(AbstractDataset):
         Returns:
             Tuple of (initial_fields, target_fields) as Fields
         """
-        if idx >= len(self.augmented_samples):
-            raise IndexError(
-                f"Augmented index {idx} out of range [0, {len(self.augmented_samples)})"
-            )
-        
-        # Augmented samples are already (initial_fields, target_fields) tuples
+        sim_idx, start_frame = self._compute_sim_and_frame(idx)
+        data = self.augmented_samples[sim_idx]
+        field_metadata = self._get_field_metadata()
+        print(data[0].shape, data[1].shape)
+        # Convert initial state
+        initial_fields = self._tensors_to_fields(
+            data, field_metadata, start_frame, start_frame + 1
+        )
+        initial_fields = {name: fields[0] for name, fields in initial_fields.items()}
+        # Convert target rollout
+        target_start = start_frame + 1
+        target_end = start_frame + 1 + self.num_predict_steps
+        target_fields = self._tensors_to_fields(
+            data, field_metadata, target_start, target_end
+        )
 
-        return self.augmented_samples[idx]
-
+        return initial_fields, target_fields
     # ==================== Augmentation Management ====================
 
     def set_augmented_predictions(
+        self,
+        tensor_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
+    ):
+        """
+        Set augmented predictions with pre-conversion to Fields.
+        
+        Converts all tensor predictions to Fields in a single batch operation,
+        eliminating repeated conversions on every dataset access.
+        
+        Args:
+            tensor_predictions: List of (initial_tensor, target_tensor) tuples
+        """
+        # Store converted Fields
+
+        self.augmented_samples = tensor_predictions
+        self.num_augmented = len(tensor_predictions)
+        self._total_length = self._compute_length()
+        
+        logger.debug(f"Set {self.num_augmented} augmented predictions (as Fields)")
+
+    def _set_augmented_predictions(
         self,
         tensor_predictions: List[Tuple[torch.Tensor, torch.Tensor]]
     ):
@@ -214,44 +244,15 @@ class FieldDataset(AbstractDataset):
         
         # Get field metadata and create batch converter ONCE
         field_metadata = self._get_field_metadata()
-        batch_converter = make_batch_converter(field_metadata)
-        
         # Convert all predictions
         field_predictions = []
         for idx, (initial_tensor, target_tensor) in enumerate(tensor_predictions):
             if idx % 50 == 0 and idx > 0:
                 logger.debug(f"  Converted {idx}/{len(tensor_predictions)} predictions...")
 
-            # Lightweight normalization for common generator layouts
-            initial_tensor, target_tensor = self._normalize_prediction_tensors(initial_tensor, target_tensor)
-            # Strict: accept per-sample tensors [V,T,H,W] or [V,H,W] and batched
-            # BVTS [B,V,T,H,W]. Normalize to a batched BVTS tensor for the
-            # downstream converter (which requires 5D inputs).
-            def _to_batched_bvts(t: torch.Tensor):
-                if t is None:
-                    return None
-                if not isinstance(t, torch.Tensor):
-                    raise TypeError("Augmented prediction must be a torch.Tensor or None")
-                if t.dim() == 5:
-                    # Already batched BVTS
-                    assert_bvts_format(t, context=f"FieldDataset.set_augmented_predictions batched")
-                    return t
-                elif t.dim() == 4:
-                    # Per-sample [V, T, H, W] -> add batch dim
-                    return t.unsqueeze(0)
-                elif t.dim() == 3:
-                    # Single-frame [V, H, W] -> add batch and time dims
-                    return t.unsqueeze(0).unsqueeze(2)
-                else:
-                    raise BVTSValidationError(
-                        f"Unsupported tensor shape for augmented prediction: {tuple(t.shape)}; expected [V,T,H,W] or [V,H,W] or batched [B,V,T,H,W]"
-                    )
-
-            initial_bvts = _to_batched_bvts(initial_tensor) if initial_tensor is not None else None
-            target_bvts = _to_batched_bvts(target_tensor) if target_tensor is not None else None
 
             fields = self._convert_tensor_to_fields_optimized(
-                initial_bvts, target_bvts, batch_converter, field_metadata
+                initial_tensor, target_tensor, field_metadata
             )
             field_predictions.append(fields)
         # Store converted Fields
@@ -290,7 +291,6 @@ class FieldDataset(AbstractDataset):
         self,
         input_tensor: torch.Tensor,
         target_tensor: torch.Tensor,
-        batch_converter,
         field_metadata: Dict
     ) -> Tuple[Dict[str, Field], Dict[str, List[Field]]]:
         """
@@ -305,40 +305,13 @@ class FieldDataset(AbstractDataset):
         Returns:
             Tuple of (initial_fields, target_fields)
         """
-        # BVTS-only implementation: inputs MUST be BVTS [B, V, T, H, W]
-        from src.utils.field_conversion.validation import assert_bvts_format
-        assert_bvts_format(input_tensor, context="FieldDataset.synthetic initial")
-        assert_bvts_format(target_tensor, context="FieldDataset.synthetic target")
+        print(input_tensor.shape, target_tensor.shape)
 
-
-        total_channels = getattr(batch_converter, "total_channels", None)
-        if total_channels is None:
-            raise RuntimeError("Batch converter does not expose total_channels")
-
-        # initial snapshot: select time index 0 -> [B, V, H, W]
-        initial_snapshot = input_tensor[:, :, 0, :, :]
-
-        # Convert initial state (expects [B, C, H, W])
-        initial_fields = batch_converter.tensor_to_fields_batch(initial_snapshot)
-
-        for name, field in initial_fields.items():
-            if "batch" in field.shape:
-                initial_fields[name] = field.batch[0]
-
-        # Convert each timestep in target tensor
-        B, V, T, H, W = target_tensor.shape
-        target_fields = {name: [] for name in field_metadata.keys()}
-
-        for t in range(T):
-            timestep = target_tensor[:, :, t, :, :]  # [B, V, H, W]
-            timestep_fields = batch_converter.tensor_to_fields_batch(timestep)
-            for name, field in timestep_fields.items():
-                if "batch" in field.shape:
-                    target_fields[name].append(field.batch[0])
-                else:
-                    target_fields[name].append(field)
-
-        return initial_fields, target_fields
+        initial_tensor = math.tensor(input_tensor, channel("vector"), batch("time"),  spatial(*field_metadata.spatial_dims))
+        target_tensor = math.tensor(target_tensor, channel("vector"), batch("time"), spatial(*field_metadata.spatial_dims))
+        initiel_field = CenteredGrid(initial_tensor, field_metadata.extrapolation, bounds=field_metadata.domain)
+        target_field = CenteredGrid(target_tensor, field_metadata.extrapolation, bounds=field_metadata.domain)
+        return 
 
     # ==================== Helper Methods ====================
     
@@ -401,7 +374,7 @@ class FieldDataset(AbstractDataset):
             )
         
         return field_metadata
-    
+
     def _tensors_to_fields(
         self,
         data: Dict[str, Any],
@@ -409,36 +382,27 @@ class FieldDataset(AbstractDataset):
         start_frame: int,
         end_frame: int
     ) -> Dict[str, List[Field]]:
-        """Convert tensors to Fields for a frame range."""
+        """Convert per-sample tensors [V, T, H, W] to Fields."""
         fields_dict = {}
+        
         for name in self.field_names:
-            sample_tensor = data["tensor_data"][name]
-
-            # Strict: expect per-field BVTS tensors [B, V, T, *spatial]
-            if not isinstance(sample_tensor, torch.Tensor):
-                raise RuntimeError(f"Tensor data for field {name} is not a torch.Tensor")
-
-            from src.utils.field_conversion.validation import assert_bvts_format
-
-
-            # Slice requested time window -> still BVTS [V, T_slice, H, W]
-            window_bvts = sample_tensor[:, start_frame:end_frame]
-
-            # Convert each timestep by selecting time index and passing a
-            # batched snapshot [B, V, H, W] to the single-field converter.
+            sample_tensor = data["tensor_data"][name]  # [V, T, H, W]
+            
+            # Validate shape
+            assert sample_tensor.dim() == 4, \
+                f"Expected per-sample [V, T, H, W], got {sample_tensor.shape}"
+            
+            # Slice time window
             field_meta = field_metadata[name]
-            converter = make_converter(field_meta)
+            window_tensor = math.tensor(sample_tensor[:, start_frame:end_frame, :, :], channel("vector"), batch("time"), spatial(*field_meta.spatial_dims))  # [V, T_window, H, W]
+            window_field = CenteredGrid(window_tensor, field_meta.extrapolation, bounds=field_meta.domain)
+            
 
-            fields_list = []
-            for t in range(window_bvts.shape[1]):
-                timestep = window_bvts[:, t, :, :]  # [V, H, W]
-                field_t = converter.tensor_to_field(timestep, field_meta, time_slice=0)
-                fields_list.append(field_t)
-
-            fields_dict[name] = fields_list
+            logger.debug(f"FieldDataset._tensors_to_fields: field '{name}' window shape: {window_tensor}")
+            fields_dict[name] = window_field
         
         return fields_dict
-    
+        
     def _get_field_metadata(self) -> Dict[str, FieldMetadata]:
         """Get field metadata (cached)."""
         if self._field_metadata_cache is not None:

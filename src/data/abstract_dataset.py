@@ -98,22 +98,28 @@ class AbstractDataset(Dataset, ABC):
         if self.access_policy == "real_only":
             if idx >= self.num_real:
                 raise IndexError(f"Index {idx} out of range [0, {self.num_real})")
-            return self._get_real_sample(idx)
+            
+            sample = self._get_real_sample(idx)
+            return sample
         
         elif self.access_policy == "generated_only":
             if idx >= self.num_augmented:
                 raise IndexError(f"Index {idx} out of range [0, {self.num_augmented})")
-            return self._get_augmented_sample(idx)
+            
+            sample = self._get_augmented_sample(idx)
+            return sample
         
         else:  # 'both'
             if idx >= self._total_length:
                 raise IndexError(f"Index {idx} out of range [0, {self._total_length})")
             
             if idx < self.num_real:
-                return self._get_real_sample(idx)
+                sample = self._get_real_sample(idx)
+                return sample
             else:
                 aug_idx = idx - self.num_real
-                return self._get_augmented_sample(aug_idx)
+                sample = self._get_augmented_sample(aug_idx)
+                return sample
 
     def _compute_length(self) -> int:
         """Compute total dataset length based on access policy."""
