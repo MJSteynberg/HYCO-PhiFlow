@@ -3,6 +3,7 @@
 from typing import Dict, Any
 import torch.nn as nn
 from src.models import ModelRegistry
+import torch
 
 
 class ModelFactory:
@@ -33,7 +34,7 @@ class ModelFactory:
             Synthetic model instance
         """
         print( "Creating synthetic model..." )
-        return ModelRegistry.get_synthetic_model(config)
+        return torch.compile(ModelRegistry.get_synthetic_model(config))
 
     @staticmethod
     def list_available_models():

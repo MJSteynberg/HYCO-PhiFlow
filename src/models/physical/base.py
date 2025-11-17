@@ -50,30 +50,11 @@ class PhysicalModel(ABC):
         self.resolution = spatial(x=res_x, y=res_y)
 
         # Setup PDE parameters
-        pde_params = config["model"]["physical"]["pde_params"]
-        for param_name, value in pde_params.items():         
-            self._create_property(param_name, value)
         self.dt = float(config["model"]["physical"]["dt"])
         
 
-    def _create_property(self, param_name: str, value: Any):
-        """
-        Dynamically create a property for a PDE parameter.
 
-        This creates a getter and setter that access the private attribute.
-        """
-        private_name = f"_{param_name}"
-        setattr(self, private_name, value)
-        # Create getter and setter functions
-        def getter(self):
-            return getattr(self, private_name)
 
-        def setter(self, value):
-            setattr(self, private_name, value)
-
-        # Set property on the class (not instance)
-        prop = property(getter, setter)
-        setattr(self.__class__, param_name, prop)
 
     @abstractmethod
     def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:

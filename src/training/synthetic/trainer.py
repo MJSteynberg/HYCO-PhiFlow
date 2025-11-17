@@ -45,7 +45,8 @@ class SyntheticTrainer():
         self.model = model
         self._parse_config(config)
         self._setup()
-        self.model = torch.compile(self.model.to(self.device))
+        # self.model = torch.compile(self.model.to(self.device))]
+        self.model = self.model.to(self.device)
 
         # Validation state tracking
         self.best_val_loss = float("inf")

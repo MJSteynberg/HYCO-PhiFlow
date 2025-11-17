@@ -73,8 +73,20 @@ class PhysicalTrainer():
         
         # -- Store model and parameters ---
         learnable_parameters = config['trainer']['physical']['learnable_parameters']
-        self.learnable_parameters = [p['initial_guess'] for p in learnable_parameters]
+        self.learnable_parameters = []
+        for param_config in learnable_parameters:
+            param_name = param_config["name"]
+            param_type = param_config["type"]
+            setattr(self.model, param_name, param_config.get("initial_guess"))
+            param_value = getattr(self.model, param_name)
+            if param_type == "field":
+                
+                self.learnable_parameters.append(param_value.values)
+            else:
+                # Use scalar as-is
+                self.learnable_parameters.append(param_value)
         self.param_names = [p["name"] for p in learnable_parameters]
+        self.param_types = [p["type"] for p in learnable_parameters]
         self.rollout_steps = config['trainer']['rollout_steps']
 
         # --- Trainer specifications ---
@@ -233,17 +245,26 @@ class PhysicalTrainer():
     # Utilities #
     #############
     def _update_params(self, learnable_tensors: Tuple[Tensor, ...]):
-        """
-        Update model's learnable parameters.
+        """Update model parameters (scalars or fields)."""
+        for param_name, param_value, param_type in zip(
+            self.param_names, learnable_tensors, self.param_types
+        ):
+            if param_type == "field":
+                # Wrap tensor in CenteredGrid
+                original_field = getattr(self.model, param_name)
+                updated_field = CenteredGrid(
+                    param_value,
+                    extrapolation=original_field.extrapolation,
+                    bounds=original_field.bounds,
+                )
+                setattr(self.model, param_name, updated_field)
+            else:
+                # Scalar - set directly
+                setattr(self.model, param_name, param_value)
 
-        Args:
-            learnable_tensors: Current parameter values from optimizer
-        """
-        for param_name, param_value in zip(self.param_names, learnable_tensors):
-            setattr(self.model, param_name, param_value)
+            self.optimizer.x0 = list(learnable_tensors)
+            self.learnable_parameters = list(learnable_tensors)
 
-        self.learnable_parameters = learnable_tensors
-        self.optimizer.x0 = learnable_tensors
 
     
     

@@ -1,6 +1,6 @@
 # src/models/physical/advection.py
 
-from typing import Dict
+from typing import Dict, Any
 import numpy as np
 
 # --- PhiFlow Imports ---
@@ -10,6 +10,7 @@ from phi.math import Shape, Tensor, batch, math
 # --- Repo Imports ---
 from .base import PhysicalModel
 from src.models import ModelRegistry
+
 
 
 @jit_compile
@@ -29,8 +30,8 @@ def _advection_step(
         CenteredGrid: The density field at the next time step.
     """
     # Scale velocity by advection coefficient
-    velocity = velocity * advection_coeff
-    return advect.semi_lagrangian(density, velocity, dt=dt), velocity, advection_coeff
+    velocity_new = velocity * advection_coeff
+    return advect.semi_lagrangian(density, velocity_new, dt=dt), velocity, advection_coeff
 
 
 @ModelRegistry.register_physical("AdvectionModel")
@@ -44,6 +45,39 @@ class AdvectionModel(PhysicalModel):
     def __init__(self, config: dict):
         """Initialize the advection model."""
         super().__init__(config)
+        pde_params = config["model"]["physical"]["pde_params"]
+        self._initialize_fields(pde_params)
+
+    def _initialize_fields(self, pde_params: Dict[str, Any]):
+        """Initialize model fields from PDE parameters."""
+        def f(x, y):
+            return eval(pde_params['value'], {'x':x, 'y':y, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1]})
+        
+        self._initialize_advection_field(f)
+
+    def _initialize_advection_field(self, value):
+        """Initialize advection_coeff as a CenteredGrid field."""
+        
+        self._advection_coeff = CenteredGrid(
+            value,
+            extrapolation=extrapolation.PERIODIC,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+
+    @property
+    def advection_coeff(self) -> CenteredGrid:
+        """Get the advection coefficient field."""
+        return self._advection_coeff
+
+    @advection_coeff.setter
+    def advection_coeff(self, value: Any):
+        """Set the advection coefficient field."""
+        if isinstance(value, Field):
+            self._advection_coeff = value
+        else:
+            self._initialize_advection_field(value)
 
     def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
@@ -191,11 +225,17 @@ class AdvectionModel(PhysicalModel):
         Returns:
             Dictionary with updated 'density' and unchanged 'velocity'.
         """
+
+        batch_size = current_state["density"].shape.get_size("batch")
+        advection_coeff_batched = math.expand(
+            self.advection_coeff, 
+            batch(batch=batch_size)
+        )
+        
         new_density, new_velocity, _ = _advection_step(
-            density=current_state["density"], 
+            density=current_state["density"],
             velocity=current_state["velocity"],
-            advection_coeff=self.advection_coeff,
+            advection_coeff=advection_coeff_batched,
             dt=self.dt,
         )
-        # Velocity field remains static (like smoke's inflow)
         return {"density": new_density, "velocity": new_velocity}
