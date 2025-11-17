@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'advection_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['evaluate']
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/advection'
@@ -35,7 +35,7 @@ model:
 trainer:
   batch_size: 256
   rollout_steps: 4 
-  train_sim: [1]
+  train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
   physical: 
@@ -63,7 +63,7 @@ trainer:
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0]
+  test_sim: [0,1,2,3,4,5,6,7,8,9]
   
   # Model checkpoint to evaluate
   checkpoint_path: "results/models/advection_unet_model.pth"
@@ -72,7 +72,7 @@ evaluation:
   num_frames: 50
   
   # Output directory
-  output_dir: "evaluation_results"
+  output_dir: "results/evaluation/advection"
   
   # Visualization settings
   visualization:

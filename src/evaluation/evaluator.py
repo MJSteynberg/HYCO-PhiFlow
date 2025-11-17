@@ -74,7 +74,7 @@ class Evaluator:
         from src.factories.model_factory import ModelFactory
         
         # Create model
-        self.model = ModelFactory.create_synthetic_model(self.config)
+        self.model = torch.compile(ModelFactory.create_synthetic_model(self.config))
         
         # Load checkpoint
         checkpoint_path = Path(self.eval_config['checkpoint_path'])
