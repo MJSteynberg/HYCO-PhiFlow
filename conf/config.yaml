@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'advection_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train']
+  tasks: ['evaluate']
 
 data:
   data_dir: 'data/advection'
@@ -58,4 +58,25 @@ trainer:
     augmentation:
       alpha: 0.2
       cache_dir: data/cache/advection
+
+
+# For evaluation
+evaluation:
+  # Which simulations to evaluate
+  test_sim: [0]
+  
+  # Model checkpoint to evaluate
+  checkpoint_path: "results/models/advection_unet_model.pth"
+  
+  # How many timesteps to rollout
+  num_frames: 50
+  
+  # Output directory
+  output_dir: "evaluation_results"
+  
+  # Visualization settings
+  visualization:
+    format: "gif"  # or "mp4"
+    fps: 10
+    dpi: 100
       

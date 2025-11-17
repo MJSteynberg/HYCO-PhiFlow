@@ -98,6 +98,7 @@ def main(cfg: DictConfig) -> None:
 
         elif task == "evaluate":
             logger.info("Running evaluation")
+            from src.evaluation import Evaluator
             evaluator = Evaluator(config)
             evaluator.evaluate()
 
