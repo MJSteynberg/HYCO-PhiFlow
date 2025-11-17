@@ -33,7 +33,7 @@ model:
       filters: 64
 
 trainer:
-  batch_size: 32
+  batch_size: 256
   rollout_steps: 4 
   train_sim: [1]
   device: 'cuda:0'
@@ -47,14 +47,15 @@ trainer:
     abs_tol: 1e-4
     max_iterations: 5
   synthetic:
-    epochs: 1
+    epochs: 50
     learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10 
+    cycles: 1000 
+    warmup: 1000
     augmentation:
-      alpha: 0.1
+      alpha: 0.2
       cache_dir: data/cache/advection
       

@@ -25,7 +25,7 @@ def run_generation(config: dict):
     project_root = config["project_root"]
 
     # --- Setup Output Directory ---
-    output_dir = os.path.join(project_root, data_cfg["data_dir"], data_cfg["dset_name"])
+    output_dir = os.path.join(project_root, data_cfg["data_dir"])
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Starting {data_cfg['num_simulations']} simulations.")
@@ -65,7 +65,7 @@ def run_generation(config: dict):
 
         scene.write(state_to_save, frame=0)
 
-        for t in range(1, data_cfg["  trajectory_length"] + 1):
+        for t in range(1, data_cfg["trajectory_length"] + 1):
 
             # Step the model forward
             current_state_dict = model.forward(current_state_dict)
