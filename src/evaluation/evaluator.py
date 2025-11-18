@@ -7,7 +7,8 @@ Uses PhiFlow's built-in visualization tools for easy plotting.
 from pathlib import Path
 from typing import Dict, Any, List
 import torch
-from phi.vis import plot, show, close
+from phi.vis import plot, show, close, smooth
+from phi.math import nan_to_0
 
 from src.models.synthetic.base import SyntheticModel
 from src.data import DataManager
@@ -245,17 +246,26 @@ class Evaluator:
                 ))
             
             
-            # Plot side by side
-            print(real_phiml, gen_phiml)
+            # Make sure the synthetic prediction maximum is cut off at the real maximum for better visualization
+           
+            gen_phiml = nan_to_0(gen_phiml)
+            real_phiml = nan_to_0(real_phiml)
+            max_real = math.max(real_phiml)
+            min_real = math.min(real_phiml)
+
+
+            gen_phiml = math.clip(gen_phiml, min_real, max_real)
+
+            
             ani = plot(
                 {
                     'Real': real_phiml,
                     'Generated': gen_phiml
                 },
                 animate='time',
-                show_color_bar=True,
+
             )
             ani.save(
                 self.output_dir / f'sim_{sim_idx}_{field_name}_comparison.gif',
-                fps=20,
+                fps=10,
             )

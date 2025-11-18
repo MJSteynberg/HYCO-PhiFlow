@@ -34,7 +34,7 @@ class ModelFactory:
             Synthetic model instance
         """
         print( "Creating synthetic model..." )
-        return torch.compile(ModelRegistry.get_synthetic_model(config))
+        return ModelRegistry.get_synthetic_model(config)
 
     @staticmethod
     def list_available_models():

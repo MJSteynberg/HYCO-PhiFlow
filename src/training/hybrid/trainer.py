@@ -207,7 +207,7 @@ class HybridTrainer(AbstractTrainer):
             num_trajectories = max(1, (num_synthetic_samples + samples_per_trajectory - 1) // samples_per_trajectory)
             
             # Generate batched rollout
-            initial_state = self.physical_model.get_random_state(batch_size=num_trajectories)
+            initial_state = self.physical_model.get_initial_state(batch_size=num_trajectories)
             rollout = self.physical_model.rollout(initial_state, num_steps=self.trajectory_length)
             
             # Split into list of individual trajectories

@@ -73,22 +73,6 @@ class PhysicalModel(ABC):
         pass
 
     @abstractmethod
-    def get_random_state(self, batch_size: int = 1) -> Dict[str, Field]:
-        """
-        Generates a random state for the simulation.
-
-        The batch dimension should be named 'batch'.
-
-        Args:
-            batch_size (int): The number of parallel simulations.
-
-        Returns:
-            Dict[str, Field]: A dictionary mapping field names to their
-                              random Field values.
-        """
-        pass
-
-    @abstractmethod
     def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
         """
         Advances the simulation by one time step (dt).

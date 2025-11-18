@@ -1,6 +1,6 @@
 # src/models/physical/advection.py
 
-from typing import Dict, Any
+from typing import Dict, Any, Union
 import numpy as np
 
 # --- PhiFlow Imports ---
@@ -15,7 +15,7 @@ from src.models import ModelRegistry
 
 @jit_compile
 def _advection_step(
-    density: CenteredGrid, velocity: CenteredGrid, advection_coeff: Tensor, dt: float
+    density: CenteredGrid, velocity: CenteredGrid, advection_coeff: CenteredGrid, dt: float
 ) -> CenteredGrid:
     """
     Performs one step of pure advection using semi-Lagrangian method.
@@ -147,57 +147,6 @@ class AdvectionModel(PhysicalModel):
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-        density_0 = math.expand(density_0, b)
-
-        return {"density": density_0, "velocity": velocity_0}
-
-    def get_random_state(self, batch_size: int = 1) -> Dict[str, Field]:
-        """
-        Returns a batched initial state with density and static velocity field.
-
-        The velocity field is created once here and will be passed through
-        the state dictionary to each step (like smoke's inflow pattern).
-        """
-        b = batch(batch=batch_size)
-        # Create a nice swirling/rotating velocity field
-        def velocity_fn(x, y):
-            # Vortex-like pattern: velocity vector depends on position
-            center_x = self.domain.size[0] / 2
-            center_y = self.domain.size[1] / 2
-            dy = y - center_y
-            dx = x - center_x
-            r = math.sqrt(dx**2 + dy**2 + 1e-6)
-
-            # Circular flow with some variation
-            vx = -dy * math.exp(
-                -(r**2) / (0.2 * self.domain.size[0]) ** 2
-            ) + 0.2 * math.sin(2 * math.pi * y / self.domain.size[1])
-            vy = dx * math.exp(
-                -(r**2) / (0.2 * self.domain.size[0]) ** 2
-            ) + 0.2 * math.cos(2 * math.pi * x / self.domain.size[0])
-
-            return math.stack([vx, vy], channel("vector"))
-
-        # Create CenteredGrid for velocity with vector values
-        velocity_0 = CenteredGrid(
-            velocity_fn,
-            extrapolation=extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
-            bounds=self.domain,
-        )
-        velocity_0 = math.expand(velocity_0, b)
-        # Create density field with smooth tanh transition
-        scale = math.random_uniform(low=1, high=10)
-        smoothness = math.random_uniform(low=1.0, high=5.0)
-        density_0 = CenteredGrid(
-            Noise(scale=scale, smoothness=smoothness),
-            extrapolation=extrapolation.ZERO_GRADIENT,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
-            bounds=self.domain,
-        )
-        density_0 = math.tanh(2.0 * density_0)
         density_0 = math.expand(density_0, b)
 
         return {"density": density_0, "velocity": velocity_0}

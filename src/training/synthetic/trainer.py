@@ -55,6 +55,16 @@ class SyntheticTrainer():
         # --- Loss function ---
         self.loss_fn = nn.MSELoss()  # Simple MSE for tensor-based training
 
+        # --- Try to load checkpoint if exists ---
+        if Path(self.checkpoint_path).exists():
+            try:
+                checkpoint = self.load_checkpoint(self.checkpoint_path)
+                logger.info(
+                    f"Loaded checkpoint from {self.checkpoint_path} at epoch {checkpoint['epoch']} with loss {checkpoint['loss']:.6f}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load checkpoint: {e}")
+
     def _parse_config(self, config):
         """
         Parse configuration for synthetic trainer.
@@ -115,6 +125,7 @@ class SyntheticTrainer():
         pbar = tqdm(
             range(num_epochs), desc="Training", unit="epoch", disable=disable_tqdm
         )
+
 
         for epoch in pbar:
             start_time = time.time()
@@ -177,7 +188,6 @@ class SyntheticTrainer():
         initial_state = initial_state.to(self.device, non_blocking=True)
         rollout_targets = rollout_targets.to(self.device, non_blocking=True)
         num_steps = rollout_targets.shape[2]
-
         # BVTS autoregressive loop: current_state is [B, V, 1, H, W]
         with torch.amp.autocast(enabled=True, device_type=self.device.type):
             current_state = initial_state

@@ -17,6 +17,9 @@ from src.training.abstract_trainer import AbstractTrainer
 from src.utils.logger import get_logger
 from torch.utils.data import DataLoader
 
+from pathlib import Path
+import torch
+
 from tqdm import tqdm
 
 logger = get_logger(__name__)
@@ -58,6 +61,15 @@ class PhysicalTrainer():
         self.best_val_loss = float("inf")
         self.best_epoch = 0
 
+        # --- Try to load checkpoint if exists ---
+        if Path(self.checkpoint_path).exists():
+            try:
+                checkpoint = self.load_checkpoint(self.checkpoint_path)
+                logger.info(
+                    f"Loaded checkpoint from {self.checkpoint_path} at epoch {checkpoint['epoch']} with loss {checkpoint['loss']:.6f}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load checkpoint: {e}")
     def _parse_config(self, config: Dict[str, Any]):
         """
         Parse configuration dictionary to setup trainer parameters.
@@ -70,6 +82,13 @@ class PhysicalTrainer():
         self.field_names: List[str] = config['data']["fields"]
         self.data_dir = config['data']["data_dir"]
         self.dset_name = config['data']["dset_name"]
+
+        # --- Checkpoint path ---
+        model_path_dir = config["model"]["physical"]["model_path"]
+        model_save_name = config["model"]["physical"]["model_save_name"]
+        
+        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.pth"
+        os.makedirs(model_path_dir, exist_ok=True)
         
         # -- Store model and parameters ---
         learnable_parameters = config['trainer']['physical']['learnable_parameters']
@@ -157,6 +176,8 @@ class PhysicalTrainer():
                 results["best_epoch"] = self.best_epoch
                 results["best_val_loss"] = self.best_val_loss
 
+                self.save_checkpoint(epoch, train_loss)
+
             epoch_time = time.time() - start_time
 
             # Update progress bar
@@ -168,6 +189,7 @@ class PhysicalTrainer():
             postfix_dict["best_epoch"] = self.best_epoch
 
             pbar.set_postfix(postfix_dict)
+
 
         final_loss = results["train_losses"][-1]
         results["final_loss"] = final_loss
@@ -266,8 +288,39 @@ class PhysicalTrainer():
             self.learnable_parameters = list(learnable_tensors)
 
 
+    def save_checkpoint(self, epoch: int, loss: float):
+        """
+        Save model checkpoint to specified path.
+
+        Args:
+            path: File path to save the checkpoint
+            epoch: Current training epoch
+            loss: Loss value at the checkpoint
+
+        """
+        
+        params = [param.native('x,y') if isinstance(param, Tensor) else param for param in self.learnable_parameters]
+        # Convert them to native tensors for saving
+        checkpoint = {
+            "learnable_parameters": params,
+            "epoch": epoch,
+            "loss": loss,
+        }
+        torch.save(checkpoint, self.checkpoint_path)
     
-    
+    def load_checkpoint(self, path: str, strict: bool = True) -> Dict[str, Any]:
+        """
+        Load model checkpoint from specified path.
+
+        Args:
+            path: File path to load the checkpoint from
+            strict: Whether to strictly enforce that the keys in state_dict match the model
+        Returns:
+            Loaded checkpoint dictionary
+        """
+        checkpoint = torch.load(path)
+        self.learnable_parameters = [math.tensor(param, spatial("x,y")) for param in checkpoint["learnable_parameters"]]
+        return checkpoint
 
     def get_current_params(self) -> Dict[str, Tensor]:
         """

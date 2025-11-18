@@ -1,81 +1,83 @@
 general: 
-  experiment_name: 'advection_experiment'
+  experiment_name: 'burgers_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['train', 'evaluate']
+  tasks: ['generate', 'evaluate']
 
 data:
-  data_dir: 'data/advection'
-  dset_name: 'advection'
-  fields: ['density', 'velocity']
-  fields_scheme: 'dvv'
-  fields_type: 'DSS'
-  num_simulations: 6
+  data_dir: 'data/burgers'
+  dset_name: 'burgers'
+  fields: ['velocity']
+  fields_scheme: 'vv'
+  fields_type: 'DD'
+  num_simulations: 1
   trajectory_length: 100
 
 model:
   physical:
-    name: 'AdvectionModel'
+    name: 'BurgersModel'
+    model_path: 'results/models'
+    model_save_name: 'burgers_physical_model'
     domain: 
       size_x: 100
       size_y: 100
     resolution:
-      x: 128
-      y: 128
-    dt: 1.0
+      x: 256
+      y: 256
+    dt: 0.5
     pde_params:
-      name: 'advection_coeff'
+      name: 'diffusion_coeff'
       type: 'field'
-      value: '2 * (math.sin(2 * math.pi * x / size_x) * math.cos(math.pi * y / size_y))**2 + 0.1'  # Initial value expression
+      value: '0.05 * (x/size_x + y/size_y)**3'  # Initial value expression
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
-    model_save_name: 'advection_unet_model' 
+    model_save_name: 'burgers_synthetic_model' 
     architecture: 
       levels: 4
       filters: 64
 
 trainer:
-  batch_size: 32
+  batch_size: 8
   rollout_steps: 4 
-  train_sim: [0, 1]
+  train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
   physical: 
     epochs: 1 
     learnable_parameters:
-      - name: 'advection_coeff'
+      - name: 'diffusion_coeff'
         type: 'field'
-        initial_guess: 0.5
+        initial_guess: 0.01
     method: 'L-BFGS-B'
     abs_tol: 1e-4
     max_iterations: 5
   synthetic:
-    epochs: 10
+    epochs: 2
     learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10
+    cycles: 2
     warmup: 1
     augmentation:
       alpha: 0.2
-      cache_dir: data/cache/advection
+      cache_dir: data/cache/burgers
 
 
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0,1,2,3,4,5]
+  test_sim: [0]
   
   # Model checkpoint to evaluate
-  checkpoint_path: "results/models/advection_unet_model.pth"
+  checkpoint_path: "results/models/burgers_synthetic_model.pth"
   
   # How many timesteps to rollout
   num_frames: 100
   
   # Output directory
-  output_dir: "results/evaluation/advection"
+  output_dir: "results/evaluation/burgers"
   
   # Visualization settings
   visualization:
