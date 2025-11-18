@@ -69,7 +69,7 @@ class KolmogorovModel(PhysicalModel):
 
     def _initialize_forcing_field(self, value):
         """Initialize forcing field as a CenteredGrid field."""
-        value = lambda x, y: math.stack([50.0 * math.sin(4 * math.pi * y / self.domain.size[1]), 0 * x], channel("vector"))
+        value = lambda x, y: math.stack([50.0 * math.sin(4 * math.pi * y / self.domain.size[1]), 0 * x], channel(vector="x,y"))
         self._forcing_field = CenteredGrid(
             value,
             extrapolation.PERIODIC,
@@ -98,18 +98,19 @@ class KolmogorovModel(PhysicalModel):
         """
         b = batch(batch=batch_size)
 
-        velocity_0 = StaggeredGrid(
+        noise = StaggeredGrid(
             Noise(scale=5, smoothness=5),  # Initialize with noise
             extrapolation.PERIODIC,  # Use periodic boundaries
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
             bounds=self.domain,
         )
-        velocity_0 = CenteredGrid(0.1 * velocity_0, 
+        velocity_0 = CenteredGrid( 0.1 * self.forcing_field, 
                                     extrapolation.PERIODIC,
                                     x=self.resolution.get_size("x"),
                                     y=self.resolution.get_size("y"),
                                     bounds=self.domain)
+        velocity_0 = velocity_0 
         velocity_0 = math.expand(velocity_0, b)
         return {"velocity": velocity_0}
     
