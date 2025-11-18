@@ -48,7 +48,7 @@ class Evaluator:
         
         # Model will be loaded in evaluate()
         self._load_synthetic_model()
-        self._load_physical_parameters()
+        # self._load_physical_parameters()
         
     def evaluate(self):
         """
@@ -251,22 +251,64 @@ class Evaluator:
                     spatial('x', 'y')
                 )
             elif real_tensor.shape[0] == 2:
-                real_phiml = math.norm(math.tensor(
+                real_phiml = math.tensor(
                     real_tensor.cuda(),
-                    channel('vector'),
+                    channel(vector='x,y'),
                     batch('time'),
                     spatial('x', 'y')
-                ))
+                )
+                real_field = CenteredGrid(
+                    real_phiml,
+                    extrapolation.PERIODIC,
+                    x=resolution.get_size("x"),
+                    y=resolution.get_size("y"),
+                    bounds=domain,
+                )
                 gen_phiml = math.norm(math.tensor(
                     gen_tensor.cuda(),
                     channel('vector'),
                     batch('time'),
                     spatial('x', 'y')
                 ))
-            
-            
+                
+                
+            def normalized_vorticity(velocity: CenteredGrid) -> CenteredGrid:
+                """
+                Compute normalized vorticity: sign(ω) * sqrt(|ω| / quantile(ω, 0.8))
+                
+                This normalization:
+                - Preserves sign (rotation direction)
+                - Compresses dynamic range with sqrt
+                - Normalizes by 80th percentile for consistent scaling
+                """
+                # Compute vorticity (curl)
+
+                curl = field.curl(velocity)
+                
+                # Get the values as a tensor
+                curl_values = curl.values
+                
+                # Compute 80th percentile (quantile)
+                abs_curl = math.abs(curl_values)
+                quantile_80 = math.quantile(abs_curl, 0.8)
+                
+                # Avoid division by zero
+                quantile_80 = math.maximum(quantile_80, 1e-10)
+                
+                # Apply the transformation: sign(curl) * sqrt(|curl| / quantile)
+                normalized = math.sign(curl_values) * math.sqrt(abs_curl / quantile_80)
+                
+                # Create new field with normalized values
+                curl_normalized = field.CenteredGrid(
+                    normalized,
+                    extrapolation=curl.extrapolation,
+                    bounds=curl.bounds,
+                    resolution=curl.resolution
+                )
+                
+                return curl_normalized
             # Make sure the synthetic prediction maximum is cut off at the real maximum for better visualization
-           
+            real_vorticity = normalized_vorticity(real_field)
             gen_phiml = nan_to_0(gen_phiml)
             real_phiml = nan_to_0(real_phiml)
             max_real = math.max(real_phiml)
@@ -278,7 +320,7 @@ class Evaluator:
             
             ani = plot(
                 {
-                    'Real': real_phiml,
+                    'Real': real_vorticity,
                     'Generated': gen_phiml
                 },
                 animate='time',
@@ -288,11 +330,11 @@ class Evaluator:
                 self.output_dir / f'sim_{sim_idx}_{field_name}_comparison.gif',
                 fps=10,
             )
-            for name, real_param, learned_param in zip(self.param_names, self.real_parameters, self.learnable_parameters):
-                plot(
-                    {
-                        f'Real {name}': real_param,
-                        f'Learned {name}': learned_param
-                    },
-                )
-                plt.savefig(self.output_dir / f'sim_{sim_idx}_{name}_comparison.png')
+            # for name, real_param, learned_param in zip(self.param_names, self.real_parameters, self.learnable_parameters):
+            #     plot(
+            #         {
+            #             f'Real {name}': real_param,
+            #             f'Learned {name}': learned_param
+            #         },
+            #     )
+            #     plt.savefig(self.output_dir / f'sim_{sim_idx}_{name}_comparison.png')

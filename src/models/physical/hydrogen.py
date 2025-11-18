@@ -1,4 +1,4 @@
-# src/models/physical/burgers.py
+# src/models/physical/hydrogen.py
 
 from typing import Dict, Any
 import numpy as np
@@ -12,11 +12,11 @@ from .base import PhysicalModel
 from src.models import ModelRegistry
 
 @jit_compile
-def _burgers_physics_step(
+def _hydrogen_physics_step(
     velocity: CenteredGrid, diffusion_coeff: CenteredGrid, dt: float
 ) -> CenteredGrid:
     """
-    Performs one physics-based Burgers' equation step.
+    Performs one physics-based hydrogen' equation step.
 
     Args:
         velocity (CenteredGrid): Current velocity field.
@@ -43,15 +43,15 @@ def _burgers_physics_step(
 # --- Model Class Implementation ---
 
 
-@ModelRegistry.register_physical("BurgersModel")
-class BurgersModel(PhysicalModel):
+@ModelRegistry.register_physical("HydrogenModel")
+class HydrogenModel(PhysicalModel):
     """
-    Physical model for the Burgers' equation.
+    Physical model for the hydrogen' equation.
     Implements the PhysicalModel interface.
     """
 
     def __init__(self, config: dict):
-        """Initialize the Burgers model."""
+        """Initialize the hydrogen model."""
         super().__init__(config)
         self.pde_params = config["model"]["physical"]["pde_params"]
         # Calculate the maximum value that the diffusion coefficient can be whilst being stable
@@ -98,7 +98,7 @@ class BurgersModel(PhysicalModel):
     def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
         Returns an initial state of (noisy velocity).
-        We use periodic boundaries as they are common for Burgers.
+        We use periodic boundaries as they are common for hydrogen.
         """
         b = batch(batch=batch_size)
 
@@ -122,7 +122,7 @@ class BurgersModel(PhysicalModel):
     
     def rollout(self, initial_state, num_steps: int) -> Dict[str, Tensor]:
         """
-        Perform a rollout of the Burgers' equation from the initial state.
+        Perform a rollout of the hydrogen' equation from the initial state.
 
         Args:
             initial_state (Dict[str, Field]): Initial state containing 'velocity'.
@@ -131,7 +131,7 @@ class BurgersModel(PhysicalModel):
             Dict[str, Tensor]: Dictionary containing the velocity trajectory
                                with shape [batch, time, y, x].
         """
-        velocity_trj, _ = iterate(_burgers_physics_step, batch(time=num_steps), initial_state["velocity"], self.diffusion_coeff, dt = self.dt)
+        velocity_trj, _ = iterate(_hydrogen_physics_step, batch(time=num_steps), initial_state["velocity"], self.diffusion_coeff, dt = self.dt)
         return {"velocity": velocity_trj}
 
     def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
@@ -143,7 +143,7 @@ class BurgersModel(PhysicalModel):
             self.diffusion_coeff,
             batch(batch=batch_size)
         )
-        new_velocity, _ = _burgers_physics_step(
+        new_velocity, _ = _hydrogen_physics_step(
             velocity=current_state["velocity"], diffusion_coeff=diffusion_coeff_batched, dt=self.dt
         )
         return {"velocity": new_velocity}

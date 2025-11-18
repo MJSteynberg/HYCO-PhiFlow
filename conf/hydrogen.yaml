@@ -1,0 +1,88 @@
+general: 
+  experiment_name: 'hydrogen_experiment'
+  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: [ 'evaluate']
+
+data:
+  data_dir: 'data/hydrogen'
+  dset_name: 'hydrogen'
+  fields: ['velocity']
+  fields_scheme: 'vv'
+  fields_type: 'DD'
+  num_simulations: 1
+  trajectory_length: 100
+
+model:
+  physical:
+    name: 'HydrogenModel'
+    model_path: 'results/models'
+    model_save_name: 'hydrogen_physical_model'
+    domain: 
+      size_x: 100
+      size_y: 100
+    resolution:
+      x: 256
+      y: 256
+    dt: 0.5
+    pde_params:
+      name: 'diffusion_coeff'
+      type: 'field'
+      value: '0.05 * (x/size_x + y/size_y)**3'  # Initial value expression
+  synthetic:
+    name: 'UNet'
+    model_path: 'results/models'
+    model_save_name: 'hydrogen_synthetic_model' 
+    architecture: 
+      levels: 4
+      filters: 64
+
+trainer:
+  batch_size: 8
+  rollout_steps: 4 
+  train_sim: [0]
+  device: 'cuda:0'
+  data_access: 'both'
+  physical: 
+    epochs: 1 
+    learnable_parameters:
+      - name: 'diffusion_coeff'
+        type: 'field'
+        initial_guess: 0.01
+    method: 'L-BFGS-B'
+    abs_tol: 1e-4
+    max_iterations: 5
+  synthetic:
+    epochs: 2
+    learning_rate: 0.0001
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  hybrid:
+    cycles: 2
+    warmup: 1
+    augmentation:
+      alpha: 0.2
+      cache_dir: data/cache/hydrogen
+
+
+# For evaluation
+evaluation:
+  # Which simulations to evaluate
+  test_sim: [0]
+  
+  # Model checkpoint to evaluate
+  physical_checkpoint: "results/models/hydrogen_physical_model.pth"
+  synthetic_checkpoint: "results/models/hydrogen_synthetic_model.pth"
+  
+  # How many timesteps to rollout
+  num_frames: 100
+  
+  # Output directory
+  output_dir: "results/evaluation/hydrogen"
+  
+  # Visualization settings
+  visualization:
+    format: "gif"  # or "mp4"
+    fps: 10
+    dpi: 100
+      

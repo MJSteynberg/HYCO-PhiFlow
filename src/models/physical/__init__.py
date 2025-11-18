@@ -13,3 +13,5 @@ from .burgers import BurgersModel
 
 
 from .advection import AdvectionModel
+
+from .kolmogorov import KolmogorovModel
