@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'burgers_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'evaluate']
+  tasks: [ 'evaluate']
 
 data:
   data_dir: 'data/burgers'
@@ -71,7 +71,8 @@ evaluation:
   test_sim: [0]
   
   # Model checkpoint to evaluate
-  checkpoint_path: "results/models/burgers_synthetic_model.pth"
+  physical_checkpoint: "results/models/burgers_physical_model.pth"
+  synthetic_checkpoint: "results/models/burgers_synthetic_model.pth"
   
   # How many timesteps to rollout
   num_frames: 100

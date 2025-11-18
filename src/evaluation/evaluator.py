@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import torch
 from phi.vis import plot, show, close, smooth
+from phi.torch.flow import *
 from phi.math import nan_to_0
 
 from src.models.synthetic.base import SyntheticModel
@@ -46,7 +47,8 @@ class Evaluator:
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         # Model will be loaded in evaluate()
-        self.model = None
+        self._load_synthetic_model()
+        self._load_physical_parameters()
         
     def evaluate(self):
         """
@@ -60,7 +62,7 @@ class Evaluator:
         logger.info("Starting evaluation...")
         
         # Load model
-        self._load_model()
+        
         
         # Evaluate each test simulation
         test_sims = self.eval_config['test_sim']
@@ -70,7 +72,7 @@ class Evaluator:
             
         logger.info(f"Evaluation complete! Results saved to {self.output_dir}")
     
-    def _load_model(self):
+    def _load_synthetic_model(self):
         """Load model from checkpoint."""
         from src.factories.model_factory import ModelFactory
         
@@ -78,7 +80,7 @@ class Evaluator:
         self.model = ModelFactory.create_synthetic_model(self.config)
         
         # Load checkpoint
-        checkpoint_path = Path(self.eval_config['checkpoint_path'])
+        checkpoint_path = Path(self.eval_config['synthetic_checkpoint'])
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
             
@@ -88,6 +90,23 @@ class Evaluator:
         self.model.eval()
         
         logger.info(f"Loaded model from {checkpoint_path}")
+
+    def _load_physical_parameters(self):
+        """Load physical model for parameter visualization (optional)."""
+        from src.factories.model_factory import ModelFactory
+        
+        self.physical_model = ModelFactory.create_physical_model(self.config)
+        
+        physical_checkpoint_path = self.eval_config.get('physical_checkpoint', None)
+        checkpoint = torch.load(physical_checkpoint_path)
+        self.learnable_parameters = [math.tensor(param, spatial("x,y")) for param in checkpoint["learnable_parameters"]]
+
+        # Get the real parameters from the physical model
+        learnable_params = self.config['trainer']['physical']['learnable_parameters']
+        self.real_parameters = []
+        self.param_names = [param['name'] for param in learnable_params]
+        for param_name in self.param_names:
+            self.real_parameters.append(getattr(self.physical_model, param_name))
     
     def _evaluate_simulation(self, sim_idx: int):
         """Evaluate a single simulation."""
@@ -269,3 +288,11 @@ class Evaluator:
                 self.output_dir / f'sim_{sim_idx}_{field_name}_comparison.gif',
                 fps=10,
             )
+            for name, real_param, learned_param in zip(self.param_names, self.real_parameters, self.learnable_parameters):
+                plot(
+                    {
+                        f'Real {name}': real_param,
+                        f'Learned {name}': learned_param
+                    },
+                )
+                plt.savefig(self.output_dir / f'sim_{sim_idx}_{name}_comparison.png')
