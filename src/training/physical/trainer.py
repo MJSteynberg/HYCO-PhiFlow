@@ -126,6 +126,7 @@ class PhysicalTrainer():
             x0=self.learnable_parameters,
             max_iterations=self.max_iterations,
             suppress=(math.NotConverged,),
+
         )
 
 
@@ -249,7 +250,6 @@ class PhysicalTrainer():
             
             # Average over timesteps
             avg_loss = total_loss / self.rollout_steps
-            # Loss is already averaged over batch dimension by PhiML operations
             return avg_loss
         
         # Run optimization
@@ -257,7 +257,7 @@ class PhysicalTrainer():
             estimated_params = minimize(loss_function, self.optimizer)
         except Exception as e:
             logger.error(f"Batched optimization failed: {e}")
-            estimated_params = tuple(self.learnable_parameters)
+            estimated_params = tuple([x.detach() for x in self.learnable_parameters])
         
         # Compute final loss
         final_loss = loss_function(*estimated_params)

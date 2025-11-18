@@ -56,6 +56,12 @@ class BurgersModel(PhysicalModel):
         self.pde_params = config["model"]["physical"]["pde_params"]
         self._initialize_fields(self.pde_params)
 
+        # Calculate the maximum value that the diffusion coefficient can be whilst being stable
+        self.max_diffusion = 0.5 * min(
+            self.domain.size[0] / self.resolution.get_size("x"),
+            self.domain.size[1] / self.resolution.get_size("y"),
+        ) ** 2 / self.dt
+
     def _initialize_fields(self, pde_params: Dict[str, Any]):
         """Initialize model fields from PDE parameters."""
         def f(x, y):
@@ -68,7 +74,7 @@ class BurgersModel(PhysicalModel):
         """Initialize diffusion_coeff as a CenteredGrid field."""
         
         self._diffusion_coeff = CenteredGrid(
-            value,
+            math.clip(value, 0, self.max_diffusion),
             extrapolation.PERIODIC,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
@@ -84,7 +90,7 @@ class BurgersModel(PhysicalModel):
     def diffusion_coeff(self, value: Any):
         """Set the diffusion coefficient field."""
         if isinstance(value, Field):
-            self._diffusion_coeff = value
+            self._diffusion_coeff = math.clip(value, 0, self.max_diffusion)
         else:
             self._initialize_diffusion_field(value)
 
