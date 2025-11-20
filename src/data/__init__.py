@@ -1,14 +1,10 @@
 # src/data/__init__.py
+from .data_manager import DataManager  # Pure PhiML version
+from .dataset import Dataset  # Pure PhiML version
 
-from .abstract_dataset import AbstractDataset
-from .data_manager import DataManager
-from .tensor_dataset import TensorDataset
-from .field_dataset import FieldDataset
 
 
 __all__ = [
-    "AbstractDataset",
-    "DataManager",
-    "TensorDataset",
-    "FieldDataset",
+    "DataManager",  # Pure PhiML (default)
+    "Dataset",  # Pure PhiML (default)
 ]

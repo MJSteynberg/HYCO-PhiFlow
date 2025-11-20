@@ -1,51 +1,38 @@
-# src/models/synthetic/unet.py
+"""
+UNet model using pure PhiML.
+"""
 
-from typing import Dict, Any
-import torch
-import torch.nn as nn
-from phiml.nn import u_net
-from src.models import ModelRegistry
+from phiml import nn
 from src.models.synthetic.base import SyntheticModel
+from src.models import ModelRegistry
+from typing import Dict, Any
 
 
 @ModelRegistry.register_synthetic("UNet")
 class UNet(SyntheticModel):
     """
-    Tensor-based U-Net for efficient training.
-
-    Works directly with PyTorch tensors in [batch, channels, height, width] format.
-    All Field conversions are handled by DataManager before training.
-
-    Handles static vs dynamic fields:
-    - Input contains all fields (static + dynamic)
-    - Model predicts only dynamic fields
-    - Static fields are automatically preserved and re-attached to output
+    UNet architecture for field-to-field mapping.
+    Pure PhiML implementation.
     """
 
     def __init__(self, config: Dict[str, Any]):
-        """
-        Initializes the U-Net model.
-
-        Args:
-            config: Model configuration containing:
-                - input_specs: Dict[field_name, num_channels] - all input fields
-                - output_specs: Dict[field_name, num_channels] - fields to predict
-                - architecture: Dict with levels, filters, batch_norm
-        """
-        # Call parent constructor to set up base attributes
         super().__init__(config)
 
-        # Build the U-Net using PhiML's u_net
-        self.net = u_net(
-            in_channels=sum(self.input_specs.values()),
-            out_channels=sum(self.output_specs.values()),
-            levels=self.levels,
-            filters=self.filters,
-            batch_norm=True,
+        # Get architecture config
+        arch_config = config["model"]["synthetic"]["architecture"]
+
+        # Create U-Net using phiml.nn
+        self.network = nn.u_net(
+            in_channels=self.num_dynamic_channels,
+            out_channels=self.num_dynamic_channels,
+            levels=arch_config.get("levels", 4),
+            filters=arch_config.get("filters", 32),
+            batch_norm=arch_config.get("batch_norm", True),
+            activation=arch_config.get("activation", "ReLU"),
+            in_spatial=2  # 2D spatial dimensions
         )
 
-    def _parse_config(self, config):
-        # Ensure base parsing (input/output specs) runs
-        super()._parse_config(config)
-        self.levels = config['model']["synthetic"]['architecture']["levels"]
-        self.filters = config['model']["synthetic"]['architecture']["filters"]
+        self.logger.info(
+            f"Created U-Net: levels={arch_config.get('levels', 4)}, "
+            f"filters={arch_config.get('filters', 32)}"
+        )

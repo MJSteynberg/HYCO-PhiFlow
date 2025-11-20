@@ -2,8 +2,8 @@
 
 # This file makes your model classes importable
 
-# Import the base class so it can be accessed if needed
+# Import PhiML models (these ARE the PhiML models now)
 from .base import SyntheticModel
-
-# Import your concrete model classes
 from .unet import UNet
+from .resnet import ResNet
+from .convnet import ConvNet

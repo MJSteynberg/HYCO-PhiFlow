@@ -19,13 +19,11 @@ from contextlib import contextmanager
 from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
-from src.data import TensorDataset, FieldDataset
 from src.utils.logger import get_logger, logging
 from phi.math import Tensor
 from phi.flow import Field
 from torch.utils.data import DataLoader
 from src.factories.dataloader_factory import DataLoaderFactory
-from src.data.dataset_utilities import field_collate_fn
 
 logger = get_logger(__name__)
 

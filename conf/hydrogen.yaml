@@ -62,7 +62,7 @@ trainer:
     warmup: 1
     augmentation:
       alpha: 0.2
-      cache_dir: data/cache/hydrogen
+      cache_dir: data/cache_phiml  # PhiML cache uses .npz format
 
 
 # For evaluation

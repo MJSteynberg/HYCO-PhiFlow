@@ -12,7 +12,7 @@ from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 
 # HybridTrainer imported lazily to avoid circular dependency
-from src.data import DataManager, FieldDataset
+from src.data import DataManager
 from src.factories.model_factory import ModelFactory
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.utils.logger import get_logger
@@ -72,18 +72,20 @@ class TrainerFactory:
     @staticmethod
     def _create_synthetic_trainer(config: Dict[str, Any]) -> SyntheticTrainer:
         """
-        Create SyntheticTrainer with external model.
+        Create PhiMLSyntheticTrainer with external model.
+
+        Now uses PhiML trainer which supports both PyTorch and PhiML models.
 
         Args:
             config: Full configuration dictionary
 
         Returns:
-            SyntheticTrainer instance
+            PhiMLSyntheticTrainer instance
         """
         # Create model externally
         model = ModelFactory.create_synthetic_model(config)
 
-        # Create trainer with model
+        # Create PhiML trainer with model (auto-detects model type)
         trainer = SyntheticTrainer(config, model)
 
         return trainer

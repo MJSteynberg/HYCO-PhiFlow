@@ -13,9 +13,8 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from src.data import DataManager, TensorDataset, FieldDataset
+from src.data import DataManager, Dataset
 from src.utils.logger import get_logger
-from src.data.dataset_utilities import field_collate_fn, tensor_collate_fn
 
 logger = get_logger(__name__)
 
@@ -51,116 +50,84 @@ class DataLoaderFactory:
         ...     batch_size=None
         ... )
     """
-
     @staticmethod
-    def create(
+    def create_phiml(
         config: dict,
-        mode: Literal["tensor", "field"] = "tensor",
         sim_indices: Optional[List[int]] = None,
-        batch_size: Optional[int] = None,
-        shuffle: bool = True,
-        enable_augmentation: bool = False,
-        num_workers: int = 0,
+        field_names: Optional[List[str]] = None,
+        num_frames: Optional[int] = None,
+        rollout_steps: Optional[int] = None,
         percentage_real_data: float = 1.0,
-    ) -> Union[DataLoader, FieldDataset]:
+        enable_augmentation: bool = False,
+    ) -> Dataset:
         """
-        Create a data loader or dataset for training.
+        Create a pure PhiML dataset for training.
 
-        This method:
-        1. Extracts configuration using ConfigHelper
-        2. Creates DataManager
-        3. Determines field specifications
-        4. Creates appropriate dataset (Tensor or Field)
-        5. Wraps in DataLoader (for tensor mode) or returns Dataset (for field mode)
+        This method creates a Dataset that yields PhiML tensor batches
+        directly - no PyTorch dependency.
 
         Args:
             config: Full configuration dictionary from Hydra
-            mode: 'tensor' for synthetic models, 'field' for physical models
             sim_indices: Simulation indices to use (default: from config)
-            batch_size: Batch size for DataLoader (default: from config, None for field mode)
-            shuffle: Whether to shuffle data (default: True)
-            use_sliding_window: Use sliding window (default: from config)
-            enable_augmentation: Enable augmentation (default: from config)
-            num_workers: Number of DataLoader workers (default: 0)
+            field_names: Field names to load (default: from config)
+            num_frames: Number of frames per simulation (default: from config)
+            rollout_steps: Number of prediction steps (default: from config)
+            percentage_real_data: Fraction of real data to use (0.0-1.0)
+            enable_augmentation: Whether to enable augmented data
 
         Returns:
-            - DataLoader: For 'tensor' mode (suitable for synthetic training)
-            - FieldDataset: For 'field' mode (suitable for physical training)
-
-        Raises:
-            ValueError: If mode is invalid or configuration is invalid
+            Dataset instance that yields PhiML tensor batches
 
         Example:
-            >>> # Tensor mode (synthetic training)
-            >>> loader = DataLoaderFactory.create(
+            >>> dataset = DataLoaderFactory.create_phiml(
             ...     config,
-            ...     mode='tensor',
             ...     sim_indices=[0, 1, 2],
-            ...     batch_size=16,
-            ...     shuffle=True
+            ...     rollout_steps=10
             ... )
-            >>> for initial, targets in loader:
-            ...     # initial: [B, C_all, H, W]
-            ...     # targets: [B, T, C_dynamic, H, W]
-            ...     pass
-            >>>
-            >>> # Field mode (physical training)
-            >>> dataset = DataLoaderFactory.create(
-            ...     config,
-            ...     mode='field',
-            ...     sim_indices=[0, 1, 2],
-            ...     batch_size=None,  # Physical models don't use batching
-            ... )
-            >>> for initial_fields, target_fields in dataset:
-            ...     # initial_fields: Dict[str, Field]
-            ...     # target_fields: Dict[str, List[Field]]
+            >>> for batch in dataset.iterate_batches(batch_size=16):
+            ...     # batch['initial_state']: Tensor(batch=B, x=H, y=W, vector=V)
+            ...     # batch['targets']: Tensor(batch=B, time=T, x=H, y=W, vector=V)
             ...     pass
         """
-        logger.debug(f"Creating data loader (mode={mode})...")
+        logger.debug("Creating PhiML dataset...")
 
+        # Create DataManager
+        data_manager = DataManager(config)
 
-        # === Step 2: Create DataManager ===
-        data_manager = DataLoaderFactory._create_data_manager(config)
+        # Get parameters from config if not provided
+        if sim_indices is None:
+            sim_indices = list(range(config['data']['num_simulations']))
 
-        # === Step 5: Create dataset based on mode ===
-        if mode == "tensor":
+        if field_names is None:
+            # Try to get from fields first
+            if 'fields' in config['data']:
+                field_names = config['data']['fields']
+            elif isinstance(config['data'].get('fields_scheme'), dict):
+                field_names = config['data']['fields_scheme']['dynamic']
+            else:
+                # Fallback - assume velocity for now
+                field_names = ['velocity']
 
-            dataset = TensorDataset(config, data_manager, enable_augmentation)
+        if rollout_steps is None:
+            rollout_steps = config['trainer']['rollout_steps']
 
-            # Wrap in DataLoader for batching
-            logger.debug(f"  Created TensorDataset with {len(dataset)} samples")
-            logger.debug(
-                f"  Creating DataLoader (batch_size={batch_size}, shuffle={shuffle})..."
-            )
+        if num_frames is None:
+            num_frames = config['data'].get('num_frames', None)
 
-            data_loader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                collate_fn=tensor_collate_fn,
-                num_workers=num_workers,
-                pin_memory=torch.cuda.is_available(),
-            )
+        # Create Dataset
+        dataset = Dataset(
+            config=config,
+            data_manager=data_manager,
+            sim_indices=sim_indices,
+            field_names=field_names,
+            num_frames=num_frames,
+            rollout_steps=rollout_steps,
+            percentage_real_data=percentage_real_data,
+            enable_augmentation=enable_augmentation
+        )
 
-            logger.debug(f"DataLoader created successfully")
-            return data_loader
-
-        elif mode == "field":
-
-            dataset = FieldDataset(config, data_manager, enable_augmentation)
-
-            data_loader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                num_workers=num_workers,
-                collate_fn=field_collate_fn,
-            )
-            logger.debug(f"DataLoader created successfully")
-            return data_loader
-
-        else:
-            raise ValueError(f"Unknown mode: {mode}. Must be 'tensor' or 'field'.")
+        logger.debug(f"PhiML dataset created: {len(dataset)} samples")
+        return dataset
 
     @staticmethod
     def _create_data_manager(config: dict) -> DataManager:

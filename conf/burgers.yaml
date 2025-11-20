@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'burgers_experiment'
-  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['train']
 
 data:
   data_dir: 'data/burgers'
@@ -29,10 +29,10 @@ model:
       type: 'field'
       value: '0.05 * (x/size_x + y/size_y)**3'  # Initial value expression
   synthetic:
-    name: 'UNet'
+    name: 'UNet'  # Changed to PhiML version
     model_path: 'results/models'
-    model_save_name: 'burgers_synthetic_model' 
-    architecture: 
+    model_save_name: 'burgers_synthetic_model'
+    architecture:
       levels: 4
       filters: 64
 
@@ -62,7 +62,7 @@ trainer:
     warmup: 1
     augmentation:
       alpha: 0.2
-      cache_dir: data/cache/burgers
+      cache_dir: data/cache_phiml  # PhiML cache uses .npz format
 
 
 # For evaluation

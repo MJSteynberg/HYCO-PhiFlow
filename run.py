@@ -56,21 +56,25 @@ def main(cfg: DictConfig) -> None:
             logger.info("Running training")
             # Use factory to create trainer (Phase 1 API)
             trainer = TrainerFactory.create_trainer(config)
-            
             # Create data loader/dataset based on model type using NEW DataLoaderFactory
             mode = config["general"]["mode"]
             
             if mode == "synthetic":
-                # Create DataLoader for synthetic training using DataLoaderFactory
-                data_loader = DataLoaderFactory.create(
+                # Create PhiML Dataset (pure PhiML pipeline - no PyTorch!)
+                logger.info("Creating PhiML dataset...")
+                dataset = DataLoaderFactory.create_phiml(
                     config,
-                    mode='tensor',
-                    shuffle=True,
+                    sim_indices=config['trainer']['train_sim'],
+                    enable_augmentation=False,
+                    percentage_real_data=1.0
                 )
-                
-                # Train with explicit data passing (Phase 1 API)
-                num_epochs = config["trainer_params"]["epochs"]
-                trainer.train(data_source=data_loader, num_epochs=num_epochs)
+
+                logger.info(f"Dataset created: {len(dataset)} samples")
+
+                # Train with PhiML dataset (no DataLoader wrapper!)
+                num_epochs = config["trainer"]['synthetic']["epochs"]
+                logger.info(f"Starting training for {num_epochs} epochs...")
+                trainer.train(dataset=dataset, num_epochs=num_epochs)
                 
             elif mode == "physical":
                 # Create FieldDataset for physical training using DataLoaderFactory
@@ -82,7 +86,7 @@ def main(cfg: DictConfig) -> None:
                 
                 # Train with explicit data passing (Phase 1 API)
                 # Physical typically uses single epoch (optimization per sample)
-                num_epochs = config["trainer_params"].get("epochs", 1)
+                num_epochs = config["trainer"]['physical']["epochs"]
                 trainer.train(data_source=dataset, num_epochs=num_epochs)
                 
             elif mode == "hybrid":
