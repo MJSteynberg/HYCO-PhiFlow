@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'burgers_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: [ 'evaluate']
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/burgers'
@@ -21,8 +21,8 @@ model:
       size_x: 100
       size_y: 100
     resolution:
-      x: 256
-      y: 256
+      x: 64
+      y: 64
     dt: 0.5
     pde_params:
       name: 'diffusion_coeff'

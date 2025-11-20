@@ -226,7 +226,7 @@ class FieldDataset(AbstractDataset):
         
         # Move to GPU if needed (temporary)
         for name in data["tensor_data"]:
-            data["tensor_data"][name] = data["tensor_data"][name].to("cuda")
+            data["tensor_data"][name] = data["tensor_data"][name].to(self.device)
 
         # Reconstruct field metadata
         field_metadata = self._reconstruct_metadata(data)

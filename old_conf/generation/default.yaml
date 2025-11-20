@@ -1,4 +1,0 @@
-# @package _global_.generation_params
-num_simulations: 1
-total_steps: 100
-save_interval: 1

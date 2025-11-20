@@ -1,7 +1,0 @@
-name: 'ConvNet'
-model_path: 'results/models'
-model_save_name: ???  # Must be specified
-
-architecture:
-  layers: [64]
-  batch_norm: true

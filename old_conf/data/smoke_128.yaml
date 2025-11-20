@@ -1,4 +1,0 @@
-data_dir: 'data/'
-dset_name: 'smoke_128'
-fields: ['density', 'velocity', 'inflow']
-fields_scheme: 'dVVi'

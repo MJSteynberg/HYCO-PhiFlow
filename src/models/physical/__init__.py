@@ -6,12 +6,10 @@
 from .base import PhysicalModel
 
 # Import your concrete model classes
-from .smoke import SmokeModel
+from .smoke_depricated import SmokeModel
 
 # You can add other models here later
 from .burgers import BurgersModel
 
 
 from .advection import AdvectionModel
-
-from .kolmogorov import KolmogorovModel

@@ -1,4 +1,0 @@
-data_dir: 'data/'
-dset_name: 'burgers_128'
-fields: ['velocity']
-fields_scheme: 'VV'

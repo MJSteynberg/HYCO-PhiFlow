@@ -71,6 +71,7 @@ class AbstractDataset(Dataset, ABC):
         self.access_policy = config["trainer"]["data_access"]
         self.percentage_real_data = config["trainer"]['hybrid']['augmentation']['alpha']
         self.cache_dir = config["trainer"]['hybrid']['augmentation']['cache_dir']
+        self.device = torch.device(config["trainer"]["device"])
         self.max_cached_sims = 10
         # Call the dataset setup utility
         self.num_frames, self.num_real, self.augmented_samples, self._index_mapper = self._setup_dataset(

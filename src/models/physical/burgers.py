@@ -6,6 +6,7 @@ import numpy as np
 # --- PhiFlow Imports ---
 from phi.torch.flow import *
 from phi.math import Shape, Tensor, batch, math
+import numexpr
 
 # --- Repo Imports ---
 from .base import PhysicalModel
@@ -67,15 +68,22 @@ class BurgersModel(PhysicalModel):
         """Initialize model fields from PDE parameters."""
         def f(x, y):
             evaluation = eval(pde_params['value'], {'x':x, 'y':y, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1]})
-            return evaluation  # Create a vector field
+            return evaluation
         
         self._initialize_diffusion_field(f)
 
     def _initialize_diffusion_field(self, value):
         """Initialize diffusion_coeff as a CenteredGrid field."""
-        
         self._diffusion_coeff = CenteredGrid(
             value,
+            extrapolation.PERIODIC,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+        
+        self._diffusion_coeff = CenteredGrid(
+            math.clip(self._diffusion_coeff.values, 0, self.max_diffusion),
             extrapolation.PERIODIC,
             x=self.resolution.get_size("x"),
             y=self.resolution.get_size("y"),
@@ -91,9 +99,13 @@ class BurgersModel(PhysicalModel):
     def diffusion_coeff(self, value: Any):
         """Set the diffusion coefficient field."""
         if isinstance(value, Field):
-            self._diffusion_coeff = math.clip(value, 0, self.max_diffusion)
+            self._diffusion_coeff = CenteredGrid(math.clip(value.values, 0, self.max_diffusion),
+                                                extrapolation.PERIODIC,
+                                                x=self.resolution.get_size("x"),
+                                                y=self.resolution.get_size("y"),
+                                                bounds=self.domain)
         else:
-            self._initialize_diffusion_field(math.clip(value, 0, self.max_diffusion))
+            self._initialize_diffusion_field(value)
 
     def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
         """
