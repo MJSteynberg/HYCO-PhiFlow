@@ -39,15 +39,22 @@ class PhysicalModel(ABC):
         """
         Parse configuration dictionary to setup model.
         """
-        # Setup domain 
-        size_x = config["model"]["physical"]["domain"]["size_x"]
-        size_y = config["model"]["physical"]["domain"]["size_y"]
-        self.domain = Box(x=size_x, y=size_y)
+        dim_config = config["model"]["physical"]["domain"]["dimensions"]
 
-        # Setup resolution
-        res_x = config["model"]["physical"]["resolution"]["x"]//(2**downsample_factor)
-        res_y = config["model"]["physical"]["resolution"]["y"]//(2**downsample_factor)
-        self.resolution = spatial(x=res_x, y=res_y)
+        # Build Box dynamically
+        box_kwargs = {name: dim['size'] for name, dim in dim_config.items()}
+        self.domain = Box(**box_kwargs)
+
+        # Build resolution Shape dynamically
+        res_kwargs = {
+            name: dim['resolution'] // (2**downsample_factor)
+            for name, dim in dim_config.items()
+        }
+        self.resolution = spatial(**res_kwargs)
+
+        # Store dimension names for later use
+        self.spatial_dims = list(dim_config.keys())
+        self.n_spatial_dims = len(self.spatial_dims)
         self.downsample_factor = downsample_factor
 
         # Setup PDE parameters

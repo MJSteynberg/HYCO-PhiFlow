@@ -44,9 +44,6 @@ class Evaluator:
         self.field_names = config['data']['fields']
         self.trajectory_length = config['data']['trajectory_length']
 
-        # Model configuration
-        self.resolution = config['model']['physical']['resolution']
-        self.domain = config['model']['physical']['domain']
 
         # Model will be loaded in evaluate()
         self._load_synthetic_model()
@@ -82,8 +79,6 @@ class Evaluator:
         checkpoint_path = Path(self.eval_config['synthetic_checkpoint'])
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        
-        checkpoint_path = "results/models/burgers_physical_model_phiml.npz"
         
         self.model.load(str(checkpoint_path))
 
@@ -169,10 +164,11 @@ class Evaluator:
             }
 
         # Generate predictions autoregressively
+        # Note: We predict num_steps - 1 because initial_state is already t=0
         current_state = initial_state
-        predictions = []
+        predictions = [initial_state]  # Start with initial state at t=0
 
-        for step in range(num_steps):
+        for step in range(num_steps - 1):  # Predict remaining timesteps
             # Predict next state (dict of PhiML tensors)
             next_state = self.model(current_state)
             predictions.append(next_state)
@@ -187,7 +183,7 @@ class Evaluator:
                 math.batch('time')
             )
 
-        logger.info(f"Generated {num_steps} prediction timesteps")
+        logger.info(f"Generated {num_steps} timesteps (including initial state)")
         return prediction_trajectory
 
 
@@ -209,14 +205,7 @@ class Evaluator:
         from phi.geom import Box
 
         # Get domain and resolution from config
-        domain = Box(
-            x=self.config['model']['physical']['domain']['size_x'],
-            y=self.config['model']['physical']['domain']['size_y']
-        )
-        resolution = spatial(
-            x=self.config['model']['physical']['resolution']['x'],
-            y=self.config['model']['physical']['resolution']['y']
-        )
+
 
         # Process each field
         for field_name in self.field_names:
@@ -230,8 +219,8 @@ class Evaluator:
             if 'vector' in real_field_data.shape.names:
                 
 
-                real_viz = math.norm(real_field_data)
-                gen_viz = math.norm(gen_field_data)
+                real_viz = real_field_data.vector[0]
+                gen_viz = gen_field_data.vector[0]
             else:
                 # For scalar fields, use directly
                 real_viz = real_field_data
@@ -242,6 +231,19 @@ class Evaluator:
             min_real = math.min(real_viz)
             gen_viz = math.clip(gen_viz, min_real, max_real)
             # Create animation
+            plot({
+                'Real': real_viz.time[0],
+                'Generated': gen_viz.time[0]
+            })
+
+            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_0.png')
+            plot({
+                'Real': real_viz.time[1],
+                'Generated': gen_viz.time[1]
+            })
+
+            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_1.png')
+
             ani = plot(
                 {
                     'Real': real_viz,

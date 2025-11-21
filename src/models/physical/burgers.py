@@ -12,7 +12,62 @@ import numexpr
 from .base import PhysicalModel
 from src.models import ModelRegistry
 
-@jit_compile
+def _custom_diffusion(u: CenteredGrid, diffusivity: CenteredGrid, dt: float, substeps: int = 5) -> CenteredGrid:
+    """
+    Dimension-agnostic diffusion with spatially-varying diffusivity.
+    Implements: ∂u/∂t = ∇·(D(x) ∇u) using finite differences.
+
+    This works in 1D, 2D, and 3D without modification by processing each spatial dimension independently.
+
+    Args:
+        u: Field to diffuse
+        diffusivity: Spatially-varying diffusion coefficient
+        dt: Time step
+        substeps: Number of substeps for numerical stability
+
+    Returns:
+        Diffused field
+    """
+    dt_sub = dt / substeps
+    result = u
+
+    for _ in range(substeps):
+        # Accumulate diffusion term for each spatial dimension
+        diffusion_term = math.tensor(0.0)
+
+        for dim in result.shape.spatial.names:
+            # Shift values in this dimension to get neighbors
+            # stack_dim=None returns list, [0] extracts the shifted tensor
+            left = math.shift(result.values, (-1,), dims=dim, padding=result.extrapolation, stack_dim=None)[0]
+            right = math.shift(result.values, (1,), dims=dim, padding=result.extrapolation, stack_dim=None)[0]
+
+            # Shift diffusivity to get neighbor values
+            left_D = math.shift(diffusivity.values, (-1,), dims=dim, padding=diffusivity.extrapolation, stack_dim=None)[0]
+            right_D = math.shift(diffusivity.values, (1,), dims=dim, padding=diffusivity.extrapolation, stack_dim=None)[0]
+
+            # Diffusivity at cell faces (arithmetic average)
+            D_left_face = (diffusivity.values + left_D) / 2.0
+            D_right_face = (diffusivity.values + right_D) / 2.0
+
+            # Gradient at cell faces: (u[i] - u[i-1]) / dx
+            dx = result.dx.vector[dim]
+            grad_left_face = (result.values - left) / dx
+            grad_right_face = (right - result.values) / dx
+
+            # Flux at faces: D * ∇u
+            flux_left = D_left_face * grad_left_face
+            flux_right = D_right_face * grad_right_face
+
+            # Divergence: (flux_right - flux_left) / dx
+            diffusion_term += (flux_right - flux_left) / dx
+
+        # Explicit Euler step
+        result = result.with_values(result.values + dt_sub * diffusion_term)
+
+    return result
+
+
+# @jit_compile
 def _burgers_physics_step(
     velocity: CenteredGrid, diffusion_coeff: CenteredGrid, dt: float
 ) -> CenteredGrid:
@@ -30,12 +85,19 @@ def _burgers_physics_step(
     # Advect velocity (self-advection: u * grad(u))
     velocity = advect.semi_lagrangian(velocity, velocity, dt=dt)
 
+    # Check if diffusivity is spatially-varying
+    is_varying = math.spatial(diffusion_coeff.values)
+
     # Split velocity into its components
     components = list(unstack(velocity, channel('vector')))
-
     # Diffuse each component separately
     for i, u_comp in enumerate(components):
-        components[i] = diffuse.explicit(u_comp, diffusion_coeff, dt=dt, substeps=5)
+        if is_varying:
+            # Use custom diffusion for spatially-varying diffusivity (works in all dimensions)
+            components[i] = _custom_diffusion(u_comp, diffusion_coeff, dt, substeps=5)
+        else:
+            # Use standard PhiFlow diffusion for constant diffusivity
+            components[i] = diffuse.explicit(u_comp, diffusion_coeff, dt=dt, substeps=5)
 
     # Reassemble the velocity field
     velocity = stack(components, channel('vector'))
@@ -56,10 +118,6 @@ class BurgersModel(PhysicalModel):
         super().__init__(config, downsample_factor)
         self.pde_params = config["model"]["physical"]["pde_params"]
         # Calculate the maximum value that the diffusion coefficient can be whilst being stable
-        self.max_diffusion = 0.5 * min(
-            self.domain.size[0] / (self.resolution.get_size("x")),
-            self.domain.size[1] / (self.resolution.get_size("y")),
-        ) ** 2 / self.dt
         self._initialize_fields(self.pde_params)
 
         # Create field template for velocity (will be updated from tensors)
@@ -68,28 +126,33 @@ class BurgersModel(PhysicalModel):
 
     def _initialize_fields(self, pde_params: Dict[str, Any]):
         """Initialize model fields from PDE parameters."""
-        def f(x, y):
-            evaluation = eval(pde_params['value'], {'x':x, 'y':y, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1]})
-            return evaluation
+        if self.n_spatial_dims == 1:
+            def f(x):
+                evaluation = eval(pde_params['value'], {'x':x, 'math': math, 'size_x': self.domain.size[0]})
+                return evaluation
+        elif self.n_spatial_dims == 2:
+            def f(x, y):
+                evaluation = eval(pde_params['value'], {'x':x, 'y':y, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1]})
+                return evaluation
+        else:  # 3D
+            def f(x, y, z):
+                evaluation = eval(pde_params['value'], {'x':x, 'y':y, 'z':z, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1], 'size_z': self.domain.size[2]})
+                return evaluation
         
         self._initialize_diffusion_field(f)
 
     def _initialize_diffusion_field(self, value):
-        """Initialize diffusion_coeff as a CenteredGrid field."""
+        # Build kwargs dynamically from resolution Shape
+        grid_kwargs = {
+            name: self.resolution.get_size(name)
+            for name in self.resolution.names
+        }
+
         self._diffusion_coeff = CenteredGrid(
             value,
             extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
             bounds=self.domain,
-        )
-        
-        self._diffusion_coeff = CenteredGrid(
-            math.clip(self._diffusion_coeff.values, 0, self.max_diffusion),
-            extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
-            bounds=self.domain,
+            **grid_kwargs 
         )
 
     def _create_field_template(self, field_name: str, vector_dim: int = 1) -> CenteredGrid:
@@ -103,6 +166,12 @@ class BurgersModel(PhysicalModel):
         Returns:
             CenteredGrid template
         """
+        # Build kwargs dynamically from resolution Shape
+        grid_kwargs = {
+            name: self.resolution.get_size(name)
+            for name in self.resolution.names
+        }
+
         # Create a zero-initialized field with correct shape
         if vector_dim == 1:
             values = 0.0
@@ -112,9 +181,8 @@ class BurgersModel(PhysicalModel):
         return CenteredGrid(
             values,
             extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
             bounds=self.domain,
+            **grid_kwargs
         )
 
     def update_from_tensors(self, tensors: Dict[str, Tensor]):
@@ -141,11 +209,7 @@ class BurgersModel(PhysicalModel):
     def diffusion_coeff(self, value: Any):
         """Set the diffusion coefficient field."""
         if isinstance(value, Field):
-            self._diffusion_coeff = CenteredGrid(math.clip(value.values, 0, self.max_diffusion),
-                                                extrapolation.PERIODIC,
-                                                x=self.resolution.get_size("x"),
-                                                y=self.resolution.get_size("y"),
-                                                bounds=self.domain)
+            self._diffusion_coeff = value
         else:
             self._initialize_diffusion_field(value)
 
@@ -153,24 +217,44 @@ class BurgersModel(PhysicalModel):
         """
         Returns an initial state of (noisy velocity).
         We use periodic boundaries as they are common for Burgers.
+        Dimension-agnostic: works for 1D, 2D, and 3D.
         """
         b = batch(batch=batch_size)
 
-        temp = StaggeredGrid(
-            Noise(scale=20),  # Initialize with noise
+        # Build kwargs dynamically from resolution Shape
+        grid_kwargs = {
+            name: self.resolution.get_size(name)
+            for name in self.resolution.names
+        }
+        noise = StaggeredGrid(
+            Noise(scale=10, smoothness=10),
             extrapolation.PERIODIC,  # Use periodic boundaries
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
             bounds=self.domain,
+            **grid_kwargs
         )
+        noise = CenteredGrid(noise, extrapolation.PERIODIC, bounds=self.domain, **grid_kwargs)
+
+        # Create dimension-agnostic initial velocity field
+        # Initialize each component with a sinusoidal wave based on its coordinate
+        dim_names = self.resolution.names
+
+        def initial_velocity(position):
+            """Create initial velocity components for each spatial dimension."""
+            components = {}
+            for i, dim_name in enumerate(dim_names):
+                # Get the coordinate for this dimension
+                coord = position.vector[dim_name]
+                # Use different wave numbers for different dimensions
+                wave_number = 4 * math.pi * (i + 1) / self.domain[i].size
+                components[dim_name] = sin(wave_number * coord)
+            return vec(**components)
 
         velocity_0 = CenteredGrid(
-            temp,
+            initial_velocity,
             extrapolation.PERIODIC,  # Use periodic boundaries
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
             bounds=self.domain,
-        )
+            **grid_kwargs
+        ) + 0.5*noise
         velocity_0 = math.expand(velocity_0, b)
         return {"velocity": velocity_0}
     
@@ -209,13 +293,8 @@ class BurgersModel(PhysicalModel):
         for _ in range(self.downsample_factor):
             velocity = field.downsample2x(velocity)
 
-        batch_size = velocity.shape.get_size("batch")
-        diffusion_coeff_batched = math.expand(
-            self.diffusion_coeff,
-            batch(batch=batch_size)
-        )
         new_velocity, _ = _burgers_physics_step(
-            velocity=velocity, diffusion_coeff=diffusion_coeff_batched, dt=self.dt
+            velocity=velocity, diffusion_coeff=self.diffusion_coeff, dt=self.dt
         )
 
         # Update internal velocity

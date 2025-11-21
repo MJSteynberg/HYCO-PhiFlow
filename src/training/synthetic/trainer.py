@@ -12,9 +12,10 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Union
 from tqdm import tqdm
-
+from phi.torch.flow import *
 from phiml import math as phimath
 from phiml import nn as phiml_nn
+import matplotlib.pyplot as plt
 
 from src.utils.logger import get_logger
 
@@ -65,7 +66,7 @@ class SyntheticTrainer:
         # Checkpoint path
         model_path_dir = config["model"]["synthetic"]["model_path"]
         model_save_name = config["model"]["synthetic"]["model_save_name"]
-        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}_phiml.npz"
+        self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}"
         os.makedirs(model_path_dir, exist_ok=True)
 
     def _setup_optimizer(self):
@@ -126,28 +127,27 @@ class SyntheticTrainer:
 
             # Track best model (convert PhiML tensor to float)
             loss_value = float(avg_epoch_loss)
-            if loss_value < self.best_val_loss:
-                self.best_val_loss = loss_value
-                self.best_epoch = epoch + 1
-                results["best_epoch"] = self.best_epoch
-                results["best_val_loss"] = self.best_val_loss
-
+            epoch_time = time.time() - start_time
+            if epoch % 10 == 0:
+                if loss_value < self.best_val_loss:
+                    self.best_val_loss = loss_value
+                    self.best_epoch = epoch + 1
+                    results["best_epoch"] = self.best_epoch
+                    results["best_val_loss"] = self.best_val_loss
                 # Save checkpoint
                 self.save_checkpoint(epoch=epoch, loss=avg_epoch_loss)
 
-            epoch_time = time.time() - start_time
+                
 
-            # Update progress bar
-            pbar.set_postfix({
-                "loss": f"{loss_value:.6f}",
-                "best": f"{self.best_val_loss:.6f}",
-                "epoch": f"{self.best_epoch}",
-                "time": f"{epoch_time:.2f}s"
-            })
+                # Update progress bar
+                pbar.set_postfix({
+                    "loss": f"{loss_value:.6f}",
+                    "best": f"{self.best_val_loss:.6f}",
+                    "epoch": f"{self.best_epoch}",
+                    "time": f"{epoch_time:.2f}s"
+                })
 
         results["final_loss"] = results["train_losses"][-1]
-
-        logger.info(f"Training complete! Best loss: {self.best_val_loss:.6f} at epoch {self.best_epoch}")
 
         return results
 
@@ -165,7 +165,16 @@ class SyntheticTrainer:
         """
         # Extract dicts of PhiML tensors (one tensor per field)
         initial_state = batch['initial_state']  # Dict[str, Tensor]
-        targets = batch['targets']              # Dict[str, Tensor]
+        targets = batch['targets']   
+        # print(initial_state["velocity"].batch[0], targets["velocity"].batch[0].time[0])
+        # plot({
+        #     "initial_state": initial_state["velocity"].batch[0].vector[0],
+        #     "target_1": targets["velocity"].batch[0].time[0].vector[0],
+        #     "target_2": targets["velocity"].batch[0].time[1].vector[0],
+        #     "target_3": targets["velocity"].batch[0].time[2].vector[0],
+
+        # })
+        # plt.show()           # Dict[str, Tensor]
 
         # Define loss function for this batch (PhiML best practice)
         def loss_function(init_state, rollout_targets):
@@ -229,7 +238,6 @@ class SyntheticTrainer:
             loss: Current loss value
         """
         self.model.save(str(self.checkpoint_path))
-        logger.debug(f"Checkpoint saved: epoch={epoch}, loss={loss:.6f} to {self.checkpoint_path}")
 
     def load_checkpoint(self, path: Path = None):
         """

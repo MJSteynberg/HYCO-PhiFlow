@@ -5,8 +5,6 @@
 # Import the base class so it can be accessed if needed
 from .base import PhysicalModel
 
-# Import your concrete model classes
-from .smoke_depricated import SmokeModel
 
 # You can add other models here later
 from .burgers import BurgersModel

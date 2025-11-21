@@ -20,7 +20,7 @@ class UNet(SyntheticModel):
 
         # Get architecture config
         arch_config = config["model"]["synthetic"]["architecture"]
-
+        n_spatial_dims = len(config["model"]["physical"]["domain"]["dimensions"])
         # Create U-Net using phiml.nn
         self.network = nn.u_net(
             in_channels=self.num_dynamic_channels,
@@ -29,7 +29,7 @@ class UNet(SyntheticModel):
             filters=arch_config.get("filters", 32),
             batch_norm=arch_config.get("batch_norm", True),
             activation=arch_config.get("activation", "ReLU"),
-            in_spatial=2  # 2D spatial dimensions
+            in_spatial=n_spatial_dims  # 2D spatial dimensions
         )
 
         self.logger.info(

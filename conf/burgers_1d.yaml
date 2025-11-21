@@ -1,0 +1,89 @@
+general: 
+  experiment_name: 'burgers_experiment'
+  mode: 'synthetic' # Options: 'physical', 'physical', 'hybrid'
+  tasks: ['generate', 'train', 'evaluate']
+
+data:
+  data_dir: 'data/burgers'
+  dset_name: 'burgers_128_1d'
+  fields: ['velocity']
+  fields_scheme: 'v'
+  fields_type: 'D'
+  num_simulations: 5
+  trajectory_length: 100
+
+model:
+  physical:
+    name: 'BurgersModel'
+    model_path: 'results/models'
+    model_save_name: 'burgers_physical_model_1d'
+    domain: 
+      dimensions:
+        x: {size: 100, resolution: 128}
+        # y: {size: 100, resolution: 64}
+        # z: {size: 100, resolution: 64}
+    dt: 0.5
+    pde_params:
+      name: 'diffusion_coeff'
+      type: 'field'
+      value: '0.5 * (x/size_x)**3'  # Initial value expression
+  synthetic:
+    name: 'UNet'  # Changed to PhiML version
+    model_path: 'results/models'
+    model_save_name: 'burgers_synthetic_model_1d'
+    architecture:
+      levels: 4  # Reduced for 1D - avoids excessive downsampling
+      filters: 64  # Smaller for 1D problem
+      batch_norm: false  # Disable batch norm - can cause artifacts in 1D
+
+trainer:
+  batch_size: 64  # Smaller batch to see individual samples
+  rollout_steps: 4  # Single-step to debug
+  train_sim: [0]
+  device: 'cuda:0'
+  data_access: 'both'
+  physical: 
+    epochs: 1
+    downsample_factor: 0 # 2^downsample_factor reduction in resolution for physical model training
+    learnable_parameters:
+      - name: 'diffusion_coeff'
+        type: 'field'
+        initial_guess: 0.01
+    method: 'L-BFGS-B'
+    abs_tol: 1e-4
+    max_iterations: 5
+  synthetic:
+    epochs: 10000  # Faster iteration for debugging
+    learning_rate: 0.00001 
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  hybrid:
+    cycles: 100
+    warmup: 100
+    augmentation:
+      alpha: 0.2
+      cache_dir: data/cache_phiml  # PhiML cache uses .npz format
+
+
+# For evaluation
+evaluation:
+  # Which simulations to evaluate
+  test_sim: [0]
+  
+  # Model checkpoint to evaluate
+  synthetic_checkpoint: "results/models/burgers_synthetic_model_1d.pth"
+  physical_checkpoint: "results/models/burgers_physical_model_1d.pth"
+  
+  # How many timesteps to rollout
+  num_frames: 100
+  
+  # Output directory
+  output_dir: "results/evaluation/burgers"
+  
+  # Visualization settings
+  visualization:
+    format: "gif"  # or "mp4"
+    fps: 10
+    dpi: 100
+      

@@ -18,10 +18,18 @@ class DataGenerator:
         
 
     def generate_data(self):
-        # Generate data in batched and save each batch seperately
+        # Generate data in batched and save each batch separately
 
         initial_state = self.model.get_initial_state(self.num_simulations)
-        data = self.model.rollout(initial_state, self.trajectory_length)
+
+        # PhiFlow's iterate() INCLUDES the initial state in its output!
+        # So iterate(f, time=n, x0) returns (n+1) timesteps: [x0, f(x0), ..., f^n(x0)]
+        # To get exactly trajectory_length timesteps, we call rollout with (trajectory_length - 1)
+        # This gives us: initial_state + (trajectory_length - 1) evolved states = trajectory_length total
+        data = self.model.rollout(initial_state, self.trajectory_length - 1)
+
+        # data already contains the full trajectory including initial state
+        # No need to prepend anything!
         data_unstacked = unstack(data, 'batch')
         for i, sim_data in enumerate(data_unstacked):
             sim_path = os.path.join(self.data_dir, f"sim_{i:04d}.npz")

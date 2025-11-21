@@ -25,7 +25,7 @@ from phi.math import Tensor
 from phi.flow import Field
 from src.data.dataset import Dataset
 
-logger = get_logger(__name__, level=logging.DEBUG)
+logger = get_logger(__name__)
 
 
 class HybridTrainer(AbstractTrainer):
@@ -311,7 +311,7 @@ class HybridTrainer(AbstractTrainer):
             result = self.physical_trainer.train(
                 dataset=self._base_dataset,
                 num_epochs=self.physical_epochs,
-                batch_size=1,  # Physical models often use batch_size=1
+                batch_size=self.batch_size,  # Physical models often use batch_size=1
                 verbose=False
             )
 
@@ -371,7 +371,7 @@ class HybridTrainer(AbstractTrainer):
                 epoch=self.current_cycle,
                 loss=synthetic_loss
             )
-            logger.info(f"Saved best synthetic model: loss={synthetic_loss:.6f}")
+            logger.debug(f"Saved best synthetic model: loss={synthetic_loss:.6f}")
 
         # Save physical model if improved
         if physical_loss < self.best_physical_loss:
@@ -380,4 +380,4 @@ class HybridTrainer(AbstractTrainer):
                 epoch=self.current_cycle,
                 loss=physical_loss
             )
-            logger.info(f"Saved best physical model: loss={physical_loss:.6f}")
+            logger.debug(f"Saved best physical model: loss={physical_loss:.6f}")

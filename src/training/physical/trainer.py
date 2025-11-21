@@ -120,9 +120,7 @@ class PhysicalTrainer():
         self.abs_tol = config['trainer']['physical']['abs_tol']
         self.max_iterations = config['trainer']['physical']['max_iterations']
 
-        # --- Domain configuration for Field creation ---
-        self.resolution = config['model']['physical']['resolution']
-        self.domain = config['model']['physical']['domain']
+
 
     def _setup(self):
         """
@@ -160,10 +158,7 @@ class PhysicalTrainer():
         initial_tensors = batch['initial_state']
 
         # Create bounds for target Fields (PhiFlow 2.2+ syntax)
-        bounds = Box['x,y',
-            0:self.domain['size_x'],
-            0:self.domain['size_y']
-        ]
+        bounds = self.model.domain
 
         # Convert target tensors to Fields for loss computation
         target_fields = {}
@@ -212,16 +207,16 @@ class PhysicalTrainer():
             start_time = time.time()
             train_loss = 0.0
             num_batches = 0
-
             # Iterate through dataset batches
             for batch in dataset.iterate_batches(batch_size=batch_size, shuffle=True):
-                # Prepare batch (convert targets to Fields)
-                initial_tensors, target_fields = self._prepare_batch(batch)
+                if num_batches < 5:
+                    # Prepare batch (convert targets to Fields)
+                    initial_tensors, target_fields = self._prepare_batch(batch)
 
-                # Optimize batch (model will update from tensors)
-                batch_loss = self._optimize_batch(initial_tensors, target_fields)
-                train_loss += batch_loss
-                num_batches += 1
+                    # Optimize batch (model will update from tensors)
+                    batch_loss = self._optimize_batch(initial_tensors, target_fields)
+                    train_loss += batch_loss
+                    num_batches += 1
 
             # Average loss over batches
             avg_train_loss = train_loss / num_batches if num_batches > 0 else train_loss
@@ -253,9 +248,6 @@ class PhysicalTrainer():
 
         final_loss = results["train_losses"][-1]
         results["final_loss"] = final_loss
-
-        logger.info(f"Training complete! Best loss: {self.best_val_loss:.6f} at epoch {self.best_epoch}")
-
         return results
 
     def _optimize_batch(

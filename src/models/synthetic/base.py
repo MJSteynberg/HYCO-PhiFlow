@@ -53,43 +53,16 @@ class SyntheticModel:
 
     def __call__(self, x: Dict[str, Tensor]) -> Dict[str, Tensor]:
         """
-        Forward pass with residual learning.
+        Forward pass predicting next state directly.
 
         Args:
             x: Dictionary mapping field names to PhiML Tensors
-               Example: {'velocity': Tensor(batch?, x, y, vector)}
+               Example: {'velocity': Tensor(batch?, x, vector)}
 
         Returns:
-            Dictionary mapping field names to PhiML Tensors (same structure as input)
+            Dictionary mapping field names to predicted next state
         """
-        # Concatenate all fields along vector/channel dimension
-        field_order = list(self.input_specs.keys())
-        field_tensors = [x[field_name] for field_name in field_order]
-        concatenated = math.concat(field_tensors, 'vector')
-
-        # Split into dynamic and static channels
-        dynamic = concatenated.vector[0:self.num_dynamic_channels]
-        static = concatenated.vector[self.num_dynamic_channels:self.total_channels]
-
-        # Predict residual for dynamic fields only
-        residual = math.native_call(self.network, dynamic)
-
-        # Residual learning: output = input + residual
-        predicted_dynamic = dynamic + residual
-
-        # Concatenate with unchanged static fields
-        if self.num_static_channels > 0:
-            output_concat = math.concat([predicted_dynamic, static], 'vector')
-        else:
-            output_concat = predicted_dynamic
-
-        # Split back into separate fields
-        output_dict = {}
-        channel_idx = 0
-        for field_name in field_order:
-            num_channels = self.input_specs[field_name]
-            output_dict[field_name] = output_concat.vector[channel_idx:channel_idx + num_channels]
-            channel_idx += num_channels
+        output_dict = {"velocity": math.native_call(self.network, x['velocity'])}
 
         return output_dict
 
@@ -100,9 +73,7 @@ class SyntheticModel:
     def save(self, path: str):
         """Save network parameters"""
         nn.save_state(self.network, path)
-        self.logger.info(f"Saved model to {path}")
 
     def load(self, path: str):
         """Load network parameters"""
         nn.load_state(self.network, path)
-        self.logger.info(f"Loaded model from {path}")
