@@ -20,7 +20,7 @@ class PhysicalModel(ABC):
     3. Be advanced one time step.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], downsample_factor: int = 1):
         """
         Initializes the model from a configuration dictionary.
 
@@ -32,10 +32,10 @@ class PhysicalModel(ABC):
                 - pde_params: Dict with model-specific parameters
         """
 
-        self._parse_config(config)
+        self._parse_config(config, downsample_factor)
 
 
-    def _parse_config(self, config: Dict[str, Any]):
+    def _parse_config(self, config: Dict[str, Any], downsample_factor: int):
         """
         Parse configuration dictionary to setup model.
         """
@@ -45,9 +45,10 @@ class PhysicalModel(ABC):
         self.domain = Box(x=size_x, y=size_y)
 
         # Setup resolution
-        res_x = config["model"]["physical"]["resolution"]["x"]
-        res_y = config["model"]["physical"]["resolution"]["y"]
+        res_x = config["model"]["physical"]["resolution"]["x"]//(2**downsample_factor)
+        res_y = config["model"]["physical"]["resolution"]["y"]//(2**downsample_factor)
         self.resolution = spatial(x=res_x, y=res_y)
+        self.downsample_factor = downsample_factor
 
         # Setup PDE parameters
         self.dt = float(config["model"]["physical"]["dt"])

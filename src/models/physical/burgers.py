@@ -51,18 +51,20 @@ class BurgersModel(PhysicalModel):
     Implements the PhysicalModel interface.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, downsample_factor: int = 1):
         """Initialize the Burgers model."""
-        super().__init__(config)
+        super().__init__(config, downsample_factor)
         self.pde_params = config["model"]["physical"]["pde_params"]
         # Calculate the maximum value that the diffusion coefficient can be whilst being stable
         self.max_diffusion = 0.5 * min(
-            self.domain.size[0] / self.resolution.get_size("x"),
-            self.domain.size[1] / self.resolution.get_size("y"),
+            self.domain.size[0] / (self.resolution.get_size("x")),
+            self.domain.size[1] / (self.resolution.get_size("y")),
         ) ** 2 / self.dt
         self._initialize_fields(self.pde_params)
 
-        
+        # Create field template for velocity (will be updated from tensors)
+        self.velocity = self._create_field_template('velocity', vector_dim=2)
+
 
     def _initialize_fields(self, pde_params: Dict[str, Any]):
         """Initialize model fields from PDE parameters."""
@@ -90,11 +92,51 @@ class BurgersModel(PhysicalModel):
             bounds=self.domain,
         )
 
+    def _create_field_template(self, field_name: str, vector_dim: int = 1) -> CenteredGrid:
+        """
+        Create a field template that will be updated from tensors.
+
+        Args:
+            field_name: Name of the field
+            vector_dim: Vector dimension (1 for scalar, 2 for 2D vector)
+
+        Returns:
+            CenteredGrid template
+        """
+        # Create a zero-initialized field with correct shape
+        if vector_dim == 1:
+            values = 0.0
+        else:
+            values = (0.0,) * vector_dim
+
+        return CenteredGrid(
+            values,
+            extrapolation.PERIODIC,
+            x=self.resolution.get_size("x"),
+            y=self.resolution.get_size("y"),
+            bounds=self.domain,
+        )
+
+    def update_from_tensors(self, tensors: Dict[str, Tensor]):
+        """
+        Update internal field values from PhiML tensors.
+
+        Args:
+            tensors: Dict of PhiML tensors {'velocity': Tensor(batch, x, y, vector)}
+        """
+        if 'velocity' in tensors:
+            # Update velocity field with new tensor values
+            self.velocity = CenteredGrid(
+                tensors['velocity'],
+                extrapolation.PERIODIC,
+                bounds=self.domain,
+            )
+
     @property
     def diffusion_coeff(self) -> CenteredGrid:
         """Get the diffusion coefficient field."""
         return self._diffusion_coeff
-    
+
     @diffusion_coeff.setter
     def diffusion_coeff(self, value: Any):
         """Set the diffusion coefficient field."""
@@ -146,16 +188,40 @@ class BurgersModel(PhysicalModel):
         velocity_trj, _ = iterate(_burgers_physics_step, batch(time=num_steps), initial_state["velocity"], self.diffusion_coeff, dt = self.dt)
         return {"velocity": velocity_trj}
 
-    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
+    def forward(self, current_state: Dict[str, Field] = None) -> Dict[str, Field]:
         """
-        Performs a single simulation step.
+        Performs a single simulation step using internal fields.
+
+        Args:
+            current_state: Optional dict of fields (for backward compatibility).
+                          If None, uses internal self.velocity
+
+        Returns:
+            Dict containing updated fields
         """
-        batch_size = current_state["velocity"].shape.get_size("batch")
+        # 
+        # Use internal velocity if no state provided
+        if current_state is None:
+            velocity = self.velocity
+        else:
+            velocity = current_state["velocity"]
+
+        for _ in range(self.downsample_factor):
+            velocity = field.downsample2x(velocity)
+
+        batch_size = velocity.shape.get_size("batch")
         diffusion_coeff_batched = math.expand(
             self.diffusion_coeff,
             batch(batch=batch_size)
         )
         new_velocity, _ = _burgers_physics_step(
-            velocity=current_state["velocity"], diffusion_coeff=diffusion_coeff_batched, dt=self.dt
+            velocity=velocity, diffusion_coeff=diffusion_coeff_batched, dt=self.dt
         )
+
+        # Update internal velocity
+        self.velocity = new_velocity
+
+        for _ in range(self.downsample_factor):
+            new_velocity = field.upsample2x(new_velocity)
+
         return {"velocity": new_velocity}

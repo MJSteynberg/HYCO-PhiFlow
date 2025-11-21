@@ -60,6 +60,7 @@ class SyntheticTrainer:
         self.epochs = config['trainer']['synthetic']['epochs']
         self.learning_rate = config['trainer']['synthetic']['learning_rate']
         self.batch_size = config['trainer']['batch_size']
+        self.rollout_steps = config['trainer']['rollout_steps']
 
         # Checkpoint path
         model_path_dir = config["model"]["synthetic"]["model_path"]
@@ -155,14 +156,16 @@ class SyntheticTrainer:
         Train on a single batch using PhiML's update_weights.
 
         Args:
-            batch: Dict with 'initial_state' and 'targets' as PhiML tensors
+            batch: Batch dataclass with:
+                   - initial_state: Dict[field_name, Tensor]
+                   - targets: Dict[field_name, Tensor]
 
         Returns:
             Loss value (scalar)
         """
-        # Extract PhiML tensors directly (no conversion needed!)
-        initial_state = batch['initial_state']
-        targets = batch['targets']
+        # Extract dicts of PhiML tensors (one tensor per field)
+        initial_state = batch['initial_state']  # Dict[str, Tensor]
+        targets = batch['targets']              # Dict[str, Tensor]
 
         # Define loss function for this batch (PhiML best practice)
         def loss_function(init_state, rollout_targets):
@@ -171,27 +174,36 @@ class SyntheticTrainer:
 
             This function is passed to nn.update_weights which handles
             gradient computation and optimization automatically.
+
+            Args:
+                init_state: Dict[field_name, Tensor(batch, x, y, vector)]
+                rollout_targets: Dict[field_name, Tensor(batch, time, x, y, vector)]
             """
-            num_steps = rollout_targets.shape.get_size('time')
-            current_state = init_state
+            current_state = init_state  # Dict of tensors
             total_loss = 0.0
 
             # Autoregressive rollout
-            for t in range(num_steps):
-                # Predict next state (PhiML tensor)
+            for t in range(self.rollout_steps):
+                # Predict next state (returns dict of tensors)
                 next_state = self.model(current_state)
 
-                # Get target for this timestep
-                target_t = rollout_targets.time[t]
+                # Compute loss for each field and sum
+                step_loss = 0.0
+                for field_name in rollout_targets.keys():
+                    # Get target for this field at timestep t
+                    target_t = rollout_targets[field_name].time[t]
+                    predicted_t = next_state[field_name]
 
-                # Compute loss (PhiML L2 loss)
-                loss_t = phimath.l2_loss(next_state - target_t)
-                total_loss += phimath.mean(loss_t, 'batch')
+                    # Compute loss for this field
+                    field_loss = phimath.l2_loss(predicted_t - target_t)
+                    step_loss += phimath.mean(field_loss, 'batch')
 
-                # Update current state
+                total_loss += step_loss
+
+                # Update current state (dict of tensors)
                 current_state = next_state
 
-            return total_loss / float(num_steps)
+            return total_loss / float(self.rollout_steps)
 
         # Use PhiML's update_weights (one-line training!)
         # This handles:
@@ -216,10 +228,8 @@ class SyntheticTrainer:
             epoch: Current epoch number
             loss: Current loss value
         """
-        # TODO: Implement PhiML model saving
-        # For now, just log
-        logger.debug(f"Checkpoint: epoch={epoch}, loss={loss:.6f}")
-        # self.model.save(str(self.checkpoint_path))
+        self.model.save(str(self.checkpoint_path))
+        logger.debug(f"Checkpoint saved: epoch={epoch}, loss={loss:.6f} to {self.checkpoint_path}")
 
     def load_checkpoint(self, path: Path = None):
         """
@@ -234,9 +244,8 @@ class SyntheticTrainer:
         if not path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-        # TODO: Implement PhiML model loading
-        logger.info(f"Loading checkpoint from {path}")
-        # self.model.load(str(path))
+        self.model.load(str(path))
+        logger.info(f"Loaded checkpoint from {path}")
 
     def print_model_summary(self):
         """Print model summary information."""

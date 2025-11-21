@@ -3,7 +3,7 @@ PhiML-native synthetic model base class.
 Models work entirely with PhiML tensors (no PyTorch dependency).
 """
 
-from phiml import math, Tensor
+from phiml import math, Tensor, nn
 from phiml.math import channel
 import logging
 from typing import Optional, Dict, Any
@@ -51,30 +51,25 @@ class SyntheticModel:
         self.num_static_channels = sum(self.input_specs.values()) - self.num_dynamic_channels
         self.total_channels = sum(self.input_specs.values())
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def __call__(self, x: Dict[str, Tensor]) -> Dict[str, Tensor]:
         """
         Forward pass with residual learning.
 
         Args:
-            x: PhiML Tensor with shape (..., channels)
-               Expected format: (batch?, time?, spatial..., channels)
+            x: Dictionary mapping field names to PhiML Tensors
+               Example: {'velocity': Tensor(batch?, x, y, vector)}
 
         Returns:
-            PhiML Tensor with same shape as input
+            Dictionary mapping field names to PhiML Tensors (same structure as input)
         """
-        # Find channel dimension name
-        channel_dim = None
-        for dim_name in x.shape.names:
-            if dim_name in ['c', 'channels', 'channel', 'vector']:
-                channel_dim = dim_name
-                break
-
-        if channel_dim is None:
-            raise ValueError(f"Input must have channel dimension. Got shape: {x.shape}")
+        # Concatenate all fields along vector/channel dimension
+        field_order = list(self.input_specs.keys())
+        field_tensors = [x[field_name] for field_name in field_order]
+        concatenated = math.concat(field_tensors, 'vector')
 
         # Split into dynamic and static channels
-        dynamic = x[{channel_dim: slice(0, self.num_dynamic_channels)}]
-        static = x[{channel_dim: slice(self.num_dynamic_channels, self.total_channels)}]
+        dynamic = concatenated.vector[0:self.num_dynamic_channels]
+        static = concatenated.vector[self.num_dynamic_channels:self.total_channels]
 
         # Predict residual for dynamic fields only
         residual = math.native_call(self.network, dynamic)
@@ -84,11 +79,19 @@ class SyntheticModel:
 
         # Concatenate with unchanged static fields
         if self.num_static_channels > 0:
-            output = math.concat([predicted_dynamic, static], channel_dim)
+            output_concat = math.concat([predicted_dynamic, static], 'vector')
         else:
-            output = predicted_dynamic
+            output_concat = predicted_dynamic
 
-        return output
+        # Split back into separate fields
+        output_dict = {}
+        channel_idx = 0
+        for field_name in field_order:
+            num_channels = self.input_specs[field_name]
+            output_dict[field_name] = output_concat.vector[channel_idx:channel_idx + num_channels]
+            channel_idx += num_channels
+
+        return output_dict
 
     def get_network(self):
         """Get the underlying network (for optimization)"""
@@ -96,10 +99,10 @@ class SyntheticModel:
 
     def save(self, path: str):
         """Save network parameters"""
-        math.save(self.network, path)
+        nn.save_state(self.network, path)
         self.logger.info(f"Saved model to {path}")
 
     def load(self, path: str):
         """Load network parameters"""
-        self.network = math.load(path)
+        nn.load_state(self.network, path)
         self.logger.info(f"Loaded model from {path}")

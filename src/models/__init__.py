@@ -55,7 +55,7 @@ class ModelRegistry:
 		return decorator
 
 	@classmethod
-	def get_physical_model(self, config: Dict[str, Any]):
+	def get_physical_model(self, config: Dict[str, Any], downsample_factor: int = 0):
 		name = config["model"]["physical"]["name"]
 		if name not in self._physical_models:
 			available = ", ".join(self._physical_models.keys()) or "none"
@@ -66,7 +66,7 @@ class ModelRegistry:
 
 		model_class = self._physical_models[name]
 		logger.debug(f"Creating physical model: {name}")
-		return model_class(config)
+		return model_class(config, downsample_factor=downsample_factor)
 
 	@classmethod
 	def get_synthetic_model(self, config: Dict[str, Any]):

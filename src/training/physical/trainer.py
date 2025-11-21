@@ -15,7 +15,6 @@ from phi.math import math, Tensor
 from src.models import ModelRegistry
 from src.training.abstract_trainer import AbstractTrainer
 from src.utils.logger import get_logger
-from torch.utils.data import DataLoader
 
 from pathlib import Path
 import torch
@@ -27,16 +26,14 @@ logger = get_logger(__name__)
 
 class PhysicalTrainer():
     """
-    Solves an inverse problem for a PhysicalModel using cached data
-    from DataManager/FieldDataset.
+    Solves an inverse problem for a PhysicalModel using PhiML Dataset.
 
-    This trainer uses math.minimize for optimization and leverages
-    the efficient DataLoader pipeline with field conversion.
+    This trainer uses math.minimize for optimization and works with
+    the pure PhiML data pipeline. Converts PhiML tensors to Fields
+    as needed for physics operations.
 
-    Inherits from FieldTrainer to get PhiFlow-specific functionality.
-
-    Phase 1 Migration: Now receives model and learnable params externally,
-    data passed via train(). Always uses sliding window.
+    Phase 3 Migration: Works with pure PhiML Dataset, converts tensors
+    to Fields internally.
     """
 
     def __init__(self, config: Dict[str, Any], model):
@@ -78,6 +75,16 @@ class PhysicalTrainer():
             config: Full configuration dictionary
         """
 
+        # --- Backend configuration for GPU acceleration ---
+        device = config['trainer'].get('device', 'cpu')
+        if device.startswith('cuda'):
+            logger.info(f"Setting PhiML backend to PyTorch with device: {device}")
+            math.use('torch')
+            import torch
+            torch.set_default_device(device)
+        else:
+            logger.info("Using CPU backend")
+
         # --- Data specifications ---
         self.field_names: List[str] = config['data']["fields"]
         self.data_dir = config['data']["data_dir"]
@@ -113,6 +120,10 @@ class PhysicalTrainer():
         self.abs_tol = config['trainer']['physical']['abs_tol']
         self.max_iterations = config['trainer']['physical']['max_iterations']
 
+        # --- Domain configuration for Field creation ---
+        self.resolution = config['model']['physical']['resolution']
+        self.domain = config['model']['physical']['domain']
+
     def _setup(self):
         """
         Create optimizer for learnable parameters.
@@ -129,19 +140,56 @@ class PhysicalTrainer():
 
         )
 
+    def _prepare_batch(self, batch) -> Tuple[Dict[str, Tensor], Dict[str, Field]]:
+        """
+        Prepare batch data for model - convert target tensors to Fields.
+
+        No splitting needed! Dataset already provides fields separately.
+
+        Args:
+            batch: Batch dataclass with:
+                  - initial_state: Dict[field_name, Tensor(batch, x, y, vector)]
+                  - targets: Dict[field_name, Tensor(batch, time, x, y, vector)]
+
+        Returns:
+            Tuple of (initial_tensors, target_fields):
+                - initial_tensors: Dict[field_name, Tensor] (passthrough from batch)
+                - target_fields: Dict[field_name, Field] for loss computation
+        """
+        # Initial tensors are already in the right format (dict of tensors)
+        initial_tensors = batch['initial_state']
+
+        # Create bounds for target Fields (PhiFlow 2.2+ syntax)
+        bounds = Box['x,y',
+            0:self.domain['size_x'],
+            0:self.domain['size_y']
+        ]
+
+        # Convert target tensors to Fields for loss computation
+        target_fields = {}
+        for field_name, target_tensor in batch['targets'].items():
+            target_fields[field_name] = CenteredGrid(
+                target_tensor,
+                bounds=bounds,
+                extrapolation=math.extrapolation.ZERO
+            )
+
+        return initial_tensors, target_fields
+
 
     #########################
     # Training Loop Methods #
     #########################
 
-    def train(self, data_source: DataLoader, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
+    def train(self, dataset, num_epochs: int, batch_size: int = 1, verbose: bool = True) -> Dict[str, Any]:
         """
-        Execute training for specified number of epochs with provided data.
+        Execute training for specified number of epochs with PhiML Dataset.
 
         Args:
-            data_source: Iterable yielding (initial_fields, target_fields) tuples
-                        Note: NO weights - all samples treated equally!
+            dataset: PhiML Dataset yielding tensor batches
             num_epochs: Number of epochs to train
+            batch_size: Batch size for training (default: 1 for physical models)
+            verbose: Whether to show progress bars
 
         Returns:
             Dictionary with training results including losses and metrics
@@ -163,27 +211,38 @@ class PhysicalTrainer():
         for epoch in pbar:
             start_time = time.time()
             train_loss = 0.0
+            num_batches = 0
 
-            for stacked_initial, stacked_targets in data_source:
-                batch_loss = self._optimize_batch(stacked_initial, stacked_targets)
+            # Iterate through dataset batches
+            for batch in dataset.iterate_batches(batch_size=batch_size, shuffle=True):
+                # Prepare batch (convert targets to Fields)
+                initial_tensors, target_fields = self._prepare_batch(batch)
+
+                # Optimize batch (model will update from tensors)
+                batch_loss = self._optimize_batch(initial_tensors, target_fields)
                 train_loss += batch_loss
+                num_batches += 1
 
-            results["train_losses"].append(train_loss)
+            # Average loss over batches
+            avg_train_loss = train_loss / num_batches if num_batches > 0 else train_loss
+
+            results["train_losses"].append(avg_train_loss)
             results["epochs"].append(epoch + 1)
 
-            if train_loss < self.best_val_loss:
-                self.best_val_loss = train_loss
+            if avg_train_loss < self.best_val_loss:
+                self.best_val_loss = avg_train_loss
                 self.best_epoch = epoch + 1
                 results["best_epoch"] = self.best_epoch
                 results["best_val_loss"] = self.best_val_loss
 
-                self.save_checkpoint(epoch, train_loss)
+                self.save_checkpoint(epoch, avg_train_loss)
 
             epoch_time = time.time() - start_time
 
             # Update progress bar
             postfix_dict = {
-                "train_loss": f"{train_loss:.6f}",
+                "train_loss": f"{avg_train_loss:.6f}",
+                "best": f"{self.best_val_loss:.6f}",
                 "time": f"{epoch_time:.2f}s",
             }
 
@@ -195,69 +254,69 @@ class PhysicalTrainer():
         final_loss = results["train_losses"][-1]
         results["final_loss"] = final_loss
 
+        logger.info(f"Training complete! Best loss: {self.best_val_loss:.6f} at epoch {self.best_epoch}")
+
         return results
 
     def _optimize_batch(
         self,
-        initial_fields: Dict[str, Field],
+        initial_tensors: Dict[str, Tensor],
         target_fields: Dict[str, Field],
     ) -> float:
         """
         Optimize parameters over a batch of samples.
-        
-        Key insight: The loss function computes loss for ALL samples in parallel,
-        and math.minimize finds parameters that minimize the AVERAGE loss.
-        
+
+        Model updates its internal Fields from tensors, then steps forward.
+
         Args:
-            initial_fields: Fields with shape [samples, x, y, ...]
+            initial_tensors: Dict of tensors {field_name: Tensor(batch, x, y, vector)}
             target_fields: Fields with shape [samples, time, x, y, ...]
-        
+
         Returns:
             Average loss across batch
         """
-        
+
         def loss_function(*learnable_tensors: Tensor) -> Tensor:
             """
             Compute loss across entire batch.
-            
+
             Returns:
                 Scalar loss (averaged over batch dimension)
             """
             # Update model parameters
             self._update_params(learnable_tensors)
-            
+
+            # Update model's internal fields from tensors
+            self.model.update_from_tensors(initial_tensors)
+
             # Initialize loss accumulator (scalar)
             total_loss = math.tensor(0.0)
-            
-            # Run batched simulation
-            # initial_fields already has batch dimension [samples, x, y]
-            current_state = initial_fields
-            
+
             for step in range(self.rollout_steps):
-                # Forward step operates on batch dimension automatically!
-                # current_state: [samples, x, y] → [samples, x, y]
-                current_state = self.model.forward(current_state)
-                
+                # Forward step using internal fields
+                # Model updates its internal state and returns new fields
+                current_state = self.model.forward()
+
                 # Compute loss for this timestep
                 step_loss = math.tensor(0.0)
                 for field_name, gt_field in target_fields.items():
                     target = gt_field.time[step]
                     prediction = current_state[field_name]
+
+                    # Compute L2 loss and reduce properly
                     field_loss = l2_loss(prediction - target)
-                    field_loss = math.mean(field_loss, dim="batch,time")
+                    field_loss = mean(field_loss, 'batch')
                     step_loss += field_loss
+
                 total_loss += step_loss
-            
+
             # Average over timesteps
             avg_loss = total_loss / self.rollout_steps
             return avg_loss
-        
+
         # Run optimization
-        try:
-            estimated_params = minimize(loss_function, self.optimizer)
-        except Exception as e:
-            logger.error(f"Batched optimization failed: {e}")
-            estimated_params = tuple([x.detach() for x in self.learnable_parameters])
+        
+        estimated_params = minimize(loss_function, self.optimizer)
         
         # Compute final loss
         final_loss = loss_function(*estimated_params)
@@ -267,7 +326,12 @@ class PhysicalTrainer():
     # Utilities #
     #############
     def _update_params(self, learnable_tensors: Tuple[Tensor, ...]):
-        """Update model parameters (scalars or fields)."""
+        """
+        Update model parameters (scalars or fields) from optimizer.
+
+        Args:
+            learnable_tensors: Tuple of updated parameter values from optimizer
+        """
         for param_name, param_value, param_type in zip(
             self.param_names, learnable_tensors, self.param_types
         ):
@@ -284,9 +348,9 @@ class PhysicalTrainer():
                 # Scalar - set directly
                 setattr(self.model, param_name, param_value)
 
-            self.optimizer.x0 = list(learnable_tensors)
-            self.learnable_parameters = list(learnable_tensors)
-
+        # Update optimizer state
+        self.optimizer.x0 = list(learnable_tensors)
+        self.learnable_parameters = list(learnable_tensors)
 
     def save_checkpoint(self, epoch: int, loss: float):
         """

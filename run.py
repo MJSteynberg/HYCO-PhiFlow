@@ -20,7 +20,7 @@ from omegaconf import DictConfig, OmegaConf
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.generator import run_generation
+from src.data.data_generator import DataGenerator
 from src.factories.trainer_factory import TrainerFactory
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.evaluation import Evaluator
@@ -50,7 +50,8 @@ def main(cfg: DictConfig) -> None:
 
         if task == "generate":
             logger.info("Running data generation")
-            run_generation(config)
+            data_generator = DataGenerator(config)
+            data_generator.generate_data()
 
         elif task == "train":
             logger.info("Running training")
@@ -69,25 +70,27 @@ def main(cfg: DictConfig) -> None:
                     percentage_real_data=1.0
                 )
 
-                logger.info(f"Dataset created: {len(dataset)} samples")
-
                 # Train with PhiML dataset (no DataLoader wrapper!)
                 num_epochs = config["trainer"]['synthetic']["epochs"]
                 logger.info(f"Starting training for {num_epochs} epochs...")
                 trainer.train(dataset=dataset, num_epochs=num_epochs)
                 
             elif mode == "physical":
-                # Create FieldDataset for physical training using DataLoaderFactory
-                dataset = DataLoaderFactory.create(
+                # Create PhiML Dataset for physical training
+                logger.info("Creating PhiML dataset...")
+                dataset = DataLoaderFactory.create_phiml(
                     config,
-                    mode='field',
-                    batch_size=None,  # Physical models don't use batching
+                    sim_indices=config['trainer']['train_sim'],
+                    enable_augmentation=False,
+                    percentage_real_data=1.0
                 )
-                
-                # Train with explicit data passing (Phase 1 API)
-                # Physical typically uses single epoch (optimization per sample)
+
+                # Train with PhiML dataset
+                # Use batch_size from config (larger batches = faster but more memory)
                 num_epochs = config["trainer"]['physical']["epochs"]
-                trainer.train(data_source=dataset, num_epochs=num_epochs)
+                batch_size = config['trainer'].get('batch_size', 8)
+                logger.info(f"Starting training for {num_epochs} epochs with batch_size={batch_size}...")
+                trainer.train(dataset=dataset, num_epochs=num_epochs, batch_size=batch_size)
                 
             elif mode == "hybrid":
                 # Phase 3: Hybrid training with data augmentation

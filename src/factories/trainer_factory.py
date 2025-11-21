@@ -12,7 +12,6 @@ from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 
 # HybridTrainer imported lazily to avoid circular dependency
-from src.data import DataManager
 from src.factories.model_factory import ModelFactory
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.utils.logger import get_logger
@@ -102,7 +101,8 @@ class TrainerFactory:
             PhysicalTrainer instance
         """
         # Create model externally
-        model = ModelFactory.create_physical_model(config)
+        downsample_factor = config["trainer"]["physical"]["downsample_factor"]
+        model = ModelFactory.create_physical_model(config, downsample_factor=downsample_factor)
 
 
     

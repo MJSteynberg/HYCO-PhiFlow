@@ -10,7 +10,7 @@ class ModelFactory:
     """Factory for creating model instances."""
 
     @staticmethod
-    def create_physical_model(config: Dict[str, Any]):
+    def create_physical_model(config: Dict[str, Any], downsample_factor: int = 0):
         """
         Create physical model from config.
 
@@ -20,7 +20,7 @@ class ModelFactory:
         Returns:
             Physical model instance
         """
-        return ModelRegistry.get_physical_model(config)
+        return ModelRegistry.get_physical_model(config, downsample_factor=downsample_factor)
 
     @staticmethod
     def create_synthetic_model(config: Dict[str, Any]) -> nn.Module:
