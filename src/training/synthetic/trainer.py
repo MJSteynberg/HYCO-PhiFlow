@@ -61,7 +61,11 @@ class SyntheticTrainer:
         self.epochs = config['trainer']['synthetic']['epochs']
         self.learning_rate = config['trainer']['synthetic']['learning_rate']
         self.batch_size = config['trainer']['batch_size']
-        self.rollout_steps = config['trainer']['rollout_steps']
+        # Use synthetic-specific rollout_steps, fall back to global for backwards compatibility
+        self.rollout_steps = config['trainer']['synthetic'].get(
+            'rollout_steps',
+            config['trainer'].get('rollout_steps', 4)
+        )
 
         # Checkpoint path
         model_path_dir = config["model"]["synthetic"]["model_path"]

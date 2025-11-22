@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'burgers_experiment'
   mode: 'synthetic' # Options: 'physical', 'physical', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  tasks: ['train', 'evaluate']
 
 data:
   data_dir: 'data/burgers'
@@ -38,12 +38,12 @@ model:
 
 trainer:
   batch_size: 64  # Smaller batch to see individual samples
-  rollout_steps: 4  # Single-step to debug
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
-  physical: 
+  physical:
     epochs: 1
+    rollout_steps: 4  # Rollout steps for physical model training
     downsample_factor: 0 # 2^downsample_factor reduction in resolution for physical model training
     learnable_parameters:
       - name: 'diffusion_coeff'
@@ -54,7 +54,8 @@ trainer:
     max_iterations: 5
   synthetic:
     epochs: 10000  # Faster iteration for debugging
-    learning_rate: 0.00001 
+    rollout_steps: 4  # Rollout steps for synthetic model training
+    learning_rate: 0.00001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0

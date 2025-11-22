@@ -67,7 +67,7 @@ def _custom_diffusion(u: CenteredGrid, diffusivity: CenteredGrid, dt: float, sub
     return result
 
 
-# @jit_compile
+@jit_compile
 def _burgers_physics_step(
     velocity: CenteredGrid, diffusion_coeff: CenteredGrid, dt: float
 ) -> CenteredGrid:
@@ -103,6 +103,39 @@ def _burgers_physics_step(
     velocity = stack(components, channel('vector'))
     return velocity, diffusion_coeff
 
+
+def _create_jit_step_with_resampling(downsample_factor: int):
+    """
+    Factory function to create a jit-compiled step function with specific downsample factor.
+
+    The downsample_factor is baked into the function at creation time, allowing the JIT
+    compiler to fully trace and optimize the up/downsampling operations.
+
+    Args:
+        downsample_factor: Number of 2x downsampling/upsampling steps (2^factor reduction)
+
+    Returns:
+        A jit-compiled step function that handles downsampling, physics, and upsampling
+    """
+    @jit_compile
+    def _step_with_resampling(velocity: CenteredGrid, diffusion_coeff: CenteredGrid, dt: float):
+        """Jit-compiled step with integrated up/downsampling."""
+        # Downsample velocity to match diffusion coefficient resolution
+        v = velocity
+        for _ in range(downsample_factor):
+            v = field.downsample2x(v)
+
+        # Physics step at reduced resolution
+        v, _ = _burgers_physics_step(v, diffusion_coeff, dt)
+
+        # Upsample back to original resolution
+        for _ in range(downsample_factor):
+            v = field.upsample2x(v)
+
+        return v
+
+    return _step_with_resampling
+
 # --- Model Class Implementation ---
 
 
@@ -113,7 +146,7 @@ class BurgersModel(PhysicalModel):
     Implements the PhysicalModel interface.
     """
 
-    def __init__(self, config: dict, downsample_factor: int = 1):
+    def __init__(self, config: dict, downsample_factor: int = 0):
         """Initialize the Burgers model."""
         super().__init__(config, downsample_factor)
         self.pde_params = config["model"]["physical"]["pde_params"]
@@ -122,6 +155,10 @@ class BurgersModel(PhysicalModel):
 
         # Create field template for velocity (will be updated from tensors)
         self.velocity = self._create_field_template('velocity', vector_dim=2)
+
+        # Create jit-compiled step function with resampling baked in
+        # This provides significant speedup by fusing the downsampling, physics, and upsampling
+        self._jit_step = _create_jit_step_with_resampling(downsample_factor)
 
 
     def _initialize_fields(self, pde_params: Dict[str, Any]):
@@ -276,6 +313,8 @@ class BurgersModel(PhysicalModel):
         """
         Performs a single simulation step using internal fields.
 
+        Uses jit-compiled step function with integrated up/downsampling for speedup.
+
         Args:
             current_state: Optional dict of fields (for backward compatibility).
                           If None, uses internal self.velocity
@@ -283,24 +322,21 @@ class BurgersModel(PhysicalModel):
         Returns:
             Dict containing updated fields
         """
-        # 
         # Use internal velocity if no state provided
         if current_state is None:
             velocity = self.velocity
         else:
             velocity = current_state["velocity"]
 
+        # Use jit-compiled step with integrated up/downsampling
+        # The _jit_step function handles downsampling, physics, and upsampling in one traced call
+        new_velocity = self._jit_step(velocity, self.diffusion_coeff, self.dt)
+
+        # Update internal velocity (store at low resolution for efficiency)
+        # Note: new_velocity is at high resolution, we store downsampled version
+        internal_v = new_velocity
         for _ in range(self.downsample_factor):
-            velocity = field.downsample2x(velocity)
-
-        new_velocity, _ = _burgers_physics_step(
-            velocity=velocity, diffusion_coeff=self.diffusion_coeff, dt=self.dt
-        )
-
-        # Update internal velocity
-        self.velocity = new_velocity
-
-        for _ in range(self.downsample_factor):
-            new_velocity = field.upsample2x(new_velocity)
+            internal_v = field.downsample2x(internal_v)
+        self.velocity = internal_v
 
         return {"velocity": new_velocity}

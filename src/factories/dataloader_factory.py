@@ -85,7 +85,21 @@ class DataLoaderFactory:
             sim_indices = config['trainer'].get('train_sim', [0])
 
         if rollout_steps is None:
-            rollout_steps = config['trainer']['rollout_steps']
+            # Try to find rollout_steps from model-specific config, with fallback
+            mode = config.get('general', {}).get('mode', 'synthetic')
+            if mode == 'synthetic':
+                rollout_steps = config['trainer'].get('synthetic', {}).get(
+                    'rollout_steps',
+                    config['trainer'].get('rollout_steps', 4)
+                )
+            elif mode == 'physical':
+                rollout_steps = config['trainer'].get('physical', {}).get(
+                    'rollout_steps',
+                    config['trainer'].get('rollout_steps', 4)
+                )
+            else:
+                # For hybrid or unknown modes, use global or default
+                rollout_steps = config['trainer'].get('rollout_steps', 4)
 
         # Create simplified Dataset (no DataManager, no complex config!)
         dataset = Dataset(

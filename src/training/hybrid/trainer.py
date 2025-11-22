@@ -85,18 +85,39 @@ class HybridTrainer(AbstractTrainer):
         self.field_names = config['data']['fields']
         self.batch_size = config['trainer']['batch_size']
         self.trajectory_length = config['data']['trajectory_length']
-        self.rollout_steps = config['trainer']['rollout_steps']
+
+        # Separate rollout steps for physical and synthetic models
+        self.physical_rollout_steps = config['trainer']['physical'].get(
+            'rollout_steps',
+            config['trainer'].get('rollout_steps', 4)
+        )
+        self.synthetic_rollout_steps = config['trainer']['synthetic'].get(
+            'rollout_steps',
+            config['trainer'].get('rollout_steps', 4)
+        )
+        # Default rollout_steps for backward compatibility (uses synthetic)
+        self.rollout_steps = self.synthetic_rollout_steps
+
         self.learnable_parameters = config['trainer']['physical']['learnable_parameters']
 
 
     def _initialize_dataset(self):
-        """Create unified PhiML Dataset."""
+        """Create unified PhiML Dataset.
+
+        Uses the maximum of physical and synthetic rollout steps to ensure
+        enough target frames are available for both training phases.
+        """
+        # Use max rollout steps to ensure enough targets for both models
+        max_rollout_steps = max(self.physical_rollout_steps, self.synthetic_rollout_steps)
         self._base_dataset = Dataset(
             config=self.config,
             train_sim=self.train_sim,
-            rollout_steps=self.rollout_steps
+            rollout_steps=max_rollout_steps
         )
-        logger.info(f"Initialized dataset with {len(self._base_dataset)} samples")
+        logger.info(
+            f"Initialized dataset with {len(self._base_dataset)} samples "
+            f"(physical_rollout={self.physical_rollout_steps}, synthetic_rollout={self.synthetic_rollout_steps})"
+        )
 
     def train(self):
         """Main training loop."""

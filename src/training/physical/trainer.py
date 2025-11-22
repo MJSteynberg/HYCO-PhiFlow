@@ -113,7 +113,11 @@ class PhysicalTrainer():
                 self.learnable_parameters.append(param_value)
         self.param_names = [p["name"] for p in learnable_parameters]
         self.param_types = [p["type"] for p in learnable_parameters]
-        self.rollout_steps = config['trainer']['rollout_steps']
+        # Use physical-specific rollout_steps, fall back to global for backwards compatibility
+        self.rollout_steps = config['trainer']['physical'].get(
+            'rollout_steps',
+            config['trainer'].get('rollout_steps', 4)
+        )
 
         # --- Trainer specifications ---
         self.method = config['trainer']['physical']['method']
