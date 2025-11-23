@@ -70,7 +70,9 @@ class SyntheticTrainer:
         if self.scheduler is not None:
             self.scheduler.step()
             new_lr = self.scheduler.get_last_lr()[0]
-            self.optimizer = phiml_nn.adam(self.model.network, learning_rate=new_lr)
+            # Update existing optimizer's learning rate to preserve momentum
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = new_lr
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""
@@ -139,13 +141,19 @@ class SyntheticTrainer:
             total_loss = phimath.mean(total_loss, 'batch')
             return total_loss / float(self.rollout_steps)
 
-        return phiml_nn.update_weights(
-            self.model.network,
-            self.optimizer,
-            loss_function,
-            initial_state,
-            targets
-        )
+        self.optimizer.zero_grad()
+        
+        loss = loss_function(initial_state, targets)
+        # Convert to native torch tensor for backward
+        if hasattr(loss, 'native'):
+            native_loss = loss.native()
+        else:
+            native_loss = loss
+            
+        native_loss.backward()
+        self.optimizer.step()
+        
+        return loss
 
     def save_checkpoint(self, epoch: int, loss: float):
         """Save model checkpoint."""
