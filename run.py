@@ -55,22 +55,21 @@ def main(cfg: DictConfig) -> None:
 
         elif task == "train":
             logger.info("Running training")
-            # Use factory to create trainer (Phase 1 API)
-            trainer = TrainerFactory.create_trainer(config)
-            # Create data loader/dataset based on model type using NEW DataLoaderFactory
             mode = config["general"]["mode"]
-            
+
             if mode == "synthetic":
-                # Create PhiML Dataset (pure PhiML pipeline - no PyTorch!)
+                # Create PhiML Dataset first (to get num_channels)
                 logger.info("Creating PhiML dataset...")
                 dataset = DataLoaderFactory.create_phiml(
                     config,
                     sim_indices=config['trainer']['train_sim'],
-                    enable_augmentation=False,
-                    percentage_real_data=1.0
                 )
 
-                # Train with PhiML dataset (no DataLoader wrapper!)
+                # Create trainer with num_channels from dataset
+                logger.info(f"Creating trainer with {dataset.num_channels} channels...")
+                trainer = TrainerFactory.create_trainer(config, num_channels=dataset.num_channels)
+
+                # Train with PhiML dataset
                 num_epochs = config["trainer"]['synthetic']["epochs"]
                 logger.info(f"Starting training for {num_epochs} epochs...")
                 trainer.train(dataset=dataset, num_epochs=num_epochs)

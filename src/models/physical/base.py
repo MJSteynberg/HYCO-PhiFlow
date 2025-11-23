@@ -1,138 +1,94 @@
-# src/models/physical/base.py
+"""Abstract base class for physical PDE models."""
 
 from abc import ABC, abstractmethod
-from phi.flow import Field, Box, math, batch, plot
-from phi.math import Shape, spatial
-import matplotlib.pyplot as plt
-from src.utils.logger import get_logger
-from typing import Dict, Any, Callable, Optional, List
-import torch
-import logging
+from phi.flow import Field, Box, math, batch, iterate
+from phi.math import Shape, spatial, Tensor
+from phiml.math import channel
+from typing import Dict, Any, Tuple
 
 
 class PhysicalModel(ABC):
     """
-    Abstract Base Class for all physical PDE models.
+    Base class for physical PDE models with tensor-first architecture.
 
-    This interface guarantees that all physical models can:
-    1. Be initialized from a configuration.
-    2. Generate a batched initial state (t=0).
-    3. Be advanced one time step.
+    State format: Tensor(batch?, x, y?, field='vel_x,vel_y,...')
     """
 
-    def __init__(self, config: Dict[str, Any], downsample_factor: int = 1):
-        """
-        Initializes the model from a configuration dictionary.
-
-        Args:
-            config (Dict): Configuration dictionary containing:
-                - domain: Dict with 'size_x' and 'size_y'
-                - resolution: Dict with 'x' and 'y'
-                - dt: float time step
-                - pde_params: Dict with model-specific parameters
-        """
-
+    def __init__(self, config: Dict[str, Any], downsample_factor: int = 0):
         self._parse_config(config, downsample_factor)
-
+        self._jit_step = None
 
     def _parse_config(self, config: Dict[str, Any], downsample_factor: int):
-        """
-        Parse configuration dictionary to setup model.
-        """
+        """Parse configuration to setup domain and resolution."""
         dim_config = config["model"]["physical"]["domain"]["dimensions"]
 
-        # Build Box dynamically
         box_kwargs = {name: dim['size'] for name, dim in dim_config.items()}
         self.domain = Box(**box_kwargs)
 
-        # Build resolution Shape dynamically
         res_kwargs = {
             name: dim['resolution'] // (2**downsample_factor)
             for name, dim in dim_config.items()
         }
         self.resolution = spatial(**res_kwargs)
 
-        # Store dimension names for later use
         self.spatial_dims = list(dim_config.keys())
         self.n_spatial_dims = len(self.spatial_dims)
         self.downsample_factor = downsample_factor
-
-        # Setup PDE parameters
         self.dt = float(config["model"]["physical"]["dt"])
-        
 
+    @property
+    @abstractmethod
+    def field_names(self) -> Tuple[str, ...]:
+        """Field names for output tensor (e.g., ('vel_x', 'vel_y'))."""
+        pass
 
+    @property
+    def num_channels(self) -> int:
+        return len(self.field_names)
 
+    @property
+    def static_field_names(self) -> Tuple[str, ...]:
+        """Static field names (fields that don't change during simulation). Override in subclass."""
+        return ()
+
+    @property
+    def dynamic_field_names(self) -> Tuple[str, ...]:
+        """Dynamic field names (fields that change during simulation)."""
+        return tuple(f for f in self.field_names if f not in self.static_field_names)
 
     @abstractmethod
-    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
-        """
-        Generates a batched initial state (t=0) for the simulation.
-
-        The batch dimension should be named 'batch'.
-
-        Args:
-            batch_size (int): The number of parallel simulations.
-
-        Returns:
-            Dict[str, Field]: A dictionary mapping field names to their
-                              initial Field values.
-        """
+    def _create_jit_step(self):
+        """Create JIT-compiled physics step: Tensor -> Tensor."""
         pass
 
     @abstractmethod
-    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
-        """
-        Advances the simulation by one time step (dt).
-
-        Args:
-            *current_state (Field): A variable number of fields that
-                                    make up the current state, passed in
-                                    the same order as returned by
-                                    get_initial_state().
-
-        Returns:
-            tuple[Field, ...]: A tuple of Fields representing the next state.
-        """
+    def get_initial_state(self, batch_size: int = 1) -> Tensor:
+        """Generate random initial state as unified tensor."""
         pass
 
-    @abstractmethod
-    def rollout(self, initial_state: Dict[str, Field], num_steps: int) -> Dict[str, Field]:
-        """
-        Roll out the simulation for a specified number of time steps.
+    def forward(self, state: Tensor) -> Tensor:
+        """Single physics step."""
+        if self._jit_step is None:
+            raise RuntimeError("_jit_step not initialized")
+        return self._jit_step(state)
 
-        Args:
-            initial_state (Dict[str, Field]): The initial state at t=0.
-            num_steps (int): The number of time steps to roll out.
-        Returns:
-            Dict[str, Field]: A dictionary mapping field names to their
-                                states after num_steps.
-        """
-        pass
+    def rollout(self, initial_state: Tensor, num_steps: int) -> Tensor:
+        """Rollout simulation for multiple steps (includes initial state)."""
+        if self._jit_step is None:
+            raise RuntimeError("_jit_step not initialized")
+        trajectory, = iterate(self._jit_step, batch(time=num_steps), initial_state)
+        return trajectory
 
-    def __call__(self, *args) -> tuple[Field, ...]:
-        """Convenience wrapper for the forward method."""
-        return self.forward(*args)
+    def __call__(self, state: Tensor) -> Tensor:
+        return self.forward(state)
 
     @staticmethod
     def _select_proportional_indices(total_count: int, sample_count: int):
-        """
-        Select indices proportionally across the dataset.
-
-        Ensures diverse sampling rather than just taking the first N samples.
-        """
+        """Select indices proportionally across the dataset."""
         if sample_count >= total_count:
             return list(range(total_count))
         elif sample_count <= 0:
             return []
-
-        # Calculate step size for proportional sampling
         step = total_count / sample_count
-
-        # Select indices evenly distributed
         indices = [int(i * step) for i in range(sample_count)]
-
-        # Ensure no duplicates and within bounds
-        indices = sorted(list(set(indices)))[:sample_count]
-
-        return indices
+        return sorted(list(set(indices)))[:sample_count]

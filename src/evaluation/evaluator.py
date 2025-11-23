@@ -41,9 +41,9 @@ class Evaluator:
 
         # Data configuration
         self.data_dir = config['data']['data_dir']
-        self.field_names = config['data']['fields']
         self.trajectory_length = config['data']['trajectory_length']
-
+        # field_names will be inferred from loaded data tensor shape
+        self.field_names = None
 
         # Model will be loaded in evaluate()
         self._load_synthetic_model()
@@ -71,15 +71,36 @@ class Evaluator:
     def _load_synthetic_model(self):
         """Load model from checkpoint (PhiML format)."""
         from src.factories.model_factory import ModelFactory
+        import os
 
-        # Create model
-        self.model = ModelFactory.create_synthetic_model(self.config)
+        # Load a sample trajectory to get num_channels and field_names
+        test_sims = self.eval_config['test_sim']
+        sample_path = os.path.join(self.data_dir, f"sim_{test_sims[0]:04d}.npz")
+        sample_data = math.load(sample_path)
+
+        # Get num_channels and field_names from tensor shape
+        num_channels = sample_data.shape['field'].size
+        raw_names = sample_data.shape['field'].item_names
+        # item_names can be nested like (('field1', 'field2'),) - extract properly
+        if raw_names and isinstance(raw_names[0], tuple):
+            self.field_names = list(raw_names[0])
+        else:
+            self.field_names = list(raw_names) if raw_names else None
+
+        # Create model with num_channels
+        self.model = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
+
+        # Get static fields from model to determine which are dynamic
+        self.static_fields = self.model.static_fields if hasattr(self.model, 'static_fields') else []
+        self.dynamic_fields = [f for f in self.field_names if f not in self.static_fields]
+        logger.info(f"Loaded sample data: {num_channels} channels, fields={self.field_names}")
+        logger.info(f"Dynamic fields (will be visualized): {self.dynamic_fields}")
 
         # Load checkpoint using PhiML's load method
         checkpoint_path = Path(self.eval_config['synthetic_checkpoint'])
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        
+
         self.model.load(str(checkpoint_path))
 
         logger.info(f"Loaded PhiML model from {checkpoint_path}")
@@ -113,14 +134,15 @@ class Evaluator:
         # Create visualizations
         self._create_comparison_animation(sim_idx, real_data, generated_data)
 
-    def _load_real_trajectory(self, sim_idx: int) -> Dict[str, Any]:
+    def _load_real_trajectory(self, sim_idx: int) -> Tensor:
         """
         Load real trajectory from data using PhiML.
 
         Returns:
-            Dict mapping field names to PhiML tensors/Fields with time dimension
+            Unified tensor: Tensor(time, x, y?, field)
         """
         import os
+        from phi.math import Tensor
 
         # Load simulation using PhiML's math.load
         sim_path = os.path.join(self.data_dir, f"sim_{sim_idx:04d}.npz")
@@ -129,59 +151,42 @@ class Evaluator:
 
         sim_data = math.load(sim_path)
 
-        logger.debug(f"Loaded simulation {sim_idx} from {sim_path}")
+        logger.debug(f"Loaded simulation {sim_idx} from {sim_path}, shape={sim_data.shape}")
         return sim_data
     
-    def generate_predictions(self, sim_data: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_predictions(self, sim_data: Tensor) -> Tensor:
         """
-        Generate autoregressive predictions from initial state using PhiML tensors.
+        Generate autoregressive predictions from initial state using unified tensors.
 
         Args:
-            sim_data: Dict mapping field names to PhiML tensors/Fields with time dimension
-                     Format: {'velocity': Tensor/Field[time, x, y, vector], ...}
+            sim_data: Unified tensor with shape (time, x, y?, field)
 
         Returns:
-            Dict mapping field names to predicted trajectories (PhiML tensors)
-            Format: {'velocity': Tensor[time, x, y, vector], ...}
+            Predicted trajectory as unified tensor (time, x, y?, field)
         """
+        from phi.math import Tensor
+
         logger.info("Generating predictions...")
 
-        # Get the number of timesteps from the first field
-        first_field = sim_data[self.field_names[0]]
-        if isinstance(first_field, Field):
-            num_steps = first_field.shape.get_size('time')
-            # Extract initial state (t=0) from each field
-            initial_state = {
-                field_name: sim_data[field_name].time[0].values
-                for field_name in self.field_names
-            }
-        else:
-            # Already a tensor
-            num_steps = first_field.shape.get_size('time')
-            initial_state = {
-                field_name: sim_data[field_name].time[0]
-                for field_name in self.field_names
-            }
+        # Get the number of timesteps from tensor shape
+        num_steps = sim_data.shape.get_size('time')
+
+        # Extract initial state (t=0) - unified tensor
+        initial_state = sim_data.time[0]
 
         # Generate predictions autoregressively
-        # Note: We predict num_steps - 1 because initial_state is already t=0
         current_state = initial_state
         predictions = [initial_state]  # Start with initial state at t=0
 
         for step in range(num_steps - 1):  # Predict remaining timesteps
-            # Predict next state (dict of PhiML tensors)
+            # Predict next state (unified tensor)
             next_state = self.model(current_state)
             predictions.append(next_state)
             current_state = next_state
 
         # Stack predictions along time dimension
-        prediction_trajectory = {}
-        for field_name in self.field_names:
-            # Stack all timesteps: [time, x, y, vector]
-            prediction_trajectory[field_name] = math.stack(
-                [pred[field_name] for pred in predictions],
-                math.batch('time')
-            )
+        # expand_values=True handles dimension mismatches from native_call output
+        prediction_trajectory = math.stack(predictions, math.batch('time'), expand_values=True)
 
         logger.info(f"Generated {num_steps} timesteps (including initial state)")
         return prediction_trajectory
@@ -190,46 +195,37 @@ class Evaluator:
     def _create_comparison_animation(
         self,
         sim_idx: int,
-        real_data: Dict[str, Any],
-        generated_data: Dict[str, Any]
+        real_data: Tensor,
+        generated_data: Tensor
     ):
         """
         Create comparison animation using PhiFlow's visualization.
 
         Args:
             sim_idx: Simulation index
-            real_data: Dict of real trajectories (PhiML tensors/Fields)
-            generated_data: Dict of generated trajectories (PhiML tensors)
+            real_data: Unified tensor (time, x, y?, field)
+            generated_data: Unified tensor (time, x, y?, field)
         """
         from phi.math import spatial, batch, channel
         from phi.geom import Box
 
-        # Get domain and resolution from config
+        # Only visualize dynamic fields (static fields don't change)
+        for i, field_name in enumerate(self.dynamic_fields):
+            logger.info(f"Creating visualization for dynamic field: {field_name}")
 
+            # Get real and generated data for this field using field dimension
+            real_field_data = real_data.field[field_name]
+            gen_field_data = generated_data.field[field_name]
 
-        # Process each field
-        for field_name in self.field_names:
-            logger.info(f"Creating visualization for field: {field_name}")
-
-            # Get real and generated data for this field
-            real_field_data = real_data[field_name]
-            gen_field_data = generated_data[field_name]
-
-            # Check if this is a vector field (velocity)
-            if 'vector' in real_field_data.shape.names:
-                
-
-                real_viz = real_field_data.vector[0]
-                gen_viz = gen_field_data.vector[0]
-            else:
-                # For scalar fields, use directly
-                real_viz = real_field_data
-                gen_viz = gen_field_data
+            # Use data directly (already scalar after field selection)
+            real_viz = real_field_data
+            gen_viz = gen_field_data
 
             # Limit the max values for better visualization
             max_real = math.max(real_viz)
             min_real = math.min(real_viz)
             gen_viz = math.clip(gen_viz, min_real, max_real)
+
             # Create animation
             plot({
                 'Real': real_viz.time[0],

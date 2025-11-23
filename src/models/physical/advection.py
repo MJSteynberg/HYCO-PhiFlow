@@ -1,190 +1,149 @@
-# src/models/physical/advection.py
+"""Advection model using unified field channel dimension."""
 
-from typing import Dict, Any, Union
-import numpy as np
+from typing import Dict, Any, Tuple
 
-# --- PhiFlow Imports ---
 from phi.torch.flow import *
 from phi.math import Shape, Tensor, batch, math
+from phi.field import AngularVelocity
+from phiml.math import channel
 
-# --- Repo Imports ---
 from .base import PhysicalModel
 from src.models import ModelRegistry
 
 
-
-@jit_compile
-def _advection_step(
-    density: CenteredGrid, velocity: CenteredGrid, advection_coeff: CenteredGrid, dt: float
-) -> CenteredGrid:
-    """
-    Performs one step of pure advection using semi-Lagrangian method.
-
-    Args:
-        density (CenteredGrid): The current density field.
-        velocity (CenteredGrid): The prescribed velocity field (vector-valued).
-        advection_coeff (Tensor): Coefficient to scale the velocity field.
-        dt (float): The time step.
-
-    Returns:
-        CenteredGrid: The density field at the next time step.
-    """
-    # Scale velocity by advection coefficient
-    velocity_new = velocity * advection_coeff
-    return advect.semi_lagrangian(density, velocity_new, dt=dt), velocity, advection_coeff
-
-
 @ModelRegistry.register_physical("AdvectionModel")
 class AdvectionModel(PhysicalModel):
-    """
-    Physical model for pure advection with a donut shaped velocity field.
-    The density is transported by a donut shaped velocity field,
-    scaled by a learnable advection coefficient.
-    """
+    """Advection model with static velocity and dynamic density."""
 
-    def __init__(self, config: dict):
-        """Initialize the advection model."""
-        super().__init__(config)
-        pde_params = config["model"]["physical"]["pde_params"]
-        self._initialize_fields(pde_params)
+    def __init__(self, config: dict, downsample_factor: int = 0):
+        super().__init__(config, downsample_factor)
 
-    def _initialize_fields(self, pde_params: Dict[str, Any]):
-        """Initialize model fields from PDE parameters."""
-        def f(x, y):
-            return eval(pde_params['value'], {'x':x, 'y':y, 'math': math, 'size_x': self.domain.size[0], 'size_y': self.domain.size[1]})
-        
-        self._initialize_advection_field(f)
-
-    def _initialize_advection_field(self, value):
-        """Initialize advection_coeff as a CenteredGrid field."""
-        
-        self._advection_coeff = CenteredGrid(
-            value,
-            extrapolation=extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
-            bounds=self.domain,
-        )
+        self._advection_coeff = float(eval(config["model"]["physical"]["pde_params"]["value"]))
+        self._velocity_field = self._create_velocity_field()
+        self._jit_step = self._create_jit_step()
 
     @property
-    def advection_coeff(self) -> CenteredGrid:
-        """Get the advection coefficient field."""
+    def static_field_names(self) -> Tuple[str, ...]:
+        if self.n_spatial_dims == 2:
+            return ('vel_x', 'vel_y')
+        return ('vel_x',)
+
+    @property
+    def dynamic_field_names(self) -> Tuple[str, ...]:
+        return ('density',)
+
+    @property
+    def field_names(self) -> Tuple[str, ...]:
+        return self.dynamic_field_names + self.static_field_names
+
+    @property
+    def advection_coeff(self) -> float:
         return self._advection_coeff
 
     @advection_coeff.setter
-    def advection_coeff(self, value: Any):
-        """Set the advection coefficient field."""
-        if isinstance(value, Field):
-            self._advection_coeff = value
+    def advection_coeff(self, value: float):
+        self._advection_coeff = float(value)
+        self._jit_step = self._create_jit_step()
+
+    @property
+    def velocity_field(self) -> CenteredGrid:
+        return self._velocity_field
+
+    def _create_velocity_field(self) -> CenteredGrid:
+        """Create velocity field using AngularVelocity with ring falloff."""
+        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+
+        if self.n_spatial_dims == 2:
+            # Create location tensor with proper spatial dimension names
+            center_values = [float(self.domain[i].size) / 2 for i in range(2)]
+            vector_names = ','.join(self.spatial_dims)
+            center = math.tensor(center_values, channel(vector=vector_names))
+
+            # Ring parameters based on domain size
+            domain_size = float(self.domain[0].size)
+            ring_radius = domain_size * 0.3  # Ring at 30% of domain size
+            ring_width = domain_size * 0.15  # Width of the ring
+
+            def ring_falloff(distances):
+                """Ring-like falloff: velocity peaks at ring_radius."""
+                r = math.vec_length(distances)
+                return math.exp(-((r - ring_radius) / ring_width) ** 2)
+
+            angular_vel = AngularVelocity(location=center, strength=1.0, falloff=ring_falloff)
+            return CenteredGrid(
+                angular_vel,
+                extrapolation.PERIODIC,
+                bounds=self.domain,
+                **grid_kwargs
+            )
         else:
-            self._initialize_advection_field(value)
+            def velocity_fn(x):
+                size_x = float(self.domain[0].size)
+                vx = 0.5 + 0.1 * math.sin(2 * math.pi * x / size_x)
+                return math.stack([vx], channel("vector"))
+            return CenteredGrid(velocity_fn, PERIODIC, bounds=self.domain, **grid_kwargs)
 
-    def get_initial_state(self, batch_size: int = 1) -> Dict[str, Field]:
-        """
-        Returns a batched initial state with density and static velocity field.
+    def _create_jit_step(self):
+        """Create JIT-compiled physics step."""
+        domain = self.domain
+        dt = self.dt
+        advection_coeff = self._advection_coeff
+        velocity_field = self._velocity_field
+        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+        static_names = self.static_field_names
 
-        The velocity field is created once here and will be passed through
-        the state dictionary to each step.
-        """
-        # Create a batch shape
-        b = batch(batch=batch_size)
+        @jit_compile
+        def advection_step(state: Tensor) -> Tensor:
+            # Extract density from field channel
+            density_tensor = state.field['density']
+            density_grid = CenteredGrid(density_tensor, PERIODIC, bounds=domain, **grid_kwargs)
 
-        # Create a nice swirling/rotating velocity field
-        def velocity_fn(x, y):
-            # Vortex-like pattern: velocity vector depends on position
-            center_x = self.domain.size[0] / 2
-            center_y = self.domain.size[1] / 2
-            dy = y - center_y
-            dx = x - center_x
-            r = math.sqrt(dx**2 + dy**2 + 1e-6)
+            # Advect density
+            scaled_velocity = velocity_field * advection_coeff
+            density_grid = advect.semi_lagrangian(density_grid, scaled_velocity, dt=dt)
 
-            # Circular flow with some variation
-            vx = -dy * math.exp(
-                -(r**2) / (0.2 * self.domain.size[0]) ** 2
-            ) + 0.2 * math.sin(2 * math.pi * y / self.domain.size[1])
-            vy = dx * math.exp(
-                -(r**2) / (0.2 * self.domain.size[0]) ** 2
-            ) + 0.2 * math.cos(2 * math.pi * x / self.domain.size[0])
+            # Create output with field channel
+            density_out = math.expand(density_grid.values, channel(field='density'))
 
-            return math.stack([vx, vy], channel("vector"))
+            # Extract and preserve static fields
+            static = math.stack(
+                [state.field[n] for n in static_names],
+                channel(field=','.join(static_names))
+            )
 
-        # Random line through two random points
-        x1 = np.random.uniform(0.2 * self.domain.size[0], 0.8 * self.domain.size[0])
-        y1 = np.random.uniform(0.2 * self.domain.size[1], 0.8 * self.domain.size[1])
-        x2 = np.random.uniform(0.2 * self.domain.size[0], 0.8 * self.domain.size[0])
-        y2 = np.random.uniform(0.2 * self.domain.size[1], 0.8 * self.domain.size[1])
+            return math.concat([density_out, static], 'field')
 
-        # Line direction vector
-        dx_line = x2 - x1
-        dy_line = y2 - y1
-        line_length = np.sqrt(dx_line**2 + dy_line**2)
+        return advection_step
 
-        # Normal vector to the line (perpendicular)
-        nx = -dy_line / line_length
-        ny = dx_line / line_length
+    def get_initial_state(self, batch_size: int = 1) -> Tensor:
+        """Generate initial state with density and velocity fields."""
+        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
 
-        def density_fn(x, y):
-            # Signed distance from point (x,y) to the line
-            signed_distance = (x - x1) * nx + (y - y1) * ny
-            steepness = 10.0 / max(self.domain.size[0], self.domain.size[1])
-            return math.tanh(steepness * signed_distance)
-
-        # Create CenteredGrid for velocity with vector values
-        velocity_0 = CenteredGrid(
-            velocity_fn,
-            extrapolation=extrapolation.PERIODIC,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
+        # Random density
+        density_grid = CenteredGrid(
+            Noise(scale=30.0, smoothness=5.0),
+            extrapolation.PERIODIC,
             bounds=self.domain,
+            **grid_kwargs
         )
-        velocity_0 = math.expand(velocity_0, b)
+        density_grid = math.tanh(2 * density_grid)
+        density = math.expand(density_grid.values, batch(batch=batch_size))
+        density = math.expand(density, channel(field='density'))
 
-        # Create density field with smooth tanh transition
-        density_0 = CenteredGrid(
-            density_fn,
-            extrapolation=extrapolation.ZERO_GRADIENT,
-            x=self.resolution.get_size("x"),
-            y=self.resolution.get_size("y"),
-            bounds=self.domain,
-        )
-        density_0 = math.expand(density_0, b)
+        # Velocity from pre-computed field
+        vel_values = self._velocity_field.values
+        static_names = ','.join(self.static_field_names)
+        velocity = math.rename_dims(vel_values, 'vector', channel(field=static_names))
+        velocity = math.expand(velocity, batch(batch=batch_size))
 
-        return {"density": density_0, "velocity": velocity_0}
-    
-    def rollout(self, initial_state, num_steps):
-        """
-        Perform multiple simulation steps starting from the initial state.
+        return math.concat([density, velocity], 'field')
 
-        Args:
-            initial_state: Dictionary containing initial 'density' and 'velocity' fields.
-            num_steps: Number of simulation steps to perform.
-        Returns:
-            List of states at each timestep.
-        """
-        density_trj, velocity_trj, _ = iterate(_advection_step, batch(time=num_steps), initial_state["density"], initial_state["velocity"], self.advection_coeff, dt = self.dt)
-        return {"density": density_trj, "velocity": velocity_trj}
+    def forward(self, state: Tensor) -> Tensor:
+        return self._jit_step(state)
 
-    def forward(self, current_state: Dict[str, Field]) -> Dict[str, Field]:
-        """
-        Performs a single simulation step using pure advection.
-
-        Args:
-            current_state: Dictionary containing 'density' and 'velocity' fields.
-
-        Returns:
-            Dictionary with updated 'density' and unchanged 'velocity'.
-        """
-
-        batch_size = current_state["density"].shape.get_size("batch")
-        advection_coeff_batched = math.expand(
-            self.advection_coeff, 
-            batch(batch=batch_size)
-        )
-        
-        new_density, new_velocity, _ = _advection_step(
-            density=current_state["density"],
-            velocity=current_state["velocity"],
-            advection_coeff=advection_coeff_batched,
-            dt=self.dt,
-        )
-        return {"density": new_density, "velocity": new_velocity}
+    def rollout(self, initial_state: Tensor, num_steps: int) -> Tensor:
+        """Rollout simulation for multiple steps."""
+        trajectory = iterate(self._jit_step, batch(time=num_steps), initial_state)
+        if isinstance(trajectory, tuple):
+            trajectory = trajectory[0]
+        return trajectory

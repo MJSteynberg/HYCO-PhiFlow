@@ -44,12 +44,13 @@ class TrainerFactory:
         return ["synthetic", "physical", "hybrid"]
 
     @staticmethod
-    def create_trainer(config: Dict[str, Any]) -> AbstractTrainer:
+    def create_trainer(config: Dict[str, Any], num_channels: int = None) -> AbstractTrainer:
         """
         Create trainer from config with Phase 1 API.
 
         Args:
             config: Configuration dictionary
+            num_channels: Number of channels (required for synthetic, from dataset.num_channels)
 
         Returns:
             Trainer instance (AbstractTrainer subclass)
@@ -60,31 +61,32 @@ class TrainerFactory:
         model_type = config["general"]["mode"]
         # Create trainer based on type
         if model_type == "synthetic":
-            return TrainerFactory._create_synthetic_trainer(config)
+            if num_channels is None:
+                raise ValueError("num_channels is required for synthetic training")
+            return TrainerFactory._create_synthetic_trainer(config, num_channels)
         elif model_type == "physical":
             return TrainerFactory._create_physical_trainer(config)
         elif model_type == "hybrid":
-            return TrainerFactory.create_hybrid_trainer(config)
+            return TrainerFactory.create_hybrid_trainer(config, num_channels)
         else:
             raise ValueError(f"Unknown model_type '{model_type}'")
 
     @staticmethod
-    def _create_synthetic_trainer(config: Dict[str, Any]) -> SyntheticTrainer:
+    def _create_synthetic_trainer(config: Dict[str, Any], num_channels: int) -> SyntheticTrainer:
         """
-        Create PhiMLSyntheticTrainer with external model.
-
-        Now uses PhiML trainer which supports both PyTorch and PhiML models.
+        Create SyntheticTrainer with external model.
 
         Args:
             config: Full configuration dictionary
+            num_channels: Number of input/output channels (from dataset.num_channels)
 
         Returns:
-            PhiMLSyntheticTrainer instance
+            SyntheticTrainer instance
         """
-        # Create model externally
-        model = ModelFactory.create_synthetic_model(config)
+        # Create model with num_channels from dataset
+        model = ModelFactory.create_synthetic_model(config, num_channels=num_channels)
 
-        # Create PhiML trainer with model (auto-detects model type)
+        # Create trainer with model
         trainer = SyntheticTrainer(config, model)
 
         return trainer
@@ -112,21 +114,32 @@ class TrainerFactory:
         return trainer
 
     @staticmethod
-    def create_hybrid_trainer(config: Dict[str, Any]):
+    def create_hybrid_trainer(config: Dict[str, Any], num_channels: int = None):
         """
         Create a hybrid trainer that alternates between synthetic and physical training.
 
         Args:
             config: Full configuration dictionary
+            num_channels: Number of channels (from dataset.num_channels). If None, will
+                          be inferred by creating a dataset.
 
         Returns:
             HybridTrainer instance configured with both models
         """
-        # Create synthetic model
-        synthetic_model = ModelFactory.create_synthetic_model(config)
+        # Get num_channels from dataset if not provided
+        if num_channels is None:
+            dataset = DataLoaderFactory.create_phiml(
+                config, sim_indices=config['trainer']['train_sim']
+            )
+            num_channels = dataset.num_channels
 
-        # Create physical model and learnable parameters
+        # Create physical model first (needed for 'auto' static_fields inference)
         physical_model = ModelFactory.create_physical_model(config)
+
+        # Create synthetic model (can infer static_fields from physical model if config says 'auto')
+        synthetic_model = ModelFactory.create_synthetic_model(
+            config, num_channels=num_channels, physical_model=physical_model
+        )
 
         # Create hybrid trainer
         hybrid_trainer = HybridTrainer(

@@ -1,115 +1,121 @@
-"""
-PhiML-native synthetic model base class.
-Models work entirely with PhiML tensors (no PyTorch dependency).
-"""
+"""PhiML synthetic model base class using field channel with static field separation."""
 
-from phiml import math, Tensor, nn
+from phiml import math, nn
+from phi.math import Tensor
 from phiml.math import channel
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 class SyntheticModel:
     """
     Base class for synthetic models using pure PhiML.
-    No torch.nn.Module inheritance.
+
+    Uses a single 'field' channel dimension with item names.
+    Static fields (specified by name) are passed through unchanged.
+    Dynamic fields are predicted by the network.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        num_channels: int,
+        static_fields: Optional[List[str]] = None
+    ):
         self.config = config
+        self.num_channels = num_channels
+        self.static_fields = static_fields or []
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Parse configuration
-        self._parse_config(config)
+        self.num_static = len(self.static_fields)
+        self.num_dynamic = num_channels - self.num_static
 
         self.logger.info(
             f"Initializing {self.__class__.__name__}: "
-            f"{self.num_dynamic_channels} dynamic, {self.num_static_channels} static channels"
+            f"{self.num_dynamic} dynamic, {self.num_static} static channels"
         )
 
-        # Network will be set by subclasses
-        self.network = None
+        self._network = None
 
-    def _parse_config(self, config: Dict[str, Any]):
+    @property
+    def network(self):
+        return self._network
+
+    @network.setter
+    def network(self, value):
+        self._network = value
+
+    def __call__(self, state: Tensor) -> Tensor:
         """
-        Parse configuration dictionary to setup model.
+        Forward pass predicting next state.
+
+        Extracts dynamic fields, passes through network, recombines with static.
         """
-        # Calculate input/output specs from fields scheme
-        self.input_specs = {
-            field: config['data']['fields_scheme'].lower().count(field[0].lower())
-            for field in config['data']['fields'] if field
-        }
+        if not self.static_fields:
+            # No static fields - pass entire state through network
+            # Extract field names to restore after network call
+            field_names = state.shape['field'].item_names
+            if isinstance(field_names[0], tuple):
+                field_names = field_names[0]
 
-        self.output_specs = {
-            field: config['data']['fields_scheme'].lower().count(field[0].lower())
-            for i, field in enumerate(config['data']['fields'])
-            if field and config['data']['fields_type'][i].upper() == 'D'
-        }
+            predicted = math.native_call(self._network, state)
 
-        # Calculate channel counts
-        self.num_dynamic_channels = sum(self.output_specs.values())
-        self.num_static_channels = sum(self.input_specs.values()) - self.num_dynamic_channels
-        self.total_channels = sum(self.input_specs.values())
+            # Restore field dimension name if needed
+            if 'field' not in predicted.shape.names:
+                channel_dim = predicted.shape.channel
+                if channel_dim:
+                    predicted = math.rename_dims(
+                        predicted,
+                        channel_dim.name,
+                        channel(field=','.join(field_names))
+                    )
+            return predicted
 
-    def __call__(self, x: Dict[str, Tensor]) -> Dict[str, Tensor]:
-        """
-        Forward pass predicting next state directly.
+        # Extract field names from tensor
+        field_names = state.shape['field'].item_names
+        if isinstance(field_names[0], tuple):
+            field_names = field_names[0]
 
-        Args:
-            x: Dictionary mapping field names to PhiML Tensors
-               Example: {'velocity': Tensor(batch?, x, vector)}
+        # Separate dynamic and static fields
+        dynamic_names = [f for f in field_names if f not in self.static_fields]
 
-        Returns:
-            Dictionary mapping field names to predicted next state
-        """
-        field_order = list(self.input_specs.keys())
-        field_tensors = [x[field_name] for field_name in field_order]
-        concatenated = math.concat(field_tensors, 'vector')
+        # Extract and stack dynamic fields
+        dynamic_state = math.stack(
+            [state.field[name] for name in dynamic_names],
+            channel(field=','.join(dynamic_names))
+        )
 
-        # Rename vector -> channel for network (U-Net expects 'channel' dimension)
-        network_input = math.rename_dims(concatenated, 'vector', 'channel')
+        # Predict dynamic fields
+        predicted_dynamic = math.native_call(self._network, dynamic_state)
 
-        # Case 1: All fields are dynamic (no static fields)
-        if self.num_static_channels == 0:
-            # Predict next state directly
-            predicted = math.native_call(self.network, network_input)
-        else:
-            # Case 2: Some fields are static
-            dynamic = network_input.channel[0:self.num_dynamic_channels]
-            static = network_input.channel[self.num_dynamic_channels:self.total_channels]
+        # Restore field dimension name after network (network may output generic channel dim)
+        if 'field' not in predicted_dynamic.shape.names:
+            # Network output has a generic channel dimension - rename it to field
+            channel_dim = predicted_dynamic.shape.channel
+            if channel_dim:
+                predicted_dynamic = math.rename_dims(
+                    predicted_dynamic,
+                    channel_dim.name,
+                    channel(field=','.join(dynamic_names))
+                )
+            else:
+                # No channel dim - expand with field
+                predicted_dynamic = math.expand(
+                    predicted_dynamic,
+                    channel(field=','.join(dynamic_names))
+                )
 
-            predicted_dynamic = math.native_call(self.network, dynamic)
-            predicted = math.concat([predicted_dynamic, static], 'channel')
+        # Extract and stack static fields
+        static_state = math.stack(
+            [state.field[name] for name in self.static_fields],
+            channel(field=','.join(self.static_fields))
+        )
 
-        # Ensure channel dimension exists (network might drop it if size=1)
-        if 'channel' not in predicted.shape.names:
-            # Network dropped the channel dimension - add it back
-            # Get the original channel shape from input
-            original_channel_shape = network_input.shape.only('channel')
-            # Add the channel dimension back using merge_shapes
-            predicted = math.expand(predicted, original_channel_shape)
-
-        # Rename channel -> vector for output
-        predicted = math.rename_dims(predicted, 'channel', 'vector')
-
-        # Split back into separate fields
-        output_dict = {}
-        channel_idx = 0
-        for field_name in field_order:
-            num_channels = self.input_specs[field_name]
-            output_dict[field_name] = predicted.vector[channel_idx:channel_idx + num_channels]
-            channel_idx += num_channels
-
-        return output_dict
-
-    def get_network(self):
-        """Get the underlying network (for optimization)"""
-        return self.network
+        # Recombine: dynamic first, then static
+        return math.concat([predicted_dynamic, static_state], 'field')
 
     def save(self, path: str):
-        """Save network parameters"""
-        nn.save_state(self.network, path)
+        nn.save_state(self._network, path)
 
     def load(self, path: str):
-        """Load network parameters"""
-        nn.load_state(self.network, path)
+        nn.load_state(self._network, path)

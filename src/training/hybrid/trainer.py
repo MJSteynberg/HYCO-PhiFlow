@@ -1,13 +1,4 @@
-"""
-REFACTORED HybridTrainer - PhiFlow/PhiML Unified Interface
-
-Key Changes:
-- Uses unified Dataset class with PhiML tensors
-- No PyTorch DataLoader - uses Dataset.iterate_batches() directly
-- Uses set_augmented_trajectories() for both physical → synthetic and synthetic → physical
-- Field to tensor conversion using .values property
-- Clean separation of concerns with access_policy
-"""
+"""Hybrid trainer alternating between physical and synthetic model training."""
 
 import torch
 import torch.nn as nn
@@ -20,24 +11,16 @@ from contextlib import contextmanager
 from src.training.abstract_trainer import AbstractTrainer
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
-from src.utils.logger import get_logger, logging
+from src.utils.logger import get_logger
 from phi.math import Tensor
 from phi.flow import Field
-from src.data.dataset import Dataset
+from src.data.dataset import Dataset, AccessPolicy
 
 logger = get_logger(__name__)
 
 
 class HybridTrainer(AbstractTrainer):
-    """
-    Hybrid trainer using PhiFlow/PhiML unified interface.
-
-    Training Flow:
-    1. Physical model generates trajectories (Fields) → Dataset augmentation via .values
-    2. Synthetic model trains on real + physical trajectories (PhiML tensors)
-    3. Synthetic model generates predictions (tensors) → Dataset augmentation
-    4. Physical model trains on real + synthetic predictions (converted to Fields in trainer)
-    """
+    """Alternates between physical rollout generation and synthetic model training."""
 
     def __init__(
         self,
@@ -82,7 +65,8 @@ class HybridTrainer(AbstractTrainer):
         # Data config
         self.train_sim = config['trainer']['train_sim']
         self.alpha = config['trainer']["hybrid"]["augmentation"]['alpha']
-        self.field_names = config['data']['fields']
+        # field_names will be set after dataset initialization
+        self.field_names = None
         self.batch_size = config['trainer']['batch_size']
         self.trajectory_length = config['data']['trajectory_length']
 
@@ -114,9 +98,12 @@ class HybridTrainer(AbstractTrainer):
             train_sim=self.train_sim,
             rollout_steps=max_rollout_steps
         )
+        # Get field_names from dataset (tensor shape is self-describing)
+        self.field_names = list(self._base_dataset.field_names)
         logger.info(
             f"Initialized dataset with {len(self._base_dataset)} samples "
-            f"(physical_rollout={self.physical_rollout_steps}, synthetic_rollout={self.synthetic_rollout_steps})"
+            f"(physical_rollout={self.physical_rollout_steps}, synthetic_rollout={self.synthetic_rollout_steps}), "
+            f"fields={self.field_names}"
         )
 
     def train(self):
@@ -143,7 +130,7 @@ class HybridTrainer(AbstractTrainer):
         logger.info(f"Running warmup for {self.warmup} epochs...")
 
         # Set dataset to use only real data
-        self._base_dataset.access_policy = "real_only"
+        self._base_dataset.access_policy = AccessPolicy.REAL_ONLY
 
         # Train synthetic model directly with dataset
         self.synthetic_trainer.train(
@@ -175,7 +162,7 @@ class HybridTrainer(AbstractTrainer):
 
         # Phase 4: Add to dataset and train physical model
         logger.debug("Phase 4: Training physical model on synthetic predictions...")
-        self._base_dataset.set_augmented_predictions(synthetic_predictions)
+        self._base_dataset.set_augmented_trajectories(synthetic_predictions)
         physical_loss = self._train_physical_model()
 
         # Cleanup
@@ -332,7 +319,6 @@ class HybridTrainer(AbstractTrainer):
             result = self.physical_trainer.train(
                 dataset=self._base_dataset,
                 num_epochs=self.physical_epochs,
-                batch_size=self.batch_size,  # Physical models often use batch_size=1
                 verbose=False
             )
 
@@ -349,20 +335,20 @@ class HybridTrainer(AbstractTrainer):
         """
         return self._base_dataset.num_real_samples
     
-    def _get_access_policy(self, for_synthetic: bool) -> str:
+    def _get_access_policy(self, for_synthetic: bool) -> AccessPolicy:
         """Determine data access policy based on configuration."""
         if for_synthetic:
             # Synthetic model training
             if self.real_data_access in ["both", "synthetic_only"]:
-                return "both"  # Use real + physical trajectories
+                return AccessPolicy.BOTH  # Use real + physical trajectories
             else:
-                return "generated_only"  # Only physical trajectories
+                return AccessPolicy.GENERATED_ONLY  # Only physical trajectories
         else:
             # Physical model training
             if self.real_data_access in ["both", "physical_only"]:
-                return "both"  # Use real + synthetic predictions
+                return AccessPolicy.BOTH  # Use real + synthetic predictions
             else:
-                return "generated_only"  # Only synthetic predictions
+                return AccessPolicy.GENERATED_ONLY  # Only synthetic predictions
     
     @staticmethod
     @contextmanager
@@ -385,20 +371,12 @@ class HybridTrainer(AbstractTrainer):
     
     def _save_if_best(self, synthetic_loss: float, physical_loss: float):
         """Save checkpoints if losses improved."""
-        # Save synthetic model if improved
         if synthetic_loss < self.best_synthetic_loss:
             self.best_synthetic_loss = synthetic_loss
-            self.synthetic_trainer.save_checkpoint(
-                epoch=self.current_cycle,
-                loss=synthetic_loss
-            )
+            self.synthetic_trainer.save_checkpoint(epoch=self.current_cycle, loss=synthetic_loss)
             logger.debug(f"Saved best synthetic model: loss={synthetic_loss:.6f}")
 
-        # Save physical model if improved
         if physical_loss < self.best_physical_loss:
             self.best_physical_loss = physical_loss
-            self.physical_trainer.save_checkpoint(
-                epoch=self.current_cycle,
-                loss=physical_loss
-            )
+            self.physical_trainer.save_checkpoint()
             logger.debug(f"Saved best physical model: loss={physical_loss:.6f}")

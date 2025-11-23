@@ -6,9 +6,6 @@ general:
 data:
   data_dir: 'data/hydrogen'
   dset_name: 'hydrogen'
-  fields: ['velocity']
-  fields_scheme: 'vv'
-  fields_type: 'DD'
   num_simulations: 1
   trajectory_length: 100
 

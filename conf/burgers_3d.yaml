@@ -6,9 +6,6 @@ general:
 data:
   data_dir: 'data/burgers'
   dset_name: 'burgers_128_3d'
-  fields: ['velocity']
-  fields_scheme: 'vvv'
-  fields_type: 'DDD'
   num_simulations: 5
   trajectory_length: 100
 

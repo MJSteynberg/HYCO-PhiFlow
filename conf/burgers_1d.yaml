@@ -1,14 +1,11 @@
 general: 
   experiment_name: 'burgers_experiment'
   mode: 'synthetic' # Options: 'physical', 'physical', 'hybrid'
-  tasks: ['train', 'evaluate']
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/burgers'
   dset_name: 'burgers_128_1d'
-  fields: ['velocity']
-  fields_scheme: 'v'
-  fields_type: 'D'
   num_simulations: 5
   trajectory_length: 100
 
@@ -25,8 +22,8 @@ model:
     dt: 0.5
     pde_params:
       name: 'diffusion_coeff'
-      type: 'field'
-      value: '0.5 * (x/size_x)**3'  # Initial value expression
+      type: 'scalar'
+      value: '0.5'  # Scalar diffusion coefficient
   synthetic:
     name: 'UNet'  # Changed to PhiML version
     model_path: 'results/models'

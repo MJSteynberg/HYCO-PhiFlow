@@ -6,9 +6,6 @@ general:
 data:
   data_dir: 'data/burgers'
   dset_name: 'burgers_128_2d'
-  fields: ['velocity']
-  fields_scheme: 'vv'
-  fields_type: 'DD'
   num_simulations: 5
   trajectory_length: 100
 
@@ -25,8 +22,8 @@ model:
     dt: 0.5
     pde_params:
       name: 'diffusion_coeff'
-      type: 'field'
-      value: '0.5 * (x/size_x + y/size_y)**3'  # Initial value expression
+      type: 'scalar'
+      value: '0.5'  # Scalar diffusion coefficient
   synthetic:
     name: 'UNet'  # Changed to PhiML version
     model_path: 'results/models'
@@ -37,13 +34,13 @@ model:
       batch_norm: false  # Disable batch norm - can cause artifacts in 1D
 
 trainer:
-  batch_size: 64  # Smaller batch to see individual samples
-  rollout_steps: 4  # Single-step to debug
+  batch_size: 32  # Smaller batch to see individual samples
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
-  physical: 
+  physical:
     epochs: 1
+    rollout_steps: 4  # Rollout steps for physical model training
     downsample_factor: 0 # 2^downsample_factor reduction in resolution for physical model training
     learnable_parameters:
       - name: 'diffusion_coeff'
@@ -54,7 +51,8 @@ trainer:
     max_iterations: 5
   synthetic:
     epochs: 10000  # Faster iteration for debugging
-    learning_rate: 0.00001 
+    rollout_steps: 4  # Rollout steps for synthetic model training
+    learning_rate: 0.00001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0

@@ -27,15 +27,10 @@ class DataLoaderFactory:
     - Works with both physical and synthetic trainers
 
     Example:
-        >>> # Create dataset for training
-        >>> dataset = DataLoaderFactory.create_phiml(
-        ...     config,
-        ...     sim_indices=[0, 1, 2],
-        ...     rollout_steps=10
-        ... )
+        >>> dataset = DataLoaderFactory.create_phiml(config, sim_indices=[0, 1, 2], rollout_steps=10)
         >>> for batch in dataset.iterate_batches(batch_size=16):
-        ...     # batch['initial_state']: Tensor(batch=B, x=H, y=W, vector=V)
-        ...     # batch['targets']: Tensor(batch=B, time=T, x=H, y=W, vector=V)
+        ...     # batch.initial_state: Tensor(batch, x, y?, field)
+        ...     # batch.targets: Tensor(batch, time, x, y?, field)
         ...     pass
     """
     @staticmethod
@@ -68,14 +63,10 @@ class DataLoaderFactory:
             Dataset instance that yields PhiML tensor batches
 
         Example:
-            >>> dataset = DataLoaderFactory.create_phiml(
-            ...     config,
-            ...     sim_indices=[0, 1, 2],
-            ...     rollout_steps=10
-            ... )
+            >>> dataset = DataLoaderFactory.create_phiml(config, sim_indices=[0, 1, 2], rollout_steps=10)
             >>> for batch in dataset.iterate_batches(batch_size=16):
-            ...     # batch['initial_state']: Tensor(batch=B, x=H, y=W, vector=V)
-            ...     # batch['targets']: Tensor(batch=B, time=T, x=H, y=W, vector=V)
+            ...     # batch.initial_state: Tensor(batch, x, y?, field)
+            ...     # batch.targets: Tensor(batch, time, x, y?, field)
             ...     pass
         """
         logger.debug("Creating simplified PhiML dataset...")

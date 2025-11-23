@@ -1,14 +1,11 @@
 general: 
   experiment_name: 'advection_experiment'
-  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['train', 'evaluate']
+  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/advection'
   dset_name: 'advection'
-  fields: ['density', 'velocity']
-  fields_scheme: 'dvv'
-  fields_type: 'DSS'
   num_simulations: 6
   trajectory_length: 100
 
@@ -17,43 +14,46 @@ model:
     name: 'AdvectionModel'
     model_path: 'results/models'
     model_save_name: 'advection_physical_model'
-    domain: 
-      size_x: 100
-      size_y: 100
-    resolution:
-      x: 128
-      y: 128
-    dt: 1.0
+    domain:
+      dimensions:
+        x: {size: 100, resolution: 128}
+        y: {size: 100, resolution: 128}
+    dt: 0.1
     pde_params:
       name: 'advection_coeff'
-      type: 'field'
-      value: '2 * (math.sin(2 * math.pi * x / size_x) * math.cos(math.pi * y / size_y))**2 + 0.1'  # Initial value expression
+      type: 'scalar'
+      value: '0.5'  # Scalar advection coefficient
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
-    model_save_name: 'advection_synthetic_model' 
-    architecture: 
-      levels: 4
-      filters: 64
+    model_save_name: 'advection_synthetic_model'
+    static_fields: ['vel_x', 'vel_y']  # Velocity is static (passed through, not predicted)
+    architecture:
+      levels: 3
+      filters: 32
+      batch_norm: false
 
 trainer:
-  batch_size: 32
-  rollout_steps: 4 
-  train_sim: [0, 1]
+  batch_size: 16
+  rollout_steps: 4
+  train_sim: [0]  # Use all 6 simulations for more diverse data
   device: 'cuda:0'
   data_access: 'both'
-  physical: 
-    epochs: 1 
+  physical:
+    epochs: 1
+    rollout_steps: 4
+    downsample_factor: 0
     learnable_parameters:
       - name: 'advection_coeff'
-        type: 'field'
+        type: 'scalar'
         initial_guess: 0.5
     method: 'L-BFGS-B'
     abs_tol: 1e-4
     max_iterations: 5
   synthetic:
-    epochs: 10
-    learning_rate: 0.0001
+    epochs: 200
+    rollout_steps: 6
+    learning_rate: 0.0001  # Higher LR with MSE loss
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
@@ -68,10 +68,11 @@ trainer:
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0,1,2,3,4,5]
+  test_sim: [0]
   
   # Model checkpoint to evaluate
-  checkpoint_path: "results/models/advection_synthetic_model.pth"
+  synthetic_checkpoint: "results/models/advection_synthetic_model.pth"
+  physical_checkpoint: "results/models/advection_physical_model.pth"
   
   # How many timesteps to rollout
   num_frames: 100

@@ -6,9 +6,6 @@ general:
 data:
   data_dir: 'data/kolmogorov'
   dset_name: 'kolmogorov'
-  fields: ['velocity']
-  fields_scheme: 'vv'
-  fields_type: 'DD'
   num_simulations: 1
   trajectory_length: 300
 
