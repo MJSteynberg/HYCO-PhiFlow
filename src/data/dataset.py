@@ -1,10 +1,11 @@
 from phi.flow import *
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dataclasses import dataclass
 from functools import cached_property
 from enum import Enum, auto
 import os
 import random
+from collections import OrderedDict
 
 
 class AccessPolicy(Enum):
@@ -42,20 +43,21 @@ class Batch:
 
 
 class Dataset:
-    """Dataset for loading unified tensor simulations."""
+    """Dataset for loading unified tensor simulations with lazy loading."""
 
-    def __init__(self, config: dict, train_sim: List[int], rollout_steps: int):
+    def __init__(self, config: dict, train_sim: List[int], rollout_steps: int, max_cached_sims: int = 2):
         self.data_dir = config["data"]["data_dir"]
         self.train_sim = train_sim
         self.rollout_steps = rollout_steps
         self.trajectory_length = config["data"]["trajectory_length"]
+        self.max_cached_sims = max_cached_sims
+        
+        # Manual cache: sim_idx -> Tensor
+        self._cache: OrderedDict[int, Tensor] = OrderedDict()
 
         # Load first simulation to infer field info
         sample_data = self._load_simulation(train_sim[0])
         self.num_channels, self.field_names = self._extract_channel_info(sample_data)
-
-        # Load all simulations
-        self.simulations = self._load_all_simulations()
 
         # Sample counts
         self.samples_per_sim = self.trajectory_length - rollout_steps
@@ -71,13 +73,22 @@ class Dataset:
         return self.total_samples
 
     def _load_simulation(self, sim_idx: int) -> Tensor:
-        """Load a single simulation from disk."""
+        """Load a single simulation from disk with manual LRU caching."""
+        # Check cache
+        if sim_idx in self._cache:
+            self._cache.move_to_end(sim_idx)
+            return self._cache[sim_idx]
+            
+        # Load from disk
         sim_path = os.path.join(self.data_dir, f"sim_{sim_idx:04d}.npz")
-        return math.load(sim_path)
-
-    def _load_all_simulations(self) -> List[Tensor]:
-        """Load all training simulations into memory."""
-        return [self._load_simulation(sim_idx) for sim_idx in self.train_sim]
+        data = math.load(sim_path)
+        
+        # Update cache
+        self._cache[sim_idx] = data
+        if len(self._cache) > self.max_cached_sims:
+            self._cache.popitem(last=False)  # Remove oldest
+            
+        return data
 
     def _extract_channel_info(self, data: Tensor) -> tuple:
         """Extract num_channels and field_names from tensor."""
@@ -92,10 +103,11 @@ class Dataset:
     def _get_sample(self, sample_idx: int) -> Sample:
         """Get a single sample by index."""
         if sample_idx < self.num_real_samples:
-            sim_idx = sample_idx // self.samples_per_sim
+            sim_list_idx = sample_idx // self.samples_per_sim
+            sim_idx = self.train_sim[sim_list_idx]
             time_idx = sample_idx % self.samples_per_sim
             return Sample(
-                trajectory=self.simulations[sim_idx],
+                trajectory=self._load_simulation(sim_idx),
                 time_idx=time_idx,
                 rollout_steps=self.rollout_steps
             )

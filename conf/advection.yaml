@@ -1,7 +1,7 @@
 general: 
   experiment_name: 'advection_experiment'
-  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['train','evaluate']
 
 data:
   data_dir: 'data/advection'
@@ -18,11 +18,15 @@ model:
       dimensions:
         x: {size: 100, resolution: 128}
         y: {size: 100, resolution: 128}
-    dt: 0.1
+    dt: 0.2
     pde_params:
       name: 'advection_coeff'
       type: 'scalar'
-      value: '0.5'  # Scalar advection coefficient
+      value: '0.2'  # Scalar advection coefficient
+    modulation:
+      enabled: true
+      amplitude: 1
+      lobes: 6
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
@@ -35,24 +39,31 @@ model:
 
 trainer:
   batch_size: 16
-  rollout_steps: 4
+  rollout_steps: 5
   train_sim: [0]  # Use all 6 simulations for more diverse data
   device: 'cuda:0'
   data_access: 'both'
   physical:
-    epochs: 1
-    rollout_steps: 4
+    epochs: 10
+    rollout_steps: 1
     downsample_factor: 0
     learnable_parameters:
       - name: 'advection_coeff'
         type: 'scalar'
+        initial_guess: 0.1
+      - name: 'modulation_amplitude'
+        type: 'scalar'
         initial_guess: 0.5
     method: 'L-BFGS-B'
     abs_tol: 1e-4
-    max_iterations: 5
+    max_iterations: 100
   synthetic:
-    epochs: 2000
-    rollout_steps: 4
+    epochs: 1000
+    rollout_scheduler:
+      start: 1
+      end: 6
+      strategy: 'exponential'
+      exponent: 3.0
     learning_rate: 0.0001  # Higher LR with MSE loss
     optimizer: 'adam'
     scheduler: 'cosine'
@@ -72,7 +83,7 @@ evaluation:
   
   # Model checkpoint to evaluate
   synthetic_checkpoint: "results/models/advection_synthetic_model.pth"
-  physical_checkpoint: "results/models/advection_physical_model.pth"
+  physical_checkpoint: "results/models/advection_physical_model.npz"
   
   # How many timesteps to rollout
   num_frames: 100

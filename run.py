@@ -88,8 +88,13 @@ def main(cfg: DictConfig) -> None:
                 # Use batch_size from config (larger batches = faster but more memory)
                 num_epochs = config["trainer"]['physical']["epochs"]
                 batch_size = config['trainer'].get('batch_size', 8)
+                
+                # Create trainer
+                logger.info("Creating physical trainer...")
+                trainer = TrainerFactory.create_trainer(config)
+                
                 logger.info(f"Starting training for {num_epochs} epochs with batch_size={batch_size}...")
-                trainer.train(dataset=dataset, num_epochs=num_epochs, batch_size=batch_size)
+                trainer.train(dataset=dataset, num_epochs=num_epochs)
                 
             elif mode == "hybrid":
                 # Phase 3: Hybrid training with data augmentation

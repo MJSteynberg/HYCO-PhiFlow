@@ -91,7 +91,7 @@ class TrainerFactory:
 
         return trainer
 
-    # @staticmethod
+    @staticmethod
     def _create_physical_trainer(config: Dict[str, Any]) -> PhysicalTrainer:
         """
         Create PhysicalTrainer with external model and learnable parameters.
@@ -106,8 +106,6 @@ class TrainerFactory:
         downsample_factor = config["trainer"]["physical"]["downsample_factor"]
         model = ModelFactory.create_physical_model(config, downsample_factor=downsample_factor)
 
-
-    
         # Create trainer with model and params
         trainer = PhysicalTrainer(config, model)
 

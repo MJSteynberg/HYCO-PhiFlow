@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from phi.torch.flow import *
-from phi.math import math, Tensor
+from phi.math import math, Tensor, minimize
 from phiml import nn as phiml_nn
 
 from src.utils.logger import get_logger
@@ -129,13 +129,16 @@ class PhysicalTrainer:
     def _optimize_batch(self, initial_state: Tensor, targets: Tensor) -> float:
         """Optimize parameters over a batch."""
         def loss_function(*learnable_tensors: Tensor) -> Tensor:
-            self._update_params(learnable_tensors)
+            # Build kwargs for forward pass
+            forward_kwargs = {}
+            for param_name, param_value in zip(self.param_names, learnable_tensors):
+                forward_kwargs[param_name] = param_value
 
             total_loss = math.tensor(0.0)
             current_state = initial_state
 
             for step in range(self.rollout_steps):
-                current_state = self.model.forward(current_state)
+                current_state = self.model.forward(current_state, **forward_kwargs)
                 target = targets.time[step]
                 step_loss = math.mean((current_state - target) ** 2)
                 total_loss += step_loss
@@ -143,6 +146,10 @@ class PhysicalTrainer:
             return math.mean(total_loss, 'batch') / self.rollout_steps
 
         estimated_params = minimize(loss_function, self.optimizer)
+        
+        # Update model with optimized params
+        self._update_params(estimated_params)
+        
         return float(loss_function(*estimated_params))
 
     def _update_params(self, learnable_tensors: Tuple[Tensor, ...]):
@@ -154,14 +161,29 @@ class PhysicalTrainer:
         self.learnable_parameters = list(learnable_tensors)
 
     def save_checkpoint(self):
-        """Save learnable parameters using phi native format."""
-        params_dict = {name: param for name, param in zip(self.param_names, self.learnable_parameters)}
-        math.save(str(self.checkpoint_path), **params_dict)
+        """Save learnable parameters using numpy format."""
+        # Create dictionary with proper field names
+        save_dict = {}
+        for name, param in zip(self.param_names, self.learnable_parameters):
+            # Convert to native scalar if it's a simple tensor
+            if hasattr(param, 'native'):
+                native_val = param.native()
+                # Move to CPU if on CUDA
+                if hasattr(native_val, 'cpu'):
+                    native_val = native_val.cpu()
+                save_dict[f'_{name}'] = native_val.detach().numpy()
+            else:
+                save_dict[f'_{name}'] = param
+        
+        # Use numpy save
+        import numpy as np
+        np.savez(str(self.checkpoint_path), **save_dict)
 
     def load_checkpoint(self):
-        """Load learnable parameters using phi native format."""
-        loaded = math.load(str(self.checkpoint_path))
-        self.learnable_parameters = [loaded[name] for name in self.param_names]
+        """Load learnable parameters using numpy format."""
+        import numpy as np
+        loaded = np.load(str(self.checkpoint_path))
+        self.learnable_parameters = [math.tensor(loaded[f'_{name}']) for name in self.param_names]
         for param_name, param_value in zip(self.param_names, self.learnable_parameters):
             setattr(self.model, param_name, param_value)
 

@@ -40,6 +40,14 @@ class SyntheticTrainer:
         self.learning_rate = synthetic_config['learning_rate']
         self.batch_size = config['trainer']['batch_size']
         self.rollout_steps = synthetic_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
+        self.rollout_scheduler = synthetic_config.get('rollout_scheduler', None)
+        if self.rollout_scheduler:
+            self.rollout_start = self.rollout_scheduler.get('start', 1)
+            self.rollout_end = self.rollout_scheduler.get('end', self.rollout_steps)
+            self.rollout_strategy = self.rollout_scheduler.get('strategy', 'linear')
+            self.rollout_exponent = float(self.rollout_scheduler.get('exponent', 2.0))
+            logger.info(f"Rollout scheduler enabled: {self.rollout_start} -> {self.rollout_end} ({self.rollout_strategy})")
+            self.rollout_steps = self.rollout_start  # Initialize with start value
         self.scheduler_type = synthetic_config.get('scheduler', 'cosine')
 
         model_path_dir = config["model"]["synthetic"]["model_path"]
@@ -50,29 +58,47 @@ class SyntheticTrainer:
     def _setup_optimizer(self):
         """Setup PhiML optimizer."""
         self.optimizer = phiml_nn.adam(self.model.network, learning_rate=self.learning_rate)
+        
+        if hasattr(torch, 'compile'):
+            logger.info("Compiling model network with torch.compile...")
+            self.model.network = torch.compile(self.model.network)
 
     def _setup_scheduler(self):
-        """Setup LR scheduler (torch scheduler computes LR, applied to PhiML)."""
-        dummy_param = torch.nn.Parameter(torch.zeros(1))
-        dummy_optimizer = torch.optim.Adam([dummy_param], lr=self.learning_rate)
-
+        """Setup LR scheduler."""
         if self.scheduler_type == 'cosine':
-            self.scheduler = CosineAnnealingLR(dummy_optimizer, T_max=self.epochs)
+            self.scheduler = CosineAnnealingLR(self.optimizer, T_max=self.epochs)
         elif self.scheduler_type == 'step':
-            self.scheduler = StepLR(dummy_optimizer, step_size=self.epochs // 3, gamma=0.1)
+            self.scheduler = StepLR(self.optimizer, step_size=self.epochs // 3, gamma=0.1)
         elif self.scheduler_type == 'exponential':
-            self.scheduler = ExponentialLR(dummy_optimizer, gamma=0.99)
+            self.scheduler = ExponentialLR(self.optimizer, gamma=0.99)
         else:
             self.scheduler = None
 
-    def _update_learning_rate(self):
-        """Update PhiML optimizer learning rate from scheduler."""
-        if self.scheduler is not None:
-            self.scheduler.step()
-            new_lr = self.scheduler.get_last_lr()[0]
-            # Update existing optimizer's learning rate to preserve momentum
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = new_lr
+    def _get_rollout_steps(self, epoch):
+        """Calculate rollout steps based on current epoch."""
+        if not self.rollout_scheduler:
+            return self.rollout_steps
+
+        # Calculate progress (0 to 1)
+        progress = epoch / self.epochs
+        
+        # Apply strategy
+        if self.rollout_strategy == 'exponential':
+            # Exponential: spend more time on smaller steps
+            # We map progress^exponent to the linear range
+            progress = progress ** self.rollout_exponent
+
+        # Calculate number of steps in the schedule
+        num_steps = self.rollout_end - self.rollout_start + 1
+        
+        # Calculate current step index (0 to num_steps-1)
+        step_index = int(progress * num_steps)
+
+        # Calculate current rollout steps
+        current_rollout = self.rollout_start + step_index
+        
+        # Clamp to max
+        return min(current_rollout, self.rollout_end)
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""
@@ -87,6 +113,13 @@ class SyntheticTrainer:
         pbar = tqdm(range(num_epochs), desc="Training", unit="epoch", disable=not verbose)
 
         for epoch in pbar:
+            # Update rollout steps if scheduler is active
+            if self.rollout_scheduler:
+                new_rollout_steps = self._get_rollout_steps(epoch)
+                if new_rollout_steps != self.rollout_steps:
+                    self.rollout_steps = new_rollout_steps
+                    self.best_val_loss = float("inf")   
+
             start_time = time.time()
             epoch_loss = 0.0
             num_batches = 0
@@ -106,9 +139,7 @@ class SyntheticTrainer:
                 self.best_epoch = epoch + 1
                 results["best_epoch"] = self.best_epoch
                 results["best_val_loss"] = self.best_val_loss
-
-            self.save_checkpoint(epoch=epoch, loss=avg_epoch_loss)
-            self._update_learning_rate()
+                self.save_checkpoint(epoch=epoch, loss=avg_epoch_loss)
 
             epoch_time = time.time() - start_time
             current_lr = self.scheduler.get_last_lr()[0] if self.scheduler else self.learning_rate
@@ -116,6 +147,7 @@ class SyntheticTrainer:
                 "loss": f"{loss_value:.6f}",
                 "best": f"{self.best_val_loss:.6f}",
                 "lr": f"{current_lr:.2e}",
+                "rollout": f"{self.rollout_steps}",
                 "time": f"{epoch_time:.2f}s"
             })
 
@@ -141,17 +173,10 @@ class SyntheticTrainer:
             total_loss = phimath.mean(total_loss, 'batch')
             return total_loss / float(self.rollout_steps)
 
-        self.optimizer.zero_grad()
         
-        loss = loss_function(initial_state, targets)
-        # Convert to native torch tensor for backward
-        if hasattr(loss, 'native'):
-            native_loss = loss.native()
-        else:
-            native_loss = loss
-            
-        native_loss.backward()
-        self.optimizer.step()
+        loss = update_weights(self.model, self.optimizer, loss_function, initial_state, targets)   
+        if self.scheduler_type is not None:
+            self.scheduler.step() 
         
         return loss
 

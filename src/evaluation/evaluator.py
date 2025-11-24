@@ -14,6 +14,7 @@ from phi.math import nan_to_0, math
 from src.models.synthetic.base import SyntheticModel
 from src.utils.logger import get_logger
 import matplotlib.pyplot as plt
+import numpy as np
 
 logger = get_logger(__name__)
 
@@ -47,7 +48,7 @@ class Evaluator:
 
         # Model will be loaded in evaluate()
         self._load_synthetic_model()
-        # self._load_physical_parameters()
+        self._load_physical_parameters()
 
     def evaluate(self):
         """
@@ -65,6 +66,9 @@ class Evaluator:
         for sim_idx in test_sims:
             logger.info(f"Evaluating simulation {sim_idx}...")
             self._evaluate_simulation(sim_idx)
+        
+        # Visualize modulation field if available
+        self._visualize_modulation_field()
 
         logger.info(f"Evaluation complete! Results saved to {self.output_dir}")
 
@@ -89,6 +93,7 @@ class Evaluator:
 
         # Create model with num_channels
         self.model = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
+        self.model.network = torch.compile(self.model.network)
 
         # Get static fields from model to determine which are dynamic
         self.static_fields = self.model.static_fields if hasattr(self.model, 'static_fields') else []
@@ -106,22 +111,135 @@ class Evaluator:
         logger.info(f"Loaded PhiML model from {checkpoint_path}")
 
     def _load_physical_parameters(self):
-        """Load physical model for parameter visualization (optional)."""
-        import torch
+        """Load physical model parameters for visualization (optional)."""
+        import numpy as np
         from src.factories.model_factory import ModelFactory
+
+        # Only load if physical checkpoint is specified
+        physical_checkpoint_path = self.eval_config.get('physical_checkpoint', None)
+        if not physical_checkpoint_path or not Path(physical_checkpoint_path).exists():
+            logger.info("No physical checkpoint specified or found, skipping parameter visualization")
+            return
 
         self.physical_model = ModelFactory.create_physical_model(self.config)
 
-        physical_checkpoint_path = self.eval_config.get('physical_checkpoint', None)
-        checkpoint = torch.load(physical_checkpoint_path)
-        self.learnable_parameters = [math.tensor(param, spatial("x,y")) for param in checkpoint["learnable_parameters"]]
-
-        # Get the real parameters from the physical model
+        # Load learned parameters from numpy checkpoint
+        checkpoint = np.load(physical_checkpoint_path)
         learnable_params = self.config['trainer']['physical']['learnable_parameters']
-        self.real_parameters = []
         self.param_names = [param['name'] for param in learnable_params]
-        for param_name in self.param_names:
-            self.real_parameters.append(getattr(self.physical_model, param_name))
+        
+        self.learnable_parameters = []
+        for name in self.param_names:
+            param_value = checkpoint[f'_{name}']
+            self.learnable_parameters.append(float(param_value))  # Convert to scalar
+
+        # Get the ground truth parameters from the physical model config
+        self.ground_truth_parameters = []
+        for param in learnable_params:
+            if param['name'] == 'advection_coeff':
+                # Get from pde_params
+                self.ground_truth_parameters.append(float(eval(self.config['model']['physical']['pde_params']['value'])))
+            elif param['name'] == 'modulation_amplitude':
+                # Get from modulation config
+                mod_config = self.config['model']['physical'].get('modulation', {})
+                self.ground_truth_parameters.append(float(mod_config.get('amplitude', 0.0)))
+        
+        logger.info(f"Loaded physical parameters: {dict(zip(self.param_names, self.learnable_parameters))}")
+        logger.info(f"Ground truth parameters: {dict(zip(self.param_names, self.ground_truth_parameters))}")
+
+    def _visualize_modulation_field(self):
+        """Create visualization comparing ground truth vs learned modulation field."""
+        if not hasattr(self, 'param_names') or 'modulation_amplitude' not in self.param_names:
+            return
+            
+        from phi.field import CenteredGrid
+        from phi.math import math
+        
+        # Get amplitudes
+        mod_idx = self.param_names.index('modulation_amplitude')
+        gt_amplitude = self.ground_truth_parameters[mod_idx]
+        learned_amplitude = self.learnable_parameters[mod_idx]
+        
+        # Get config parameters
+        modulation_config = self.config['model']['physical'].get('modulation', {})
+        num_lobes = int(modulation_config.get('lobes', 6))
+        resolution = self.config['model']['physical']['domain']['dimensions']
+        domain_size = 100  # From config
+        
+        # Create grids
+        x_res = resolution['x']['resolution']
+        y_res = resolution['y']['resolution']
+        
+        # Compute modulation fields on a grid
+        x = np.linspace(0, domain_size, x_res)
+        y = np.linspace(0, domain_size, y_res)
+        xx, yy = np.meshgrid(x, y)
+        
+        # Center and ring parameters
+        center_x, center_y = domain_size / 2, domain_size / 2
+        ring_radius = domain_size * 0.3
+        ring_width = domain_size * 0.15
+        
+        # Compute for both amplitudes
+        dx = xx - center_x
+        dy = yy - center_y
+        r = np.sqrt(dx**2 + dy**2)
+        theta = np.arctan2(dy, dx)
+        falloff = np.exp(-((r - ring_radius) / ring_width) ** 2)
+        
+        gt_modulation = falloff * gt_amplitude * np.sin(num_lobes * theta)
+        learned_modulation = falloff * learned_amplitude * np.sin(num_lobes * theta)
+        difference = gt_modulation - learned_modulation
+        
+        # Create visualization
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        
+        # Ground truth
+        im0 = axes[0, 0].imshow(gt_modulation, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
+        axes[0, 0].set_title(f'Ground Truth Modulation (amplitude={gt_amplitude:.3f})')
+        axes[0, 0].set_xlabel('X')
+        axes[0, 0].set_ylabel('Y')
+        plt.colorbar(im0, ax=axes[0, 0])
+        
+        # Learned
+        im1 = axes[0, 1].imshow(learned_modulation, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
+        axes[0, 1].set_title(f'Learned Modulation (amplitude={learned_amplitude:.3f})')
+        axes[0, 1].set_xlabel('X')
+        axes[0, 1].set_ylabel('Y')
+        plt.colorbar(im1, ax=axes[0, 1])
+        
+        # Difference
+        im2 = axes[1, 0].imshow(difference, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
+        axes[1, 0].set_title('Difference (GT - Learned)')
+        axes[1, 0].set_xlabel('X')
+        axes[1, 0].set_ylabel('Y')
+        plt.colorbar(im2, ax=axes[1, 0])
+        
+        # Error statistics
+        axes[1, 1].axis('off')
+        error_text = f"""
+Modulation Field Comparison
+
+Ground Truth Amplitude: {gt_amplitude:.4f}
+Learned Amplitude: {learned_amplitude:.4f}
+Absolute Error: {abs(gt_amplitude - learned_amplitude):.4f}
+Relative Error: {abs(gt_amplitude - learned_amplitude) / gt_amplitude * 100:.2f}%
+
+Field Statistics:
+GT Max: {np.max(gt_modulation):.4f}
+GT Min: {np.min(gt_modulation):.4f}
+Learned Max: {np.max(learned_modulation):.4f}
+Learned Min: {np.min(learned_modulation):.4f}
+Difference Max: {np.max(np.abs(difference)):.4f}
+Difference RMS: {np.sqrt(np.mean(difference**2)):.4f}
+"""
+        axes[1, 1].text(0.1, 0.5, error_text, fontfamily='monospace', fontsize=10, verticalalignment='center')
+        
+        plt.tight_layout()
+        output_path = self.output_dir / 'modulation_field_comparison.png'
+        plt.savefig(output_path, dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved modulation field comparison to {output_path}")
 
     def _evaluate_simulation(self, sim_idx: int):
         """Evaluate a single simulation."""
@@ -253,11 +371,36 @@ class Evaluator:
             ani.save(output_path, fps=10)
             logger.info(f"Saved animation to {output_path}")
 
-        # Optional: Visualize learned physical parameters
-        if hasattr(self, 'param_names'):
-            for name, real_param, learned_param in zip(
-                self.param_names, self.real_parameters, self.learnable_parameters
-            ):
-                plot({'Real': real_param, 'Learned': learned_param})
-                plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{name}_comparison.png')
-                logger.info(f"Saved parameter comparison for {name}")
+        # Visualize learned physical parameters if available
+        if hasattr(self, 'param_names') and hasattr(self, 'learnable_parameters'):
+            logger.info("Creating parameter recovery visualization...")
+            
+            # Create bar chart comparing ground truth vs learned
+            fig, ax = plt.subplots(figsize=(10, 6))
+            x = np.arange(len(self.param_names))
+            width = 0.35
+            
+            ax.bar(x - width/2, self.ground_truth_parameters, width, label='Ground Truth', alpha=0.8)
+            ax.bar(x + width/2, self.learnable_parameters, width, label='Learned', alpha=0.8)
+            
+            ax.set_xlabel('Parameter')
+            ax.set_ylabel('Value')
+            ax.set_title('Physical Parameter Recovery')
+            ax.set_xticks(x)
+            ax.set_xticklabels(self.param_names)
+            ax.legend()
+            ax.grid(axis='y', alpha=0.3)
+            
+            # Add text labels showing exact values and error
+            for i, (gt, learned) in enumerate(zip(self.ground_truth_parameters, self.learnable_parameters)):
+                error = abs(learned - gt)
+                error_pct = (error / abs(gt) * 100) if gt != 0 else float('inf')
+                ax.text(i, max(gt, learned) * 1.05, f'Error: {error:.4f}\n({error_pct:.1f}%)', 
+                       ha='center', va='bottom', fontsize=9)
+            
+            plt.tight_layout()
+            output_path = self.output_dir / 'parameter_recovery.png'
+            plt.savefig(output_path, dpi=150)
+            plt.close(fig)
+            logger.info(f"Saved parameter comparison to {output_path}")
+
