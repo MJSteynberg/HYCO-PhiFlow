@@ -7,7 +7,6 @@ from typing import Dict, Any, Optional
 from tqdm import tqdm
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ExponentialLR
-
 from phi.torch.flow import *
 from phiml import math as phimath
 from phiml import nn as phiml_nn
@@ -30,6 +29,11 @@ class SyntheticTrainer:
 
         self.best_val_loss = float("inf")
         self.best_epoch = 0
+
+        # Loss scaling for hybrid training (NEW)
+        self.real_loss_weight = 1.0
+        self.interaction_loss_weight = 1.0
+        self.proportional_scaling = False
 
         logger.info(f"Trainer ready: lr={self.learning_rate}, scheduler={self.scheduler_type}")
 
@@ -99,6 +103,59 @@ class SyntheticTrainer:
         
         # Clamp to max
         return min(current_rollout, self.rollout_end)
+
+    def set_loss_scaling(self, real_weight: float, interaction_weight: float, 
+                         proportional: bool = False):
+        """Configure loss scaling for hybrid training."""
+        self.real_loss_weight = real_weight
+        self.interaction_loss_weight = interaction_weight
+        self.proportional_scaling = proportional
+    
+    def _train_batch_separated(self, separated_batch) -> float:
+        """Train on separated batch with independent loss scaling."""
+        
+        def compute_loss(init_state, targets):
+            """Compute MSE loss for a set of samples."""
+            current_state = init_state
+            total_loss = phimath.tensor(0.0)
+            for t in range(self.rollout_steps):
+                next_state = self.model(current_state)
+                target_t = targets.time[t]
+                step_loss = phimath.mean((next_state - target_t)**2)
+                total_loss += step_loss
+                current_state = next_state
+            return phimath.mean(total_loss, 'batch') / float(self.rollout_steps)
+        
+        def combined_loss_function():
+            real_loss = phimath.tensor(0.0)
+            interaction_loss = phimath.tensor(0.0)
+            
+            if separated_batch.has_real:
+                real_loss = compute_loss(
+                    separated_batch.real_initial_state,
+                    separated_batch.real_targets
+                )
+            
+            if separated_batch.has_generated:
+                interaction_loss = compute_loss(
+                    separated_batch.generated_initial_state,
+                    separated_batch.generated_targets
+                )
+            
+            # Apply proportional scaling if enabled
+            i_weight = self.interaction_loss_weight
+            if self.proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
+                # Scale I to have same magnitude as L
+                with phimath.stop_gradient():
+                    ratio = real_loss / (interaction_loss + 1e-8)
+                i_weight = self.interaction_loss_weight * ratio
+            
+            return self.real_loss_weight * real_loss + i_weight * interaction_loss
+        
+        loss = update_weights(self.model, self.optimizer, combined_loss_function)
+        if self.scheduler_type is not None:
+            self.scheduler.step()
+        return loss
 
     def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""

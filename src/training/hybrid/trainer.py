@@ -95,6 +95,20 @@ class HybridTrainer:
         self.synthetic_epochs = config['trainer']['synthetic']['epochs']
         self.physical_epochs = config['trainer']['physical']['epochs']
 
+        loss_scaling = hybrid_config.get('loss_scaling', {})
+        
+        self.synthetic_loss_config = {
+            'real_weight': loss_scaling.get('synthetic', {}).get('real_weight', 1.0),
+            'interaction_weight': loss_scaling.get('synthetic', {}).get('interaction_weight', 1.0),
+            'proportional': loss_scaling.get('synthetic', {}).get('proportional', False),
+        }
+        
+        self.physical_loss_config = {
+            'real_weight': loss_scaling.get('physical', {}).get('real_weight', 1.0),
+            'interaction_weight': loss_scaling.get('physical', {}).get('interaction_weight', 0.1),
+            'proportional': loss_scaling.get('physical', {}).get('proportional', False),
+        }
+
     def train(self, verbose: bool = True) -> Dict[str, Any]:
         """
         Execute hybrid training.
@@ -143,39 +157,46 @@ class HybridTrainer:
         logger.info(f"{'='*60}\n")
 
         for cycle in range(self.cycles):
-            cycle_start = time.time()
-
+            # Generate synthetic data and set up dataset
             synthetic_trajectories = self._generate_synthetic_data()
-            self._save_augmented_data(synthetic_trajectories, f"synthetic_cycle_{cycle}")
-
             self.dataset.set_augmented_trajectories(synthetic_trajectories)
-            self.dataset.access_policy = AccessPolicy.BOTH
-            self.dataset.alpha = self.alpha
-
-            physical_results = self.physical_trainer.train(
+            
+            # Configure physical trainer with loss scaling
+            self.physical_trainer.set_loss_scaling(
+                real_weight=self.physical_loss_config['real_weight'],
+                interaction_weight=self.physical_loss_config['interaction_weight'],
+                proportional=self.physical_loss_config['proportional']
+            )
+            
+            # Train physical model with scaled losses
+            physical_results = self.physical_trainer.train_separated(
                 self.dataset,
                 num_epochs=self.physical_epochs,
                 verbose=verbose
             )
-
+            
+            # Generate physical data
             physical_trajectories = self._generate_physical_data()
-            self._save_augmented_data(physical_trajectories, f"physical_cycle_{cycle}")
-
             self.dataset.set_augmented_trajectories(physical_trajectories)
-            self.dataset.access_policy = AccessPolicy.BOTH
-            self.dataset.alpha = self.alpha
-
-            synthetic_results_2 = self.synthetic_trainer.train(
+            
+            # Configure synthetic trainer with loss scaling
+            self.synthetic_trainer.set_loss_scaling(
+                real_weight=self.synthetic_loss_config['real_weight'],
+                interaction_weight=self.synthetic_loss_config['interaction_weight'],
+                proportional=self.synthetic_loss_config['proportional']
+            )
+            
+            # Train synthetic model with scaled losses
+            synthetic_results = self.synthetic_trainer.train_separated(
                 self.dataset,
                 num_epochs=self.synthetic_epochs,
-                start_epoch=(self.warmup_cycles + cycle) * self.synthetic_epochs + self.synthetic_epochs,
                 verbose=verbose
             )
 
             cycle_time = time.time() - cycle_start
 
             results["cycles"].append(cycle + 1)
-            results["synthetic_losses"].append(synthetic_results_2["final_loss"])
+            results["synthetic_losses"].append(synthetic_results["final_loss"])
             results["physical_losses"].append(physical_results["final_loss"])
             results["cycle_times"].append(cycle_time)
 
@@ -214,7 +235,6 @@ class HybridTrainer:
 
             trajectories.append(trajectory)
 
-        logger.info(f"Generated {len(trajectories)} synthetic trajectories")
         return trajectories
 
     def _generate_physical_data(self) -> List[Tensor]:
@@ -256,7 +276,6 @@ class HybridTrainer:
 
             trajectories.append(trajectory)
 
-        logger.info(f"Generated {len(trajectories)} physical trajectories")
         return trajectories
 
     def _rollout_synthetic_single(self, initial_state: Tensor, num_steps: int) -> Tensor:

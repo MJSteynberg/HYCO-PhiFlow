@@ -34,6 +34,11 @@ class PhysicalTrainer:
         self.best_val_loss = float("inf")
         self.best_epoch = 0
 
+        # Loss scaling for hybrid training (NEW)
+        self.real_loss_weight = 1.0
+        self.interaction_loss_weight = 1.0
+        self.proportional_scaling = False
+
         # Try to load checkpoint if exists
         if self.checkpoint_path.exists():
             try:
@@ -64,6 +69,55 @@ class PhysicalTrainer:
         self.method = physical_config['method']
         self.abs_tol = float(physical_config['abs_tol'])
         self.max_iterations = int(physical_config['max_iterations'])
+
+    def set_loss_scaling(self, real_weight: float, interaction_weight: float,
+                         proportional: bool = False):
+        """Configure loss scaling for hybrid training."""
+        self.real_loss_weight = real_weight
+        self.interaction_loss_weight = interaction_weight
+        self.proportional_scaling = proportional
+    
+    def _optimize_batch_separated(self, separated_batch, params: Tensor) -> float:
+        """Optimize with separated real/generated losses."""
+        
+        def loss_function(params: Tensor) -> Tensor:
+            def compute_loss(init_state, targets):
+                total_loss = math.tensor(0.0)
+                current_state = init_state
+                for step in range(self.rollout_steps):
+                    current_state = self.model.forward(current_state, params)
+                    target = targets.time[step]
+                    step_loss = math.mean((current_state - target) ** 2)
+                    total_loss += step_loss
+                return math.mean(total_loss, 'batch') / self.rollout_steps
+            
+            real_loss = math.tensor(0.0)
+            interaction_loss = math.tensor(0.0)
+            
+            if separated_batch.has_real:
+                real_loss = compute_loss(
+                    separated_batch.real_initial_state,
+                    separated_batch.real_targets
+                )
+            
+            if separated_batch.has_generated:
+                interaction_loss = compute_loss(
+                    separated_batch.generated_initial_state,
+                    separated_batch.generated_targets
+                )
+            
+            # Proportional scaling
+            i_weight = self.interaction_loss_weight
+            if self.proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
+                with math.stop_gradient():
+                    ratio = real_loss / (interaction_loss + 1e-8)
+                i_weight = self.interaction_loss_weight * ratio
+            
+            return self.real_loss_weight * real_loss + i_weight * interaction_loss
+        
+        estimated_params = minimize(loss_function, self.optimizer)
+        self._update_params(estimated_params)
+        return float(loss_function(estimated_params))
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""

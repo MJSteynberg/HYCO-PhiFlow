@@ -1,6 +1,6 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
   tasks: ['generate', 'train', 'evaluate']
 
 data:
@@ -41,8 +41,8 @@ trainer:
     rollout_steps: 1
     downsample_factor: 0
     method: 'L-BFGS-B'
-    abs_tol: 1e-9
-    max_iterations: 100
+    abs_tol: 1e-6
+    max_iterations: 5
   synthetic:
     epochs: 100
     rollout_scheduler:
@@ -60,6 +60,18 @@ trainer:
     augmentation:
       alpha: 1.0
       cache_dir: data/cache_phiml
+
+    # NEW: Loss scaling configuration
+    loss_scaling:
+      synthetic:
+        real_weight: 1.0        # L coefficient
+        interaction_weight: 1.0  # I coefficient
+        proportional: false      # Auto-scale I to match L magnitude
+      
+      physical:
+        real_weight: 1.0
+        interaction_weight: 0.1  # Physical model sees weaker interaction loss
+        proportional: true       # Or use proportional scaling
 
 
 # For evaluation
