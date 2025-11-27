@@ -114,13 +114,9 @@ class PhysicalTrainer:
             
             return self.real_loss_weight * real_loss + i_weight * interaction_loss
         
-        try:
-            estimated_params = minimize(loss_function, self.optimizer)
-            self._update_params(estimated_params)
-        except Diverged:
-            estimated_params = self.optimizer.params
-            logger.warning("Optimization diverged, using last parameters")
         
+        estimated_params = minimize(loss_function, self.optimizer)
+        self._update_params(estimated_params)
         return float(loss_function(estimated_params))
 
     def train_separated(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
@@ -140,7 +136,11 @@ class PhysicalTrainer:
             num_batches = 0
 
             for separated_batch in dataset.iterate_batches_separated(batch_size=self.batch_size, shuffle=True):
-                batch_loss = self._optimize_batch_separated(separated_batch, self.model.params)
+                try:
+                    batch_loss = self._optimize_batch_separated(separated_batch, self.model.params)
+                except Diverged:
+                    logger.warning("Optimization diverged, skipping batch")
+                    break
                 train_loss += batch_loss
                 num_batches += 1
 

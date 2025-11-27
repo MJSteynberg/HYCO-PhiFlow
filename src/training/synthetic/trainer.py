@@ -83,13 +83,14 @@ class SyntheticTrainer:
         if not self.rollout_scheduler:
             return self.rollout_steps
 
+        # Use rollout_total_epochs if set (for hybrid training), otherwise use self.epochs
+        total_epochs = getattr(self, 'rollout_total_epochs', self.epochs)
+        
         # Calculate progress (0 to 1)
-        progress = epoch / self.epochs
+        progress = epoch / total_epochs
         
         # Apply strategy
         if self.rollout_strategy == 'exponential':
-            # Exponential: spend more time on smaller steps
-            # We map progress^exponent to the linear range
             progress = progress ** self.rollout_exponent
 
         # Calculate number of steps in the schedule
@@ -110,6 +111,26 @@ class SyntheticTrainer:
         self.real_loss_weight = real_weight
         self.interaction_loss_weight = interaction_weight
         self.proportional_scaling = proportional
+
+    def set_total_epochs_for_hybrid(self, total_epochs: int):
+        """Configure total epochs for both rollout and LR scheduling across hybrid cycles."""
+        # For rollout scheduler
+        self.rollout_total_epochs = total_epochs
+        
+        # Recreate LR scheduler with correct T_max
+        if self.scheduler_type == 'cosine':
+            self.scheduler = CosineAnnealingLR(self.optimizer, T_max=total_epochs)
+        elif self.scheduler_type == 'step':
+            self.scheduler = StepLR(self.optimizer, step_size=total_epochs // 3, gamma=0.1)
+        elif self.scheduler_type == 'exponential':
+            # Exponential doesn't depend on total epochs, but recalculate gamma if needed
+            self.scheduler = ExponentialLR(self.optimizer, gamma=0.99)
+        
+        logger.info(f"Reconfigured scheduler for hybrid training: {self.scheduler_type} with total_epochs={total_epochs}")
+
+    def set_rollout_total_epochs(self, total_epochs: int):
+        """Configure total epochs for rollout scheduling across hybrid cycles."""
+        self.rollout_total_epochs = total_epochs
     
     def _train_batch_separated(self, separated_batch) -> float:
         """Train on separated batch with independent loss scaling."""

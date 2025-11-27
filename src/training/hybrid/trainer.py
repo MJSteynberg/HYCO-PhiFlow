@@ -127,6 +127,9 @@ class HybridTrainer:
         logger.info("Starting Hybrid Training")
         logger.info("="*60)
 
+        total_synthetic_epochs = self.warmup_cycles * self.synthetic_epochs
+        self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
+
         # Warmup phase: Train on real data only
         if self.warmup_cycles > 0:
             logger.info(f"\n{'='*60}")
@@ -155,6 +158,11 @@ class HybridTrainer:
         logger.info(f"\n{'='*60}")
         logger.info(f"HYBRID PHASE: Training with data augmentation ({self.cycles} cycles)")
         logger.info(f"{'='*60}\n")
+
+        # Configure rollout scheduler to span all hybrid cycles
+        # Total synthetic epochs = cycles * synthetic_epochs 
+        total_synthetic_epochs = self.cycles  * self.synthetic_epochs
+        self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
 
         for cycle in range(self.cycles):
             # Generate synthetic data and set up dataset
@@ -190,6 +198,7 @@ class HybridTrainer:
             synthetic_results = self.synthetic_trainer.train_separated(
                 self.dataset,
                 num_epochs=self.synthetic_epochs,
+                start_epoch=cycle * self.synthetic_epochs,
                 verbose=verbose
             )
 
