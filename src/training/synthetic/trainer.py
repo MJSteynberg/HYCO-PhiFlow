@@ -115,7 +115,16 @@ class SyntheticTrainer:
     def set_total_epochs_for_hybrid(self, total_epochs: int):
         """Configure total epochs for both rollout and LR scheduling across hybrid cycles."""
         # For rollout scheduler
+        if total_epochs <= 0:
+            logger.warning(f"Invalid total_epochs={total_epochs}, skipping scheduler reconfiguration")
+            return
+            
+        # Reset optimizer's learning rate to the original value before creating new scheduler
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.learning_rate
+            param_group['initial_lr'] = self.learning_rate
         self.rollout_total_epochs = total_epochs
+        
         # Recreate LR scheduler with correct T_max
         if self.scheduler_type == 'cosine':
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max=total_epochs)
