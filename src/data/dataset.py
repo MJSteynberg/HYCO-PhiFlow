@@ -65,11 +65,6 @@ class Sample:
         return self.trajectory.time[start:end]
 
 
-@dataclass
-class Batch:
-    """Batched samples with unified tensors."""
-    initial_state: Tensor  # Tensor(batch, x, y?, field)
-    targets: Tensor  # Tensor(batch, time, x, y?, field)
 
 
 class Dataset:
@@ -161,38 +156,6 @@ class Dataset:
 
     def iterate_batches(self, batch_size: int, shuffle: bool = True):
         """
-        Iterate through dataset yielding Batch dataclasses.
-
-        Access policy controls which samples are included.
-        Alpha controls the proportion of real data used (randomly sampled).
-        """
-        # Build indices based on access policy
-        if self.access_policy == AccessPolicy.REAL_ONLY:
-            real_indices = list(range(self.num_real_samples))
-            sample_indices = self._apply_alpha(real_indices)
-        elif self.access_policy == AccessPolicy.GENERATED_ONLY:
-            sample_indices = list(range(self.num_real_samples, self.total_samples))
-        else:  # BOTH
-            real_indices = list(range(self.num_real_samples))
-            real_indices = self._apply_alpha(real_indices)
-            generated_indices = list(range(self.num_real_samples, self.total_samples))
-            sample_indices = real_indices + generated_indices
-
-        if shuffle:
-            random.shuffle(sample_indices)
-
-        # Yield batches
-        for i in range(0, len(sample_indices), batch_size):
-            batch_indices = sample_indices[i:i + batch_size]
-            samples = [self._get_sample(idx) for idx in batch_indices]
-
-            initial_states = math.stack([s.initial_state for s in samples], math.batch('batch'))
-            targets = math.stack([s.targets for s in samples], math.batch('batch'))
-
-            yield Batch(initial_state=initial_states, targets=targets)
-
-    def iterate_batches_separated(self, batch_size: int, shuffle: bool = True):
-        """
         Iterate yielding SeparatedBatch with real and generated data separate.
         
         This allows trainers to compute L (real loss) and I (interaction loss) 
@@ -233,6 +196,7 @@ class Dataset:
                 gen_tgt = math.stack([s.targets for s in gen_samples], batch('batch'))
             
             yield SeparatedBatch(real_init, real_tgt, gen_init, gen_tgt)
+
 
     def _apply_alpha(self, indices: List[int]) -> List[int]:
         """Apply alpha sampling to select a proportion of indices."""

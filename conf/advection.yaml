@@ -38,7 +38,7 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 64
+  batch_size: 32
   rollout_steps: 5
   train_sim: [0]  # Use all 6 simulations for more diverse data
   device: 'cuda:0'

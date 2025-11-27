@@ -116,7 +116,6 @@ class SyntheticTrainer:
         """Configure total epochs for both rollout and LR scheduling across hybrid cycles."""
         # For rollout scheduler
         self.rollout_total_epochs = total_epochs
-        
         # Recreate LR scheduler with correct T_max
         if self.scheduler_type == 'cosine':
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max=total_epochs)
@@ -132,7 +131,7 @@ class SyntheticTrainer:
         """Configure total epochs for rollout scheduling across hybrid cycles."""
         self.rollout_total_epochs = total_epochs
     
-    def _train_batch_separated(self, separated_batch) -> float:
+    def _train_batch(self, separated_batch) -> float:
         """Train on separated batch with independent loss scaling."""
         
         def compute_loss(init_state, targets):
@@ -174,10 +173,9 @@ class SyntheticTrainer:
             return self.real_loss_weight * real_loss + i_weight * interaction_loss
         
         loss = update_weights(self.model, self.optimizer, combined_loss_function)
-        if self.scheduler_type is not None:
-            self.scheduler.step()
         return loss
-    def train_separated(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
+
+    def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
         """Execute training with separated real/generated batches for loss scaling."""
         results = {
             "train_losses": [],
@@ -201,8 +199,8 @@ class SyntheticTrainer:
             epoch_loss = 0.0
             num_batches = 0
 
-            for separated_batch in dataset.iterate_batches_separated(self.batch_size, shuffle=True):
-                batch_loss = self._train_batch_separated(separated_batch)
+            for separated_batch in dataset.iterate_batches(self.batch_size, shuffle=True):
+                batch_loss = self._train_batch(separated_batch)
                 epoch_loss += batch_loss
                 num_batches += 1
 
@@ -228,88 +226,13 @@ class SyntheticTrainer:
                 "time": f"{epoch_time:.2f}s"
             })
 
-        results["final_loss"] = results["train_losses"][-1]
-        return results
-
-    def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
-        """Execute training for specified number of epochs."""
-        results = {
-            "train_losses": [],
-            "epochs": [],
-            "num_epochs": num_epochs,
-            "best_epoch": 0,
-            "best_val_loss": float("inf"),
-        }
-
-        pbar = tqdm(range(start_epoch, start_epoch + num_epochs), desc="Training", unit="epoch", disable=not verbose)
-
-        for epoch in pbar:
-            # Update rollout steps if scheduler is active
-            if self.rollout_scheduler:
-                new_rollout_steps = self._get_rollout_steps(epoch)
-                if new_rollout_steps != self.rollout_steps:
-                    self.rollout_steps = new_rollout_steps
-                    self.best_val_loss = float("inf")   
-
-            start_time = time.time()
-            epoch_loss = 0.0
-            num_batches = 0
-
-            for batch in dataset.iterate_batches(self.batch_size, shuffle=True):
-                batch_loss = self._train_batch(batch)
-                epoch_loss += batch_loss
-                num_batches += 1
-
-            avg_epoch_loss = epoch_loss / num_batches if num_batches > 0 else epoch_loss
-            results["train_losses"].append(float(avg_epoch_loss))
-            results["epochs"].append(epoch + 1)
-
-            loss_value = float(avg_epoch_loss)
-            if loss_value < self.best_val_loss:
-                self.best_val_loss = loss_value
-                self.best_epoch = epoch + 1
-                results["best_epoch"] = self.best_epoch
-                results["best_val_loss"] = self.best_val_loss
-                self.save_checkpoint(epoch=epoch, loss=avg_epoch_loss)
-
-            epoch_time = time.time() - start_time
-            current_lr = self.scheduler.get_last_lr()[0] if self.scheduler else self.learning_rate
-            pbar.set_postfix({
-                "loss": f"{loss_value:.6f}",
-                "best": f"{self.best_val_loss:.6f}",
-                "lr": f"{current_lr:.2e}",
-                "rollout": f"{self.rollout_steps}",
-                "time": f"{epoch_time:.2f}s"
-            })
+            # Step the learning rate scheduler once per epoch
+            if self.scheduler_type is not None:
+                self.scheduler.step()
 
         results["final_loss"] = results["train_losses"][-1]
         return results
 
-    def _train_batch(self, batch):
-        """Train on a single batch using autoregressive rollout."""
-        initial_state = batch.initial_state
-        targets = batch.targets
-
-        def loss_function(init_state, rollout_targets):
-            current_state = init_state
-            total_loss = phimath.tensor(0.0)
-
-            for t in range(self.rollout_steps):
-                next_state = self.model(current_state)
-                target_t = rollout_targets.time[t]
-                step_loss = phimath.mean((next_state - target_t)**2)
-                total_loss += step_loss
-                current_state = next_state
-
-            total_loss = phimath.mean(total_loss, 'batch')
-            return total_loss / float(self.rollout_steps)
-
-        
-        loss = update_weights(self.model, self.optimizer, loss_function, initial_state, targets)   
-        if self.scheduler_type is not None:
-            self.scheduler.step() 
-        
-        return loss
 
     def save_checkpoint(self, epoch: int, loss: float):
         """Save model checkpoint."""

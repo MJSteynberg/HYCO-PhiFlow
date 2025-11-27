@@ -177,7 +177,7 @@ class HybridTrainer:
             )
             
             # Train physical model with scaled losses
-            physical_results = self.physical_trainer.train_separated(
+            physical_results = self.physical_trainer.train(
                 self.dataset,
                 num_epochs=self.physical_epochs,
                 verbose=verbose
@@ -195,7 +195,7 @@ class HybridTrainer:
             )
             
             # Train synthetic model with scaled losses
-            synthetic_results = self.synthetic_trainer.train_separated(
+            synthetic_results = self.synthetic_trainer.train(
                 self.dataset,
                 num_epochs=self.synthetic_epochs,
                 start_epoch=cycle * self.synthetic_epochs,

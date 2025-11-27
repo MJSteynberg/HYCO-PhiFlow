@@ -31,7 +31,7 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 64
+  batch_size: 32
   rollout_steps: 5
   train_sim: [0]
   device: 'cuda:0'
@@ -44,10 +44,10 @@ trainer:
     abs_tol: 1e-12
     max_iterations: 5
   synthetic:
-    epochs: 100
+    epochs: 10
     rollout_scheduler:
       start: 1
-      end: 10
+      end: 4
       strategy: 'exponential'
       exponent: 2.0
     learning_rate: 0.0001
@@ -55,8 +55,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 50
-    warmup: 5
+    cycles: 2
+    warmup: 1
     augmentation:
       alpha: 1.0
       cache_dir: data/cache_phiml
