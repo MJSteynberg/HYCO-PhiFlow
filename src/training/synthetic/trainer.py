@@ -146,8 +146,8 @@ class SyntheticTrainer:
             i_weight = self.interaction_loss_weight
             if self.proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
                 # Scale I to have same magnitude as L
-                with phimath.stop_gradient():
-                    ratio = real_loss / (interaction_loss + 1e-8)
+                
+                ratio = phimath.stop_gradient(real_loss / (interaction_loss + 1e-8))
                 i_weight = self.interaction_loss_weight * ratio
             
             return self.real_loss_weight * real_loss + i_weight * interaction_loss
@@ -156,6 +156,59 @@ class SyntheticTrainer:
         if self.scheduler_type is not None:
             self.scheduler.step()
         return loss
+    def train_separated(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
+        """Execute training with separated real/generated batches for loss scaling."""
+        results = {
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs,
+            "best_epoch": 0,
+            "best_val_loss": float("inf"),
+        }
+
+        pbar = tqdm(range(start_epoch, start_epoch + num_epochs), desc="Training (separated)", unit="epoch", disable=not verbose)
+
+        for epoch in pbar:
+            # Update rollout steps if scheduler is active
+            if self.rollout_scheduler:
+                new_rollout_steps = self._get_rollout_steps(epoch)
+                if new_rollout_steps != self.rollout_steps:
+                    self.rollout_steps = new_rollout_steps
+                    self.best_val_loss = float("inf")
+
+            start_time = time.time()
+            epoch_loss = 0.0
+            num_batches = 0
+
+            for separated_batch in dataset.iterate_batches_separated(self.batch_size, shuffle=True):
+                batch_loss = self._train_batch_separated(separated_batch)
+                epoch_loss += batch_loss
+                num_batches += 1
+
+            avg_epoch_loss = epoch_loss / num_batches if num_batches > 0 else epoch_loss
+            results["train_losses"].append(float(avg_epoch_loss))
+            results["epochs"].append(epoch + 1)
+
+            loss_value = float(avg_epoch_loss)
+            if loss_value < self.best_val_loss:
+                self.best_val_loss = loss_value
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
+                self.save_checkpoint(epoch=epoch, loss=avg_epoch_loss)
+
+            epoch_time = time.time() - start_time
+            current_lr = self.scheduler.get_last_lr()[0] if self.scheduler else self.learning_rate
+            pbar.set_postfix({
+                "loss": f"{loss_value:.6f}",
+                "best": f"{self.best_val_loss:.6f}",
+                "lr": f"{current_lr:.2e}",
+                "rollout": f"{self.rollout_steps}",
+                "time": f"{epoch_time:.2f}s"
+            })
+
+        results["final_loss"] = results["train_losses"][-1]
+        return results
 
     def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""

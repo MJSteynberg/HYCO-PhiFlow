@@ -109,15 +109,61 @@ class PhysicalTrainer:
             # Proportional scaling
             i_weight = self.interaction_loss_weight
             if self.proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
-                with math.stop_gradient():
-                    ratio = real_loss / (interaction_loss + 1e-8)
+                ratio = math.stop_gradient(real_loss / (interaction_loss + 1e-8))
                 i_weight = self.interaction_loss_weight * ratio
             
             return self.real_loss_weight * real_loss + i_weight * interaction_loss
         
-        estimated_params = minimize(loss_function, self.optimizer)
-        self._update_params(estimated_params)
+        try:
+            estimated_params = minimize(loss_function, self.optimizer)
+            self._update_params(estimated_params)
+        except Diverged:
+            estimated_params = self.optimizer.params
+            logger.warning("Optimization diverged, using last parameters")
+        
         return float(loss_function(estimated_params))
+
+    def train_separated(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
+        """Execute training with separated real/generated batches for loss scaling."""
+        results = {
+            "train_losses": [],
+            "epochs": [],
+            "num_epochs": num_epochs,
+            "best_epoch": 0,
+            "best_val_loss": float("inf"),
+        }
+
+        pbar = tqdm(range(num_epochs), desc="Training (separated)", unit="epoch", disable=not verbose)
+        for epoch in pbar:
+            start_time = time.time()
+            train_loss = 0.0
+            num_batches = 0
+
+            for separated_batch in dataset.iterate_batches_separated(batch_size=self.batch_size, shuffle=True):
+                batch_loss = self._optimize_batch_separated(separated_batch, self.model.params)
+                train_loss += batch_loss
+                num_batches += 1
+
+            avg_train_loss = train_loss / num_batches if num_batches > 0 else train_loss
+            results["train_losses"].append(avg_train_loss)
+            results["epochs"].append(epoch + 1)
+
+            if avg_train_loss < self.best_val_loss:
+                self.best_val_loss = avg_train_loss
+                self.best_epoch = epoch + 1
+                results["best_epoch"] = self.best_epoch
+                results["best_val_loss"] = self.best_val_loss
+                self.save_checkpoint()
+
+            epoch_time = time.time() - start_time
+            pbar.set_postfix({
+                "loss": f"{avg_train_loss}",
+                "best": f"{self.best_val_loss}",
+                "time": f"{epoch_time}",
+            })
+
+        results["final_loss"] = results["train_losses"][-1]
+        return results
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""
