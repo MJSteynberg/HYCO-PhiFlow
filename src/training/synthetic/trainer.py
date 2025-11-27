@@ -100,7 +100,7 @@ class SyntheticTrainer:
         # Clamp to max
         return min(current_rollout, self.rollout_end)
 
-    def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
+    def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""
         results = {
             "train_losses": [],
@@ -110,7 +110,7 @@ class SyntheticTrainer:
             "best_val_loss": float("inf"),
         }
 
-        pbar = tqdm(range(num_epochs), desc="Training", unit="epoch", disable=not verbose)
+        pbar = tqdm(range(start_epoch, start_epoch + num_epochs), desc="Training", unit="epoch", disable=not verbose)
 
         for epoch in pbar:
             # Update rollout steps if scheduler is active

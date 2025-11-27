@@ -1,0 +1,47 @@
+Error executing job with overrides: ['general.tasks=[train]', 'general.mode=physical', 'trainer.physical.epochs=1']
+Traceback (most recent call last):
+  File "/home/thys/miniconda3/envs/phi-env/lib/python3.12/site-packages/phiml/math/_tensors.py", line 1809, in tensor
+    backend = choose_backend(data)
+              ^^^^^^^^^^^^^^^^^^^^
+  File "/home/thys/miniconda3/envs/phi-env/lib/python3.12/site-packages/phiml/backend/_backend.py", line 1789, in choose_backend
+    raise NoBackendFound(f"Not a native tensor {[type(v).__name__ for v in unknown_values]}")
+phiml.backend._backend.NoBackendFound: Not a native tensor ['TensorDim']
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/thys/Linux_Documents/University/HYCO-PhiFlow/run.py", line 94, in main
+    trainer = TrainerFactory.create_trainer(config)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thys/Linux_Documents/University/HYCO-PhiFlow/src/factories/trainer_factory.py", line 68, in create_trainer
+    return TrainerFactory._create_physical_trainer(config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thys/Linux_Documents/University/HYCO-PhiFlow/src/factories/trainer_factory.py", line 110, in _create_physical_trainer
+    trainer = PhysicalTrainer(config, model)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thys/Linux_Documents/University/HYCO-PhiFlow/src/training/physical/trainer.py", line 22, in __init__
+    self._parse_config(config)
+  File "/home/thys/Linux_Documents/University/HYCO-PhiFlow/src/training/physical/trainer.py", line 90, in _parse_config
+    val = math.tensor(val)
+          ^^^^^^^^^^^^^^^^
+  File "/home/thys/miniconda3/envs/phi-env/lib/python3.12/site-packages/phiml/math/_tensors.py", line 1834, in tensor
+    raise ValueError(f"{type(data)} is not supported. Only (Tensor, tuple, list, np.ndarray, native tensors) are allowed.\nCurrent backends: {BACKENDS}")
+ValueError: <class 'phiml.math._tensors.TensorDim'> is not supported. Only (Tensor, tuple, list, np.ndarray, native tensors) are allowed.
+Current backends: [numpy, object, torch]
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+
+ERROR conda.cli.main_run:execute(125): `conda run python run.py --config-name=advection general.tasks=[train] general.mode=physical trainer.physical.epochs=1` failed. (See above for error)
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
+[hyco_phiflow] [32mINFO[0m: Experiment: advection_experiment
+[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
+[hyco_phiflow] [32mINFO[0m: Running training
+[hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
+[hyco_phiflow] [32mINFO[0m: Creating physical trainer...
+[physical.trainer] [32mINFO[0m: Initialized parameter advection_coeff from scalar 0.5
+[physical.trainer] [32mINFO[0m: Parameter modulation_field: initial_value type=<class 'phiml.math._tensors.Dense'>, values type=<class 'phiml.math._tensors.TensorDim'>
+[physical.trainer] [32mINFO[0m: Value: Dense.values (non-existent)
+[physical.trainer] [33mWARNING[0m: Parameter modulation_field: values is not a Tensor, trying to convert. Type: <class 'phiml.math._tensors.TensorDim'>
+[physical.trainer] [31mERROR[0m: Failed to convert modulation_field to tensor: <class 'phiml.math._tensors.TensorDim'> is not supported. Only (Tensor, tuple, list, np.ndarray, native tensors) are allowed.
+Current backends: [numpy, object, torch]
+

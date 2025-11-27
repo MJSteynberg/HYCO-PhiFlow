@@ -60,7 +60,7 @@ class Evaluator:
         Side by side for each field.
         """
         logger.info("Starting evaluation...")
-
+        self._visualize_modulation_field()
         # Evaluate each test simulation
         test_sims = self.eval_config['test_sim']
         for sim_idx in test_sims:
@@ -68,7 +68,7 @@ class Evaluator:
             self._evaluate_simulation(sim_idx)
         
         # Visualize modulation field if available
-        self._visualize_modulation_field()
+        
 
         logger.info(f"Evaluation complete! Results saved to {self.output_dir}")
 
@@ -111,10 +111,9 @@ class Evaluator:
         logger.info(f"Loaded PhiML model from {checkpoint_path}")
 
     def _load_physical_parameters(self):
-        """Load physical model parameters for visualization (optional)."""
-        import numpy as np
+        """Load physical model parameters for visualization."""
         from src.factories.model_factory import ModelFactory
-
+        
         # Only load if physical checkpoint is specified
         physical_checkpoint_path = self.eval_config.get('physical_checkpoint', None)
         if not physical_checkpoint_path or not Path(physical_checkpoint_path).exists():
@@ -123,123 +122,145 @@ class Evaluator:
 
         self.physical_model = ModelFactory.create_physical_model(self.config)
 
-        # Load learned parameters from numpy checkpoint
-        checkpoint = np.load(physical_checkpoint_path)
-        learnable_params = self.config['trainer']['physical']['learnable_parameters']
-        self.param_names = [param['name'] for param in learnable_params]
-        
-        self.learnable_parameters = []
-        for name in self.param_names:
-            param_value = checkpoint[f'_{name}']
-            self.learnable_parameters.append(float(param_value))  # Convert to scalar
-
-        # Get the ground truth parameters from the physical model config
-        self.ground_truth_parameters = []
-        for param in learnable_params:
-            if param['name'] == 'advection_coeff':
-                # Get from pde_params
-                self.ground_truth_parameters.append(float(eval(self.config['model']['physical']['pde_params']['value'])))
-            elif param['name'] == 'modulation_amplitude':
-                # Get from modulation config
-                mod_config = self.config['model']['physical'].get('modulation', {})
-                self.ground_truth_parameters.append(float(mod_config.get('amplitude', 0.0)))
-        
-        logger.info(f"Loaded physical parameters: {dict(zip(self.param_names, self.learnable_parameters))}")
-        logger.info(f"Ground truth parameters: {dict(zip(self.param_names, self.ground_truth_parameters))}")
-
-    def _visualize_modulation_field(self):
-        """Create visualization comparing ground truth vs learned modulation field."""
-        if not hasattr(self, 'param_names') or 'modulation_amplitude' not in self.param_names:
+        # Load learned parameters (Tensor)
+        try:
+            self.learned_params = math.load(str(physical_checkpoint_path))
+            logger.info(f"Loaded learned parameters from {physical_checkpoint_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load checkpoint: {e}")
             return
-            
-        from phi.field import CenteredGrid
-        from phi.math import math
-        
-        # Get amplitudes
-        mod_idx = self.param_names.index('modulation_amplitude')
-        gt_amplitude = self.ground_truth_parameters[mod_idx]
-        learned_amplitude = self.learnable_parameters[mod_idx]
-        
-        # Get config parameters
-        modulation_config = self.config['model']['physical'].get('modulation', {})
-        num_lobes = int(modulation_config.get('lobes', 6))
-        resolution = self.config['model']['physical']['domain']['dimensions']
-        domain_size = 100  # From config
-        
-        # Create grids
-        x_res = resolution['x']['resolution']
-        y_res = resolution['y']['resolution']
-        
-        # Compute modulation fields on a grid
-        x = np.linspace(0, domain_size, x_res)
-        y = np.linspace(0, domain_size, y_res)
-        xx, yy = np.meshgrid(x, y)
-        
-        # Center and ring parameters
-        center_x, center_y = domain_size / 2, domain_size / 2
-        ring_radius = domain_size * 0.3
-        ring_width = domain_size * 0.15
-        
-        # Compute for both amplitudes
-        dx = xx - center_x
-        dy = yy - center_y
-        r = np.sqrt(dx**2 + dy**2)
-        theta = np.arctan2(dy, dx)
-        falloff = np.exp(-((r - ring_radius) / ring_width) ** 2)
-        
-        gt_modulation = falloff * gt_amplitude * np.sin(num_lobes * theta)
-        learned_modulation = falloff * learned_amplitude * np.sin(num_lobes * theta)
-        difference = gt_modulation - learned_modulation
-        
-        # Create visualization
-        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-        
-        # Ground truth
-        im0 = axes[0, 0].imshow(gt_modulation, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
-        axes[0, 0].set_title(f'Ground Truth Modulation (amplitude={gt_amplitude:.3f})')
-        axes[0, 0].set_xlabel('X')
-        axes[0, 0].set_ylabel('Y')
-        plt.colorbar(im0, ax=axes[0, 0])
-        
-        # Learned
-        im1 = axes[0, 1].imshow(learned_modulation, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
-        axes[0, 1].set_title(f'Learned Modulation (amplitude={learned_amplitude:.3f})')
-        axes[0, 1].set_xlabel('X')
-        axes[0, 1].set_ylabel('Y')
-        plt.colorbar(im1, ax=axes[0, 1])
-        
-        # Difference
-        im2 = axes[1, 0].imshow(difference, origin='lower', extent=[0, domain_size, 0, domain_size], cmap='RdBu_r')
-        axes[1, 0].set_title('Difference (GT - Learned)')
-        axes[1, 0].set_xlabel('X')
-        axes[1, 0].set_ylabel('Y')
-        plt.colorbar(im2, ax=axes[1, 0])
-        
-        # Error statistics
-        axes[1, 1].axis('off')
-        error_text = f"""
-Modulation Field Comparison
 
-Ground Truth Amplitude: {gt_amplitude:.4f}
-Learned Amplitude: {learned_amplitude:.4f}
-Absolute Error: {abs(gt_amplitude - learned_amplitude):.4f}
-Relative Error: {abs(gt_amplitude - learned_amplitude) / gt_amplitude * 100:.2f}%
-
-Field Statistics:
-GT Max: {np.max(gt_modulation):.4f}
-GT Min: {np.min(gt_modulation):.4f}
-Learned Max: {np.max(learned_modulation):.4f}
-Learned Min: {np.min(learned_modulation):.4f}
-Difference Max: {np.max(np.abs(difference)):.4f}
-Difference RMS: {np.sqrt(np.mean(difference**2)):.4f}
-"""
-        axes[1, 1].text(0.1, 0.5, error_text, fontfamily='monospace', fontsize=10, verticalalignment='center')
+        # Get ground truth parameters
+        self.ground_truth_params = self.physical_model.get_real_params()
         
+    def _visualize_modulation_field(self):
+        """Create visualization comparing ground truth vs learned parameters (both scalar and field)."""
+        if not hasattr(self, 'learned_params') or not hasattr(self, 'ground_truth_params'):
+            logger.info("No parameters to visualize")
+            return
+
+        from phi.vis import plot
+
+        logger.info("Creating parameter visualizations...")
+
+        real = self.ground_truth_params
+        learned = self.learned_params
+
+        # Visualize scalar parameters (e.g., diffusion coefficient)
+        scalar_param_names = self.physical_model.scalar_param_names
+        if scalar_param_names:
+            logger.info(f"Visualizing scalar parameters: {scalar_param_names}")
+            self._visualize_scalar_parameters(scalar_param_names, real, learned)
+
+        # Get field parameter names from physical model
+        field_param_names = self.physical_model.field_param_names
+        if field_param_names:
+            logger.info(f"Visualizing field parameters: {field_param_names}")
+            self._visualize_field_parameters(field_param_names, real, learned)
+
+    def _visualize_scalar_parameters(self, param_names, real, learned):
+        """Visualize scalar parameters as bar chart."""
+        # Extract scalar values
+        real_values = []
+        learned_values = []
+
+        for param_name in param_names:
+            real_val = float(real.field[param_name])
+            learned_val = float(learned.field[param_name])
+            real_values.append(real_val)
+            learned_values.append(learned_val)
+
+            logger.info(f"  {param_name}: Real={real_val:.6f}, Learned={learned_val:.6f}, Error={abs(learned_val - real_val):.6f}")
+
+        # Create bar chart
+        fig, ax = plt.subplots(figsize=(10, 6))
+        x = np.arange(len(param_names))
+        width = 0.35
+
+        ax.bar(x - width/2, real_values, width, label='Ground Truth', alpha=0.8, color='#2E86AB')
+        ax.bar(x + width/2, learned_values, width, label='Learned', alpha=0.8, color='#A23B72')
+
+        ax.set_xlabel('Parameter', fontsize=12)
+        ax.set_ylabel('Value', fontsize=12)
+        ax.set_title('Physical Parameter Recovery', fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(param_names)
+        ax.legend(fontsize=11)
+        ax.grid(axis='y', alpha=0.3)
+
+        # Add text labels showing exact values and error
+        for i, (gt, learned_val) in enumerate(zip(real_values, learned_values)):
+            error = abs(learned_val - gt)
+            error_pct = (error / abs(gt) * 100) if gt != 0 else float('inf')
+            y_pos = max(gt, learned_val) * 1.05
+            ax.text(i, y_pos, f'Error: {error:.6f}\n({error_pct:.2f}%)',
+                   ha='center', va='bottom', fontsize=9, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
         plt.tight_layout()
-        output_path = self.output_dir / 'modulation_field_comparison.png'
-        plt.savefig(output_path, dpi=150)
+        output_path = self.output_dir / 'scalar_parameter_recovery.png'
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
-        logger.info(f"Saved modulation field comparison to {output_path}")
+        logger.info(f"Saved scalar parameter comparison to {output_path}")
+
+    def _visualize_field_parameters(self, param_names, real, learned):
+        """Visualize field parameters as spatial plots."""
+        # Visualize each field parameter component separately
+        for param_name in param_names:
+            logger.info(f"Creating visualization for parameter: {param_name}")
+
+            # Extract individual field component
+            real_param = real.field[param_name]
+            learned_param = learned.field[param_name]
+
+            # Calculate difference and relative error
+            difference = learned_param - real_param
+            relative_error = math.abs(difference) / (math.abs(real_param) + 1e-8)
+
+            # Create comparison plot for this parameter
+            plot({
+                f'Real {param_name}': real_param,
+                f'Learned {param_name}': learned_param,
+            })
+
+            output_path = self.output_dir / f'param_{param_name}_comparison.png'
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close('all')
+            logger.info(f"Saved {param_name} comparison to {output_path}")
+
+        # Also create vector field visualization if 2D
+        try:
+            if 'mod_field_x' in param_names and 'mod_field_y' in param_names:
+                logger.info("Creating vector field visualization...")
+
+                # Rename field channel to vector channel for vector visualization
+                real_vec = math.stack(
+                    [real.field['mod_field_x'], real.field['mod_field_y']],
+                    channel(vector='x,y')
+                )
+                learned_vec = math.stack(
+                    [learned.field['mod_field_x'], learned.field['mod_field_y']],
+                    channel(vector='x,y')
+                )
+
+                # Create vector field comparison
+                plot({
+                    'Real Modulation (Vector)': math.norm(real_vec),
+                    'Learned Modulation (Vector)': math.norm(learned_vec),
+                })
+
+                output_path = self.output_dir / 'modulation_vector_field_comparison.png'
+                plt.savefig(output_path, dpi=150, bbox_inches='tight')
+                plt.close('all')
+                logger.info(f"Saved vector field comparison to {output_path}")
+
+                # Calculate and log statistics
+                l2_error = math.sqrt(math.sum((real_vec - learned_vec) ** 2))
+                max_error = math.max(math.abs(real_vec - learned_vec))
+                logger.info(f"Vector field L2 error: {l2_error:.6f}")
+                logger.info(f"Vector field max error: {max_error:.6f}")
+
+        except Exception as e:
+            logger.warning(f"Could not create vector field visualization: {e}")
 
     def _evaluate_simulation(self, sim_idx: int):
         """Evaluate a single simulation."""
@@ -370,37 +391,4 @@ Difference RMS: {np.sqrt(np.mean(difference**2)):.4f}
             output_path = self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison.gif'
             ani.save(output_path, fps=10)
             logger.info(f"Saved animation to {output_path}")
-
-        # Visualize learned physical parameters if available
-        if hasattr(self, 'param_names') and hasattr(self, 'learnable_parameters'):
-            logger.info("Creating parameter recovery visualization...")
-            
-            # Create bar chart comparing ground truth vs learned
-            fig, ax = plt.subplots(figsize=(10, 6))
-            x = np.arange(len(self.param_names))
-            width = 0.35
-            
-            ax.bar(x - width/2, self.ground_truth_parameters, width, label='Ground Truth', alpha=0.8)
-            ax.bar(x + width/2, self.learnable_parameters, width, label='Learned', alpha=0.8)
-            
-            ax.set_xlabel('Parameter')
-            ax.set_ylabel('Value')
-            ax.set_title('Physical Parameter Recovery')
-            ax.set_xticks(x)
-            ax.set_xticklabels(self.param_names)
-            ax.legend()
-            ax.grid(axis='y', alpha=0.3)
-            
-            # Add text labels showing exact values and error
-            for i, (gt, learned) in enumerate(zip(self.ground_truth_parameters, self.learnable_parameters)):
-                error = abs(learned - gt)
-                error_pct = (error / abs(gt) * 100) if gt != 0 else float('inf')
-                ax.text(i, max(gt, learned) * 1.05, f'Error: {error:.4f}\n({error_pct:.1f}%)', 
-                       ha='center', va='bottom', fontsize=9)
-            
-            plt.tight_layout()
-            output_path = self.output_dir / 'parameter_recovery.png'
-            plt.savefig(output_path, dpi=150)
-            plt.close(fig)
-            logger.info(f"Saved parameter comparison to {output_path}")
 

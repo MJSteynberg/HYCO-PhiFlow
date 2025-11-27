@@ -1,382 +1,301 @@
-"""Hybrid trainer alternating between physical and synthetic model training."""
+"""Hybrid trainer that alternates between synthetic and physical training with data augmentation."""
 
-import torch
-import torch.nn as nn
+import os
+import time
+from typing import Dict, Any, List
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
 from tqdm import tqdm
-import gc
-from contextlib import contextmanager
 
-from src.training.abstract_trainer import AbstractTrainer
+from phi.torch.flow import *
+from phi.math import math, Tensor
+
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
+from src.data.dataset import AccessPolicy, Dataset
 from src.utils.logger import get_logger
-from phi.math import Tensor
-from phi.flow import Field
-from src.data.dataset import Dataset, AccessPolicy
 
 logger = get_logger(__name__)
 
 
-class HybridTrainer(AbstractTrainer):
-    """Alternates between physical rollout generation and synthetic model training."""
+class HybridTrainer:
+    """
+    Hybrid trainer that alternates between synthetic and physical model training
+    with cross-model data augmentation.
+
+    Training procedure:
+    1. Warmup phase: Train both models on real data only
+    2. Hybrid phase: For each cycle:
+       - Train synthetic model
+       - Generate augmented data from synthetic model
+       - Train physical model with mixed real+synthetic data
+       - Generate augmented data from physical model
+       - Train synthetic model with mixed real+physical data
+    """
 
     def __init__(
         self,
         config: Dict[str, Any],
-        synthetic_model: nn.Module,
+        synthetic_model,
         physical_model,
     ):
-        """Initialize hybrid trainer with both models."""
-        super().__init__(config)
+        """
+        Initialize hybrid trainer.
 
-        # Store models
+        Args:
+            config: Full configuration dictionary
+            synthetic_model: Initialized synthetic model
+            physical_model: Initialized physical model
+        """
+        self.config = config
         self.synthetic_model = synthetic_model
         self.physical_model = physical_model
-        # Parse configuration
+
         self._parse_config(config)
 
-        # Create single unified dataset
-        self._base_dataset = None
-        self._initialize_dataset()
+        # Determine maximum rollout steps needed (for dataset creation)
+        # Use the maximum from synthetic rollout scheduler if enabled
+        synthetic_config = config['trainer']['synthetic']
+        rollout_scheduler = synthetic_config.get('rollout_scheduler', None)
+        if rollout_scheduler:
+            max_rollout_steps = rollout_scheduler.get('end', config['trainer'].get('rollout_steps', 4))
+        else:
+            max_rollout_steps = synthetic_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
 
-        # Create component trainers
+        # Create dataset directly with maximum rollout steps
+        self.dataset = Dataset(
+            config=config,
+            train_sim=config['trainer']['train_sim'],
+            rollout_steps=max_rollout_steps,
+        )
+
+        # Create individual trainers
         self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
         self.physical_trainer = PhysicalTrainer(config, physical_model)
 
-        # Training state
-        self.current_cycle = 0
-        self.best_synthetic_loss = float("inf")
-        self.best_physical_loss = float("inf")
+        # Cache directory for augmented data
+        self.cache_dir = Path(self.augmentation_config.get('cache_dir', 'data/cache_phiml'))
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"HybridTrainer initialized: "
+            f"cycles={self.cycles}, warmup={self.warmup_cycles}, "
+            f"alpha={self.alpha}"
+        )
 
     def _parse_config(self, config: Dict[str, Any]):
-        """Extract all configuration parameters."""
-        self.config = config
-        # Hybrid training parameters
-        self.cycles = config['trainer']['hybrid']['cycles']
-        self.warmup = config['trainer']['hybrid']['warmup']
+        """Parse hybrid training configuration."""
+        hybrid_config = config['trainer']['hybrid']
+
+        self.cycles = hybrid_config['cycles']
+        self.warmup_cycles = hybrid_config.get('warmup', 0)
+        self.augmentation_config = hybrid_config.get('augmentation', {})
+        self.alpha = self.augmentation_config.get('alpha', 1.0)
+
+        # Get epochs for each model
         self.synthetic_epochs = config['trainer']['synthetic']['epochs']
         self.physical_epochs = config['trainer']['physical']['epochs']
-        self.alpha = config['trainer']['hybrid']['augmentation']['alpha']
-        self.real_data_access = config['trainer']['data_access']
-        self.device = torch.device(config['trainer']['device'] if torch.cuda.is_available() else "cpu")
 
-        # Data config
-        self.train_sim = config['trainer']['train_sim']
-        self.alpha = config['trainer']["hybrid"]["augmentation"]['alpha']
-        # field_names will be set after dataset initialization
-        self.field_names = None
-        self.batch_size = config['trainer']['batch_size']
-        self.trajectory_length = config['data']['trajectory_length']
-
-        # Separate rollout steps for physical and synthetic models
-        self.physical_rollout_steps = config['trainer']['physical'].get(
-            'rollout_steps',
-            config['trainer'].get('rollout_steps', 4)
-        )
-        self.synthetic_rollout_steps = config['trainer']['synthetic'].get(
-            'rollout_steps',
-            config['trainer'].get('rollout_steps', 4)
-        )
-        # Default rollout_steps for backward compatibility (uses synthetic)
-        self.rollout_steps = self.synthetic_rollout_steps
-
-        self.learnable_parameters = config['trainer']['physical']['learnable_parameters']
-
-
-    def _initialize_dataset(self):
-        """Create unified PhiML Dataset.
-
-        Uses the maximum of physical and synthetic rollout steps to ensure
-        enough target frames are available for both training phases.
+    def train(self, verbose: bool = True) -> Dict[str, Any]:
         """
-        # Use max rollout steps to ensure enough targets for both models
-        max_rollout_steps = max(self.physical_rollout_steps, self.synthetic_rollout_steps)
-        self._base_dataset = Dataset(
-            config=self.config,
-            train_sim=self.train_sim,
-            rollout_steps=max_rollout_steps
-        )
-        # Get field_names from dataset (tensor shape is self-describing)
-        self.field_names = list(self._base_dataset.field_names)
-        logger.info(
-            f"Initialized dataset with {len(self._base_dataset)} samples "
-            f"(physical_rollout={self.physical_rollout_steps}, synthetic_rollout={self.synthetic_rollout_steps}), "
-            f"fields={self.field_names}"
-        )
-
-    def train(self):
-        """Main training loop."""
-        if self.warmup > 0:
-            self._run_warmup()
-        
-        pbar = tqdm(range(self.cycles), desc="Hybrid Cycles", unit="cycle")
-        
-        for cycle in pbar:
-            self.current_cycle = cycle
-            
-            synthetic_loss, physical_loss = self._run_cycle()
-            
-            pbar.set_postfix({
-                'syn_loss': f"{synthetic_loss:.6f}",
-                'phy_loss': f"{physical_loss:.6f}",
-                'params': f"{self.physical_trainer.get_current_params()}"
-            })
-            self._save_if_best(synthetic_loss, physical_loss)
-
-    def _run_warmup(self):
-        """Warmup phase - train synthetic model on real data only."""
-        logger.info(f"Running warmup for {self.warmup} epochs...")
-
-        # Set dataset to use only real data
-        self._base_dataset.access_policy = AccessPolicy.REAL_ONLY
-
-        # Train synthetic model directly with dataset
-        self.synthetic_trainer.train(
-            dataset=self._base_dataset,
-            num_epochs=self.warmup,
-            verbose=True
-        )
-
-        self._clear_gpu_memory()
-
-    def _run_cycle(self) -> Tuple[float, float]:
-        """Execute one complete hybrid training cycle."""
-        logger.debug(f"\n{'='*60}")
-        logger.debug(f"CYCLE {self.current_cycle + 1}/{self.cycles}")
-        logger.debug(f"{'='*60}")
-
-        # Phase 1: Generate physical trajectories (as Field rollouts)
-        logger.debug("Phase 1: Generating physical trajectories...")
-        physical_rollouts = self._generate_physical_rollouts()
-
-        # Phase 2: Add to dataset and train synthetic model
-        logger.debug("Phase 2: Training synthetic model on physical trajectories...")
-        self._base_dataset.set_augmented_trajectories(physical_rollouts)
-        synthetic_loss = self._train_synthetic_model()
-
-        # Phase 3: Generate synthetic predictions (as tensor trajectories)
-        logger.debug("Phase 3: Generating synthetic predictions...")
-        synthetic_predictions = self._generate_synthetic_predictions()
-
-        # Phase 4: Add to dataset and train physical model
-        logger.debug("Phase 4: Training physical model on synthetic predictions...")
-        self._base_dataset.set_augmented_trajectories(synthetic_predictions)
-        physical_loss = self._train_physical_model()
-
-        # Cleanup
-        del physical_rollouts
-        del synthetic_predictions
-        self._clear_gpu_memory()
-
-        return synthetic_loss, physical_loss
-    
-    # ==================== PHASE 1: PHYSICAL ROLLOUT GENERATION ====================
-    
-    def _generate_physical_rollouts(self) -> List[Dict[str, Field]]:
-        """
-        Generate physical model rollouts as Field trajectories.
-        
-        Returns:
-            List of rollout dictionaries: [{'field_name': Field[time, x, y]}]
-        """
-        with self.managed_memory_phase("Physical Generation"):
-            if hasattr(self.physical_model, 'to'):
-                self.physical_model.to(self.device)
-            
-            # Calculate requirements
-            num_real_samples = self._calculate_num_real_samples()
-            num_synthetic_samples = int(num_real_samples * self.alpha)
-            
-            samples_per_trajectory = self.trajectory_length - self.rollout_steps
-            num_trajectories = max(1, (num_synthetic_samples + samples_per_trajectory - 1) // samples_per_trajectory)
-            
-            # Generate batched rollout
-            initial_state = self.physical_model.get_initial_state(batch_size=num_trajectories)
-            rollout = self.physical_model.rollout(initial_state, num_steps=self.trajectory_length)
-            
-            # Split into list of individual trajectories
-            rollouts = []
-            
-            for traj_idx in range(num_trajectories):
-                trajectory = {}
-                for field_name in self.field_names:
-                    trajectory[field_name] = rollout[field_name].batch[traj_idx]
-                rollouts.append(trajectory)
-            
-            logger.debug(f"  Generated {len(rollouts)} physical trajectories")
-            return rollouts
-    
-    # ==================== PHASE 2: SYNTHETIC MODEL TRAINING ====================
-
-    def _train_synthetic_model(self) -> float:
-        """
-        Train synthetic model on real + physical trajectories.
-
-        Dataset handles windowing of physical trajectories internally.
-        """
-        with self.managed_memory_phase("Synthetic Training", clear_cache=False):
-            # Set access policy
-            access_policy = self._get_access_policy(for_synthetic=True)
-            self._base_dataset.access_policy = access_policy
-
-            logger.debug(
-                f"  Dataset: {self._base_dataset.num_real_samples} real + "
-                f"{len(self._base_dataset.augmented_samples)} augmented = "
-                f"{len(self._base_dataset)} total samples"
-            )
-
-            # Train directly with dataset
-            result = self.synthetic_trainer.train(
-                dataset=self._base_dataset,
-                num_epochs=self.synthetic_epochs,
-                verbose=False
-            )
-
-            logger.debug(f"  Synthetic loss: {result['final_loss']:.6f}")
-            return result['final_loss']
-    
-    # ==================== PHASE 3: SYNTHETIC PREDICTION GENERATION ====================
-
-    def _generate_synthetic_predictions(self) -> List[Dict[str, Tensor]]:
-        """
-        Generate synthetic predictions using autoregressive rollout.
-
-        Uses the same number of trajectories as physical model generated,
-        starting from initial states in the dataset.
+        Execute hybrid training.
 
         Returns:
-            List of prediction dicts with PhiML tensors: [{'field_name': Tensor[time, x, y, vector]}, ...]
+            Dictionary with training results
         """
-        with self.managed_memory_phase("Synthetic Prediction"):
-            from phi.math import math
+        results = {
+            "cycles": [],
+            "synthetic_losses": [],
+            "physical_losses": [],
+            "cycle_times": [],
+        }
 
-            # Calculate how many predictions to generate
-            num_real_samples = self._base_dataset.num_real_samples
-            num_synthetic_samples = int(num_real_samples * self.alpha)
-            samples_per_trajectory = self.trajectory_length - self.rollout_steps
-            num_trajectories = max(1, (num_synthetic_samples + samples_per_trajectory - 1) // samples_per_trajectory)
+        logger.info("="*60)
+        logger.info("Starting Hybrid Training")
+        logger.info("="*60)
 
-            logger.debug(f"  Generating {num_trajectories} synthetic prediction trajectories")
+        # Warmup phase: Train on real data only
+        if self.warmup_cycles > 0:
+            logger.info(f"\n{'='*60}")
+            logger.info(f"WARMUP PHASE: Training on real data only ({self.warmup_cycles} cycles)")
+            logger.info(f"{'='*60}\n")
 
-            predictions = []
+            for cycle in range(self.warmup_cycles):
+                logger.info(f"\n--- Warmup Cycle {cycle + 1}/{self.warmup_cycles} ---")
+                cycle_start = time.time()
 
-            # Generate predictions starting from random initial states from dataset
-            for _ in range(num_trajectories):
-                # Get a random sample from the dataset
-                sample_idx = torch.randint(0, self._base_dataset.num_real_samples, (1,)).item()
-                sample = self._base_dataset._get_sample(sample_idx)
-                current_state = sample.initial_state  # Dict[field_name, Tensor]
+                # Configure dataset for real data only
+                self.dataset.access_policy = AccessPolicy.REAL_ONLY
+                self.dataset.alpha = 1.0
 
-                # Autoregressive rollout using synthetic model
-                # Collect trajectory as list of dicts per timestep
-                trajectory_steps = []
+                # Train synthetic model
+                synthetic_results = self.synthetic_trainer.train(
+                    self.dataset,
+                    num_epochs=self.synthetic_epochs,
+                    start_epoch=cycle * self.synthetic_epochs,
+                    verbose=verbose
+                )
 
-                for step in range(self.trajectory_length):
-                    # Call model with dict of fields (matches dataset format!)
-                    next_state = self.synthetic_model(current_state)
-                    trajectory_steps.append(next_state)
-                    current_state = next_state
+                cycle_time = time.time() - cycle_start
 
-                # Stack each field's trajectory along time dimension
-                trajectory_dict = {}
-                for field_name in self.field_names:
-                    # Stack this field across all timesteps: [time, x, y, vector]
-                    trajectory_dict[field_name] = math.stack(
-                        [step[field_name] for step in trajectory_steps],
-                        math.batch('time')
-                    )
+        # Hybrid phase: Alternating training with augmentation
+        logger.info(f"\n{'='*60}")
+        logger.info(f"HYBRID PHASE: Training with data augmentation ({self.cycles} cycles)")
+        logger.info(f"{'='*60}\n")
 
-                predictions.append(trajectory_dict)
+        for cycle in range(self.cycles):
+            cycle_start = time.time()
 
-            logger.debug(f"  Generated {len(predictions)} synthetic predictions")
-            return predictions
+            synthetic_trajectories = self._generate_synthetic_data()
+            self._save_augmented_data(synthetic_trajectories, f"synthetic_cycle_{cycle}")
 
+            self.dataset.set_augmented_trajectories(synthetic_trajectories)
+            self.dataset.access_policy = AccessPolicy.BOTH
+            self.dataset.alpha = self.alpha
 
-    def _train_physical_model(self) -> float:
-        """
-        Train physical model on real + synthetic predictions.
-
-        Dataset already has augmented predictions set, just need to train.
-        """
-        if len(self.physical_trainer.learnable_parameters) == 0:
-            logger.info("No learnable parameters, skipping physical training")
-            return 0.0
-
-        with self.managed_memory_phase("Physical Training", clear_cache=False):
-            # Set access policy
-            access_policy = self._get_access_policy(for_synthetic=False)
-            self._base_dataset.access_policy = access_policy
-
-            logger.debug(
-                f"  Dataset: {self._base_dataset.num_real_samples} real + "
-                f"{len(self._base_dataset.augmented_samples)} augmented = "
-                f"{len(self._base_dataset)} total samples"
-            )
-
-            # Train directly with dataset
-            result = self.physical_trainer.train(
-                dataset=self._base_dataset,
+            physical_results = self.physical_trainer.train(
+                self.dataset,
                 num_epochs=self.physical_epochs,
-                verbose=False
+                verbose=verbose
             )
 
-            logger.debug(f"  Physical loss: {result['final_loss']:.6f}")
-            return float(result['final_loss'])
-        
-    # ==================== UTILITIES ====================
+            physical_trajectories = self._generate_physical_data()
+            self._save_augmented_data(physical_trajectories, f"physical_cycle_{cycle}")
 
-    def _calculate_num_real_samples(self) -> int:
+            self.dataset.set_augmented_trajectories(physical_trajectories)
+            self.dataset.access_policy = AccessPolicy.BOTH
+            self.dataset.alpha = self.alpha
+
+            synthetic_results_2 = self.synthetic_trainer.train(
+                self.dataset,
+                num_epochs=self.synthetic_epochs,
+                start_epoch=(self.warmup_cycles + cycle) * self.synthetic_epochs + self.synthetic_epochs,
+                verbose=verbose
+            )
+
+            cycle_time = time.time() - cycle_start
+
+            results["cycles"].append(cycle + 1)
+            results["synthetic_losses"].append(synthetic_results_2["final_loss"])
+            results["physical_losses"].append(physical_results["final_loss"])
+            results["cycle_times"].append(cycle_time)
+
+        logger.info("\n" + "="*60)
+        logger.info("Hybrid Training Completed")
+        logger.info("="*60)
+
+        return results
+
+    def _generate_synthetic_data(self) -> List[Tensor]:
         """
-        Calculate number of truly real samples (excluding any augmentation).
+        Generate augmented trajectories using the synthetic model.
 
-        Returns the count of original simulation data samples.
+        Returns:
+            List of trajectory tensors
         """
-        return self._base_dataset.num_real_samples
-    
-    def _get_access_policy(self, for_synthetic: bool) -> AccessPolicy:
-        """Determine data access policy based on configuration."""
-        if for_synthetic:
-            # Synthetic model training
-            if self.real_data_access in ["both", "synthetic_only"]:
-                return AccessPolicy.BOTH  # Use real + physical trajectories
-            else:
-                return AccessPolicy.GENERATED_ONLY  # Only physical trajectories
-        else:
-            # Physical model training
-            if self.real_data_access in ["both", "physical_only"]:
-                return AccessPolicy.BOTH  # Use real + synthetic predictions
-            else:
-                return AccessPolicy.GENERATED_ONLY  # Only synthetic predictions
-    
-    @staticmethod
-    @contextmanager
-    def managed_memory_phase(phase_name: str, clear_cache: bool = True):
-        """Context manager for memory-efficient training phases."""
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        try:
-            yield
-        finally:
-            if torch.cuda.is_available() and clear_cache:
-                gc.collect()
-                torch.cuda.empty_cache()
-    
-    def _clear_gpu_memory(self):
-        """Force GPU memory cleanup."""
-        if torch.cuda.is_available():
-            gc.collect()
-            torch.cuda.empty_cache()
-    
-    def _save_if_best(self, synthetic_loss: float, physical_loss: float):
-        """Save checkpoints if losses improved."""
-        if synthetic_loss < self.best_synthetic_loss:
-            self.best_synthetic_loss = synthetic_loss
-            self.synthetic_trainer.save_checkpoint(epoch=self.current_cycle, loss=synthetic_loss)
-            logger.debug(f"Saved best synthetic model: loss={synthetic_loss:.6f}")
+        trajectories = []
 
-        if physical_loss < self.best_physical_loss:
-            self.best_physical_loss = physical_loss
-            self.physical_trainer.save_checkpoint()
-            logger.debug(f"Saved best physical model: loss={physical_loss:.6f}")
+        # Generate trajectories from each training simulation
+        for sim_idx in self.config['trainer']['train_sim']:
+            # Load simulation data
+            sim_path = os.path.join(
+                self.config['data']['data_dir'],
+                f"sim_{sim_idx:04d}.npz"
+            )
+            sim_data = math.load(sim_path)
+
+            # Take first state as initial condition
+            initial_state = sim_data.time[0]
+
+            # Rollout using synthetic model (no batch dimension needed for single rollout)
+            trajectory = self._rollout_synthetic_single(
+                initial_state,
+                self.config['data']['trajectory_length']
+            )
+
+            trajectories.append(trajectory)
+
+        logger.info(f"Generated {len(trajectories)} synthetic trajectories")
+        return trajectories
+
+    def _generate_physical_data(self) -> List[Tensor]:
+        """
+        Generate augmented trajectories using the physical model.
+
+        Returns:
+            List of trajectory tensors
+        """
+        trajectories = []
+
+        # Generate trajectories from each training simulation
+        for sim_idx in self.config['trainer']['train_sim']:
+            # Load simulation data
+            sim_path = os.path.join(
+                self.config['data']['data_dir'],
+                f"sim_{sim_idx:04d}.npz"
+            )
+            sim_data = math.load(sim_path)
+
+            # Take first state as initial condition
+            initial_state = sim_data.time[0]
+
+            # Add batch dimension using stack (more robust than expand)
+            initial_state_batched = math.stack([initial_state], batch('batch'))
+
+            # Rollout using physical model with current learned params
+            trajectory_batched = self.physical_model.rollout(
+                initial_state_batched,
+                self.physical_model.params,
+                self.config['data']['trajectory_length'] - 1
+            )
+
+            # Remove batch dimension
+            trajectory = trajectory_batched.batch[0]
+
+            # Detach from computational graph
+            trajectory = math.stop_gradient(trajectory)
+
+            trajectories.append(trajectory)
+
+        logger.info(f"Generated {len(trajectories)} physical trajectories")
+        return trajectories
+
+    def _rollout_synthetic_single(self, initial_state: Tensor, num_steps: int) -> Tensor:
+        """
+        Rollout the synthetic model for multiple steps (single trajectory, no batch).
+
+        Args:
+            initial_state: Initial state tensor (x, y?, field)
+            num_steps: Number of steps to rollout
+
+        Returns:
+            Trajectory tensor (time, x, y?, field)
+        """
+        states = [initial_state]
+        current_state = initial_state
+
+        for _ in range(num_steps - 1):
+            next_state = self.synthetic_model(current_state)
+            states.append(next_state)
+            current_state = next_state
+
+        # Stack along time dimension
+        trajectory = math.stack(states, batch('time'))
+
+        # Detach from computational graph to prevent gradient issues
+        trajectory = math.stop_gradient(trajectory)
+
+        return trajectory
+
+    def _save_augmented_data(self, trajectories: List[Tensor], prefix: str):
+        """
+        Save augmented trajectories to cache directory.
+
+        Args:
+            trajectories: List of trajectory tensors
+            prefix: Prefix for filenames
+        """
+        for i, trajectory in enumerate(trajectories):
+            cache_path = self.cache_dir / f"{prefix}_sim_{i:04d}.npz"
+            math.save(str(cache_path), trajectory)
+
+        logger.info(f"Saved {len(trajectories)} augmented trajectories to {self.cache_dir}")

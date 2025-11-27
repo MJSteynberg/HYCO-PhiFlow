@@ -18,9 +18,10 @@ class DataGenerator:
     def generate_data(self):
         """Generate simulation data and save as unified tensors."""
         initial_state = self.model.get_initial_state(self.num_simulations)
+        real_params = self.model.get_real_params()
 
         # PhiFlow's iterate() includes initial state, so use (trajectory_length - 1)
-        data = self.model.rollout(initial_state, self.trajectory_length - 1)
+        data = self.model.rollout(initial_state, real_params, self.trajectory_length - 1)
 
         # Unstack batches and save each simulation
         for i, sim_data in enumerate(unstack(data, 'batch')):

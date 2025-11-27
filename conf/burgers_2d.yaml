@@ -1,12 +1,12 @@
-general: 
-  experiment_name: 'burgers_experiment'
-  mode: 'synthetic' # Options: 'physical', 'physical', 'hybrid'
+general:
+  experiment_name: 'burgers_2d_experiment'
+  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
   tasks: ['generate', 'train', 'evaluate']
 
 data:
-  data_dir: 'data/burgers'
-  dset_name: 'burgers_128_2d'
-  num_simulations: 5
+  data_dir: 'data/burgers_2d'
+  dset_name: 'burgers_2d'
+  num_simulations: 6
   trajectory_length: 100
 
 model:
@@ -14,74 +14,74 @@ model:
     name: 'BurgersModel'
     model_path: 'results/models'
     model_save_name: 'burgers_physical_model_2d'
-    domain: 
+    domain:
       dimensions:
-        x: {size: 100, resolution: 128}
-        y: {size: 100, resolution: 128}
-        # z: {size: 100, resolution: 64}
+        x: {size: 100, resolution: 64}
+        y: {size: 100, resolution: 64}
     dt: 0.5
     pde_params:
-      name: 'diffusion_coeff'
-      type: 'scalar'
-      value: '0.5'  # Scalar diffusion coefficient
+      name: 'diffusion_field'
+      type: 'field'
+      value: '0.5 * ((x/size_x)**3 + (y/size_y)**3)'  # Spatially-varying diffusion field to learn
   synthetic:
-    name: 'UNet'  # Changed to PhiML version
+    name: 'UNet'
     model_path: 'results/models'
     model_save_name: 'burgers_synthetic_model_2d'
     architecture:
-      levels: 4  # Reduced for 1D - avoids excessive downsampling
-      filters: 64  # Smaller for 1D problem
-      batch_norm: false  # Disable batch norm - can cause artifacts in 1D
+      levels: 4
+      filters: 64
+      batch_norm: false
 
 trainer:
-  batch_size: 32  # Smaller batch to see individual samples
+  batch_size: 32
+  rollout_steps: 5
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
   physical:
     epochs: 1
-    rollout_steps: 4  # Rollout steps for physical model training
-    downsample_factor: 0 # 2^downsample_factor reduction in resolution for physical model training
-    learnable_parameters:
-      - name: 'diffusion_coeff'
-        type: 'field'
-        initial_guess: 0.01
+    rollout_steps: 1
+    downsample_factor: 0
     method: 'L-BFGS-B'
-    abs_tol: 1e-4
-    max_iterations: 5
+    abs_tol: 1e-6
+    max_iterations: 10
   synthetic:
-    epochs: 10000  # Faster iteration for debugging
-    rollout_steps: 4  # Rollout steps for synthetic model training
-    learning_rate: 0.00001
+    epochs: 10
+    rollout_scheduler:
+      start: 1
+      end: 6
+      strategy: 'exponential'
+      exponent: 3.0
+    learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 100
-    warmup: 100
+    cycles: 10
+    warmup: 1
     augmentation:
-      alpha: 0.2
-      cache_dir: data/cache_phiml  # PhiML cache uses .npz format
+      alpha: 1.0
+      cache_dir: data/cache_phiml
 
 
 # For evaluation
 evaluation:
   # Which simulations to evaluate
   test_sim: [0]
-  
+
   # Model checkpoint to evaluate
   synthetic_checkpoint: "results/models/burgers_synthetic_model_2d.pth"
-  physical_checkpoint: "results/models/burgers_physical_model_2d.pth"
-  
+  physical_checkpoint: "results/models/burgers_physical_model_2d.npz"
+
   # How many timesteps to rollout
   num_frames: 100
-  
+
   # Output directory
-  output_dir: "results/evaluation/burgers"
-  
+  output_dir: "results/evaluation/burgers_2d"
+
   # Visualization settings
   visualization:
     format: "gif"  # or "mp4"
     fps: 10
     dpi: 100
-      
+

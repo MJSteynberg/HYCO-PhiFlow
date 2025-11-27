@@ -25,9 +25,8 @@ class AdvectionModel(PhysicalModel):
         self._modulation_enabled = modulation_config.get("enabled", False)
         self._modulation_amplitude = float(modulation_config.get("amplitude", 0.0))
         self._modulation_lobes = int(modulation_config.get("lobes", 6))
-        
-        self._velocity_field = self._create_velocity_field()
         self._jit_step = self._create_jit_step()
+        self._params = self.get_initial_params()
 
     @property
     def static_field_names(self) -> Tuple[str, ...]:
@@ -44,29 +43,23 @@ class AdvectionModel(PhysicalModel):
         return self.dynamic_field_names + self.static_field_names
 
     @property
-    def advection_coeff(self) -> float:
-        return self._advection_coeff
-
-    @advection_coeff.setter
-    def advection_coeff(self, value: float):
-        self._advection_coeff = float(value)
-        self._jit_step = self._create_jit_step()
+    def scalar_param_names(self) -> Tuple[str, ...]:
+        return ()
 
     @property
-    def modulation_amplitude(self) -> float:
-        return self._modulation_amplitude
-
-    @modulation_amplitude.setter
-    def modulation_amplitude(self, value: float):
-        self._modulation_amplitude = float(value)
-        # Re-create velocity field when amplitude changes
-        self._velocity_field = self._create_velocity_field()
-        self._jit_step = self._create_jit_step()
+    def field_param_names(self) -> Tuple[str, ...]:
+        if self.n_spatial_dims == 2:
+            return ('mod_field_x', 'mod_field_y')
+        return ('mod_field_x',)
 
     @property
-    def velocity_field(self) -> CenteredGrid:
-        return self._velocity_field
-
+    def params(self) -> Tensor:
+        return self._params 
+    
+    @params.setter
+    def params(self, params: Tensor):
+        self._params = params
+    
     def _create_velocity_field(self) -> CenteredGrid:
         """Create velocity field using AngularVelocity with ring falloff."""
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
@@ -87,29 +80,36 @@ class AdvectionModel(PhysicalModel):
                 r = math.vec_length(distances)
                 return math.exp(-((r - ring_radius) / ring_width) ** 2)
 
-            angular_vel = AngularVelocity(location=center, strength=1.0, falloff=ring_falloff)
+            angular_vel = AngularVelocity(location=center, strength=0.5, falloff=ring_falloff)
             velocity_grid = CenteredGrid(
                 angular_vel,
                 extrapolation.PERIODIC,
                 bounds=self.domain,
                 **grid_kwargs
             )
-            
-            # Add modulation if enabled
-            if self._modulation_enabled:
-                modulation_field = self._create_modulation_field(center, ring_radius, ring_width, grid_kwargs)
-                velocity_grid = velocity_grid + modulation_field
                 
-            return velocity_grid
+            return velocity_grid.values
         else:
             def velocity_fn(x):
                 size_x = float(self.domain[0].size)
                 vx = 0.5 + 0.1 * math.sin(2 * math.pi * x / size_x)
                 return math.stack([vx], channel("vector"))
-            return CenteredGrid(velocity_fn, PERIODIC, bounds=self.domain, **grid_kwargs)
+            
+            velocity_grid = CenteredGrid(velocity_fn, PERIODIC, bounds=self.domain, **grid_kwargs)
+            return velocity_grid.values
 
-    def _create_modulation_field(self, center, ring_radius, ring_width, grid_kwargs):
+    def _create_modulation_field(self):
         """Create the sinusoidal modulation field."""
+        center_values = [float(self.domain[i].size) / 2 for i in range(2)]
+        vector_names = ','.join(self.spatial_dims)
+        center = math.tensor(center_values, channel(vector=vector_names))
+
+        # Ring parameters based on domain size
+        domain_size = float(self.domain[0].size)
+        ring_radius = domain_size * 0.3  # Ring at 30% of domain size
+        ring_width = domain_size * 0.05  # Width of the ring
+        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+        
         def modulated_velocity(location):
             # Calculate vector from center
             diff = location - center
@@ -135,44 +135,56 @@ class AdvectionModel(PhysicalModel):
             vel_x = magnitude * tangent_x
             vel_y = magnitude * tangent_y
             
-            return math.stack([vel_x, vel_y], channel(vector='x,y'))
+            return 5 * math.stack([vel_x, vel_y], channel(vector='x,y'))
 
-        return CenteredGrid(
+        modulation_grid = CenteredGrid(
             modulated_velocity,
             extrapolation.PERIODIC,
             bounds=self.domain,
             **grid_kwargs
         )
+        return modulation_grid.values
 
     def _create_jit_step(self):
         """Create JIT-compiled physics step."""
         domain = self.domain
         dt = self.dt
-        advection_coeff = self._advection_coeff
-        velocity_field = self._velocity_field
+        
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
         static_names = self.static_field_names
+        field_params_names = self.field_param_names
+        scalar_params_names = self.scalar_param_names
 
         @jit_compile
-        def advection_step(state: Tensor) -> Tensor:
-            # Extract density from field channel
-            density_tensor = state.field['density']
-            density_grid = CenteredGrid(density_tensor, PERIODIC, bounds=domain, **grid_kwargs)
-
-            # Advect density
-            scaled_velocity = velocity_field * advection_coeff
-            density_grid = advect.semi_lagrangian(density_grid, scaled_velocity, dt=dt)
-
-            # Create output with field channel
-            density_out = math.expand(density_grid.values, channel(field='density'))
-
-            # Extract and preserve static fields
+        def advection_step(state: Tensor, params: Tensor) -> Tensor:
+            
+            # Extract and preserve static fields from STATE (which contains original velocity)
             static = math.stack(
                 [state.field[n] for n in static_names],
                 channel(field=','.join(static_names))
             )
+            velocity = rename_dims(static, channel(field=','.join(static_names)), channel(vector=','.join(grid_kwargs.keys())))
 
-            return math.concat([density_out, static], 'field')
+            # Create grids from state
+            density_grid = CenteredGrid(state.field['density'], PERIODIC, bounds=domain, **grid_kwargs)
+            velocity_grid = CenteredGrid(velocity, PERIODIC, bounds=domain, **grid_kwargs)
+
+            # Create grids from params
+            field_params = math.stack(
+                [params.field[n] for n in field_params_names],
+                channel(field=','.join(field_params_names))
+            )
+            modulation_field = rename_dims(field_params, channel(field=','.join(field_params_names)), channel(vector=','.join(grid_kwargs.keys())))   
+
+            # Velocity added to modulation field
+            velocity_field = velocity_grid + modulation_field 
+            # Advect density using velocity
+            density_grid = advect.semi_lagrangian(density_grid, velocity_field, dt=dt)
+
+            # Create output with field channel
+            density_out = math.expand(density_grid.values, channel(field='density'))
+
+            return math.concat([density_out, static], 'field'), params
 
         return advection_step
 
@@ -191,95 +203,45 @@ class AdvectionModel(PhysicalModel):
         density = math.expand(density_grid.values, batch(batch=batch_size))
         density = math.expand(density, channel(field='density'))
 
-        # Velocity from pre-computed field
-        vel_values = self._velocity_field.values
+        # Velocity from pre-computed field (Base velocity only)
+        vel_values = self._create_velocity_field()
         static_names = ','.join(self.static_field_names)
         velocity = math.rename_dims(vel_values, 'vector', channel(field=static_names))
         velocity = math.expand(velocity, batch(batch=batch_size))
 
         return math.concat([density, velocity], 'field')
 
-    def forward(self, state: Tensor, advection_coeff: Tensor = None, modulation_amplitude: Tensor = None) -> Tensor:
+    def get_real_params(self) -> Tensor:
+        modulation_field = self._create_modulation_field()
+        field_names = ','.join(self.field_param_names)
+        modulation_field = math.rename_dims(modulation_field, 'vector', channel(field=field_names))
+        return math.concat([modulation_field], 'field')
+
+    def get_initial_params(self) -> Tensor:
+        return math.ones_like(self.get_real_params())
+
+    def forward(self, state: Tensor, params: Tensor) -> Tensor:
         """
         Forward pass through the model.
         
         Args:
             state: Current state tensor
-            advection_coeff: Optional override for advection coefficient (for physical training)
-            modulation_amplitude: Optional override for modulation amplitude (for physical training, currently unused)
-        
-        Note: This simplified version ignores modulation_amplitude since the base model doesn't have modulation.
         """
-        # If parameters are provided (during physical training), use non-JIT path
-        if advection_coeff is not None or modulation_amplitude is not None:
-            # Extract density from field channel
-            density_tensor = state.field['density']
-            grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
-            density_grid = CenteredGrid(density_tensor, PERIODIC, bounds=self.domain, **grid_kwargs)
-
-            # Use provided coefficient or default
-            coeff = advection_coeff if advection_coeff is not None else math.tensor(self._advection_coeff)
             
-            # Rebuild velocity field if modulation_amplitude is provided
-            if self._modulation_enabled and modulation_amplitude is not None:
-                # Create base angular velocity field
-                center_values = [float(self.domain[i].size) / 2 for i in range(2)]
-                vector_names = ','.join(self.spatial_dims)
-                center = math.tensor(center_values, channel(vector=vector_names))
-                ring_radius = float(self.domain[0].size) * 0.3
-                ring_width = float(self.domain[0].size) * 0.15
-                
-                def ring_falloff(distances):
-                    r = math.vec_length(distances)
-                    return math.exp(-((r - ring_radius) / ring_width) ** 2)
-                
-                from phi.field import AngularVelocity
-                angular_vel = AngularVelocity(location=center, strength=1.0, falloff=ring_falloff)
-                velocity_grid = CenteredGrid(angular_vel, extrapolation.PERIODIC, bounds=self.domain, **grid_kwargs)
-                
-                # Create modulation field using a location function (avoids nested function issues)
-                def modulation_fn(location):
-                    diff = location - center
-                    r = math.vec_length(diff)
-                    theta = math.arctan(diff.vector['y'], diff.vector['x'])
-                    falloff = math.exp(-((r - ring_radius) / ring_width) ** 2)
-                    modulation = modulation_amplitude * math.sin(self._modulation_lobes * theta)
-                    magnitude = falloff * modulation
-                    tangent_x = -diff.vector['y'] / (r + 1e-6)
-                    tangent_y = diff.vector['x'] / (r + 1e-6)
-                    vel_x = magnitude * tangent_x
-                    vel_y = magnitude * tangent_y
-                    return math.stack([vel_x, vel_y], channel(vector='x,y'))
-                
-                modulation_grid = CenteredGrid(modulation_fn, extrapolation.PERIODIC, bounds=self.domain, **grid_kwargs)
-                
-                # Add modulation to base field
-                velocity_grid = velocity_grid + modulation_grid
-            else:
-                velocity_grid = self._velocity_field
+        # Call JIT step with resolved arguments
+        pred, _ = self._jit_step(state, params)
+        return pred
 
-            # Advect with combined velocity field
-            scaled_velocity = velocity_grid * coeff
-            density_grid = advect.semi_lagrangian(density_grid, scaled_velocity, dt=self.dt)
-
-            # Create output with field channel
-            density_out = math.expand(density_grid.values, channel(field='density'))
-
-            # Extract and preserve static fields
-            static_names = self.static_field_names
-            static = math.stack(
-                [state.field[n] for n in static_names],
-                channel(field=','.join(static_names))
-            )
-
-            return math.concat([density_out, static], 'field')
-        else:
-            # Use pre-compiled JIT step for inference
-            return self._jit_step(state)
-
-    def rollout(self, initial_state: Tensor, num_steps: int) -> Tensor:
+    def rollout(self, initial_state: Tensor, params: Tensor, num_steps: int) -> Tensor:
         """Rollout simulation for multiple steps."""
-        trajectory = iterate(self._jit_step, batch(time=num_steps), initial_state)
+        trajectory, _ = iterate(self._jit_step, batch(time=num_steps), initial_state, params)
         if isinstance(trajectory, tuple):
             trajectory = trajectory[0]
         return trajectory
+
+    def save(self, path):
+        math.save(str(path), self.params)
+
+    def load(self, path):
+        self.params = math.load(str(path))
+

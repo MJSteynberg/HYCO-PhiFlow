@@ -55,8 +55,13 @@ class SyntheticModel:
             # No static fields - pass entire state through network
             # Extract field names to restore after network call
             field_names = state.shape['field'].item_names
-            if isinstance(field_names[0], tuple):
+            # Normalize field_names to list of strings
+            if isinstance(field_names, tuple) and len(field_names) > 0 and isinstance(field_names[0], tuple):
                 field_names = field_names[0]
+            if isinstance(field_names, str):
+                field_names = [field_names]
+            elif not isinstance(field_names, (list, tuple)):
+                field_names = list(field_names)
 
             predicted = math.native_call(self._network, state)
 
@@ -64,17 +69,27 @@ class SyntheticModel:
             if 'field' not in predicted.shape.names:
                 channel_dim = predicted.shape.channel
                 if channel_dim:
+                    # Network has channel dim, rename it to field
                     predicted = math.rename_dims(
                         predicted,
                         channel_dim.name,
                         channel(field=','.join(field_names))
                     )
+                else:
+                    # Network output has no channel dim (single channel was squeezed)
+                    # Explicitly add field dimension
+                    predicted = math.expand(predicted, channel(field=','.join(field_names)))
             return predicted
 
         # Extract field names from tensor
         field_names = state.shape['field'].item_names
-        if isinstance(field_names[0], tuple):
+        # Normalize field_names to list of strings
+        if isinstance(field_names, tuple) and len(field_names) > 0 and isinstance(field_names[0], tuple):
             field_names = field_names[0]
+        if isinstance(field_names, str):
+            field_names = [field_names]
+        elif not isinstance(field_names, (list, tuple)):
+            field_names = list(field_names)
 
         # Separate dynamic and static fields
         dynamic_names = [f for f in field_names if f not in self.static_fields]

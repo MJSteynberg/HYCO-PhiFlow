@@ -101,6 +101,7 @@ def main(cfg: DictConfig) -> None:
                 # HybridTrainer manages data creation internally
                 # Just call train() with no arguments
                 logger.info("Starting hybrid training...")
+                trainer = TrainerFactory.create_trainer(config)
                 trainer.train()
             
             else:

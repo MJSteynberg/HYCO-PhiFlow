@@ -26,7 +26,7 @@ class PhysicalTrainer:
         self.optimizer = math.Solve(
             method=self.method,
             abs_tol=self.abs_tol,
-            x0=self.learnable_parameters,
+            x0=self.model.params,
             max_iterations=self.max_iterations,
             suppress=(math.NotConverged,),
         )
@@ -57,30 +57,13 @@ class PhysicalTrainer:
         self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}.npz"
         os.makedirs(model_path_dir, exist_ok=True)
 
-        # Learnable parameters - store as tensors only
-        learnable_config = config['trainer']['physical']['learnable_parameters']
-        self.learnable_parameters = []
-        self.param_names = []
-
-        for param_config in learnable_config:
-            param_name = param_config["name"]
-            initial_value = param_config.get("initial_guess")
-
-            # Convert to tensor if it's a field
-            if hasattr(initial_value, 'values'):
-                self.learnable_parameters.append(initial_value.values)
-            else:
-                self.learnable_parameters.append(math.tensor(initial_value))
-
-            self.param_names.append(param_name)
-
         # Training params
         physical_config = config['trainer']['physical']
         self.rollout_steps = physical_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
         self.batch_size = physical_config.get('batch_size', 1)
         self.method = physical_config['method']
-        self.abs_tol = physical_config['abs_tol']
-        self.max_iterations = physical_config['max_iterations']
+        self.abs_tol = float(physical_config['abs_tol'])
+        self.max_iterations = int(physical_config['max_iterations'])
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """Execute training for specified number of epochs."""
@@ -93,17 +76,16 @@ class PhysicalTrainer:
         }
 
         pbar = tqdm(range(num_epochs), desc="Training", unit="epoch", disable=not verbose)
-
         for epoch in pbar:
             start_time = time.time()
             train_loss = 0.0
             num_batches = 0
 
             for batch in dataset.iterate_batches(batch_size=self.batch_size, shuffle=True):
-                if num_batches < 5:
-                    batch_loss = self._optimize_batch(batch.initial_state, batch.targets)
-                    train_loss += batch_loss
-                    num_batches += 1
+                # Use current model params (updated after each batch)
+                batch_loss = self._optimize_batch(batch.initial_state, batch.targets, self.model.params)
+                train_loss += batch_loss
+                num_batches += 1
 
             avg_train_loss = train_loss / num_batches if num_batches > 0 else train_loss
             results["train_losses"].append(avg_train_loss)
@@ -126,67 +108,41 @@ class PhysicalTrainer:
         results["final_loss"] = results["train_losses"][-1]
         return results
 
-    def _optimize_batch(self, initial_state: Tensor, targets: Tensor) -> float:
+    def _optimize_batch(self, initial_state: Tensor, targets: Tensor, params: Tensor) -> float:
         """Optimize parameters over a batch."""
-        def loss_function(*learnable_tensors: Tensor) -> Tensor:
-            # Build kwargs for forward pass
-            forward_kwargs = {}
-            for param_name, param_value in zip(self.param_names, learnable_tensors):
-                forward_kwargs[param_name] = param_value
-
+        def loss_function(params: Tensor) -> Tensor:
             total_loss = math.tensor(0.0)
             current_state = initial_state
 
             for step in range(self.rollout_steps):
-                current_state = self.model.forward(current_state, **forward_kwargs)
+                current_state = self.model.forward(current_state, params)
                 target = targets.time[step]
                 step_loss = math.mean((current_state - target) ** 2)
                 total_loss += step_loss
 
             return math.mean(total_loss, 'batch') / self.rollout_steps
-
+        
         estimated_params = minimize(loss_function, self.optimizer)
         
         # Update model with optimized params
         self._update_params(estimated_params)
         
-        return float(loss_function(*estimated_params))
+        return float(loss_function(estimated_params))
 
-    def _update_params(self, learnable_tensors: Tuple[Tensor, ...]):
+    def _update_params(self, params: Tensor):
         """Update model parameters from optimizer (tensors only)."""
-        for param_name, param_value in zip(self.param_names, learnable_tensors):
-            setattr(self.model, param_name, param_value)
-
-        self.optimizer.x0 = list(learnable_tensors)
-        self.learnable_parameters = list(learnable_tensors)
+        self.model.params = params
+        self.optimizer.x0 = params
+        self.learnable_parameters = params
 
     def save_checkpoint(self):
-        """Save learnable parameters using numpy format."""
-        # Create dictionary with proper field names
-        save_dict = {}
-        for name, param in zip(self.param_names, self.learnable_parameters):
-            # Convert to native scalar if it's a simple tensor
-            if hasattr(param, 'native'):
-                native_val = param.native()
-                # Move to CPU if on CUDA
-                if hasattr(native_val, 'cpu'):
-                    native_val = native_val.cpu()
-                save_dict[f'_{name}'] = native_val.detach().numpy()
-            else:
-                save_dict[f'_{name}'] = param
-        
-        # Use numpy save
-        import numpy as np
-        np.savez(str(self.checkpoint_path), **save_dict)
+        self.model.save(self.checkpoint_path)
 
     def load_checkpoint(self):
-        """Load learnable parameters using numpy format."""
-        import numpy as np
-        loaded = np.load(str(self.checkpoint_path))
-        self.learnable_parameters = [math.tensor(loaded[f'_{name}']) for name in self.param_names]
-        for param_name, param_value in zip(self.param_names, self.learnable_parameters):
-            setattr(self.model, param_name, param_value)
-
-    def get_current_params(self) -> Dict[str, Tensor]:
-        """Get current learnable parameters as a dictionary."""
-        return {name: param for name, param in zip(self.param_names, self.learnable_parameters)}
+        path = self.checkpoint_path
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        self.model.load(str(path))
+        # Update optimizer's initial point to loaded params
+        self.optimizer.x0 = self.model.params
+        logger.info(f"Loaded checkpoint from {path}")
