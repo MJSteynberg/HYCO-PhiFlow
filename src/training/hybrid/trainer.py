@@ -4,7 +4,7 @@ import os
 import time
 from typing import Dict, Any, List
 from pathlib import Path
-from tqdm import tqdm
+import torch
 
 from phi.torch.flow import *
 from phi.math import math, Tensor
@@ -23,13 +23,17 @@ class HybridTrainer:
     with cross-model data augmentation.
 
     Training procedure:
-    1. Warmup phase: Train both models on real data only
+    1. Warmup phase: Train synthetic model on real data only
     2. Hybrid phase: For each cycle:
-       - Train synthetic model
        - Generate augmented data from synthetic model
-       - Train physical model with mixed real+synthetic data
+       - Train physical model with real + synthetic data (weighted loss)
        - Generate augmented data from physical model
-       - Train synthetic model with mixed real+physical data
+       - Train synthetic model with real + physical data (weighted loss)
+       
+    Loss formulation (HYCO paper):
+    - Synthetic model minimizes: L + λ_syn * I
+    - Physical model minimizes: L + λ_phy * I
+    where L = real data loss, I = interaction (generated data) loss
     """
 
     def __init__(
@@ -53,7 +57,6 @@ class HybridTrainer:
         self._parse_config(config)
 
         # Determine maximum rollout steps needed (for dataset creation)
-        # Use the maximum from synthetic rollout scheduler if enabled
         synthetic_config = config['trainer']['synthetic']
         rollout_scheduler = synthetic_config.get('rollout_scheduler', None)
         if rollout_scheduler:
@@ -61,20 +64,23 @@ class HybridTrainer:
         else:
             max_rollout_steps = synthetic_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
 
-        # Create dataset directly with maximum rollout steps
+        # Create dataset with cache sized for all training sims
         self.dataset = Dataset(
             config=config,
             train_sim=config['trainer']['train_sim'],
             rollout_steps=max_rollout_steps,
+            max_cached_sims=len(config['trainer']['train_sim']) + 2,  # Cache all + buffer
         )
 
         # Create individual trainers
         self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
         self.physical_trainer = PhysicalTrainer(config, physical_model)
 
-        # Cache directory for augmented data
+        # Optional: cache directory for debugging augmented data
         self.cache_dir = Path(self.augmentation_config.get('cache_dir', 'data/cache_phiml'))
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.save_augmented = self.augmentation_config.get('save_augmented', False)
+        if self.save_augmented:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             f"HybridTrainer initialized: "
@@ -95,6 +101,7 @@ class HybridTrainer:
         self.synthetic_epochs = config['trainer']['synthetic']['epochs']
         self.physical_epochs = config['trainer']['physical']['epochs']
 
+        # Loss scaling config
         loss_scaling = hybrid_config.get('loss_scaling', {})
         
         self.synthetic_loss_config = {
@@ -123,18 +130,15 @@ class HybridTrainer:
             "cycle_times": [],
         }
 
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("Starting Hybrid Training")
-        logger.info("="*60)
-
-        total_synthetic_epochs = self.warmup_cycles * self.synthetic_epochs
-        self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
+        logger.info("=" * 60)
 
         # Warmup phase: Train on real data only
         if self.warmup_cycles > 0:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"\n{'=' * 60}")
             logger.info(f"WARMUP PHASE: Training on real data only ({self.warmup_cycles} cycles)")
-            logger.info(f"{'='*60}\n")
+            logger.info(f"{'=' * 60}\n")
 
             for cycle in range(self.warmup_cycles):
                 logger.info(f"\n--- Warmup Cycle {cycle + 1}/{self.warmup_cycles} ---")
@@ -144,8 +148,8 @@ class HybridTrainer:
                 self.dataset.access_policy = AccessPolicy.REAL_ONLY
                 self.dataset.alpha = 1.0
 
-                # Train synthetic model
-                synthetic_results = self.synthetic_trainer.train(
+                # Train synthetic model on real data
+                self.synthetic_trainer.train(
                     self.dataset,
                     num_epochs=self.synthetic_epochs,
                     start_epoch=cycle * self.synthetic_epochs,
@@ -153,48 +157,59 @@ class HybridTrainer:
                 )
 
                 cycle_time = time.time() - cycle_start
+                logger.info(f"Warmup cycle {cycle + 1} completed in {cycle_time:.2f}s")
 
         # Hybrid phase: Alternating training with augmentation
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"HYBRID PHASE: Training with data augmentation ({self.cycles} cycles)")
-        logger.info(f"{'='*60}\n")
+        logger.info(f"{'=' * 60}\n")
 
-        # Configure rollout scheduler to span all hybrid cycles
-        # Total synthetic epochs = cycles * synthetic_epochs 
-        total_synthetic_epochs = self.cycles  * self.synthetic_epochs
+        # Configure schedulers to span all hybrid cycles
+        total_synthetic_epochs = self.cycles * self.synthetic_epochs
         self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
 
+        # Set loss scaling once (doesn't change between cycles)
+        self.physical_trainer.set_loss_scaling(
+            real_weight=self.physical_loss_config['real_weight'],
+            interaction_weight=self.physical_loss_config['interaction_weight'],
+            proportional=self.physical_loss_config['proportional']
+        )
+        self.synthetic_trainer.set_loss_scaling(
+            real_weight=self.synthetic_loss_config['real_weight'],
+            interaction_weight=self.synthetic_loss_config['interaction_weight'],
+            proportional=self.synthetic_loss_config['proportional']
+        )
+
+        # Configure dataset for both real and generated data
+        self.dataset.access_policy = AccessPolicy.BOTH
+        self.dataset.alpha = self.alpha
+
         for cycle in range(self.cycles):
-            # Generate synthetic data and set up dataset
-            synthetic_trajectories = self._generate_synthetic_data()
+            logger.info(f"\n--- Hybrid Cycle {cycle + 1}/{self.cycles} ---")
+            cycle_start = time.time()
+
+            # Generate synthetic data (batched for efficiency)
+            synthetic_trajectories = self._generate_synthetic_data_batched()
             self.dataset.set_augmented_trajectories(synthetic_trajectories)
             
-            # Configure physical trainer with loss scaling
-            self.physical_trainer.set_loss_scaling(
-                real_weight=self.physical_loss_config['real_weight'],
-                interaction_weight=self.physical_loss_config['interaction_weight'],
-                proportional=self.physical_loss_config['proportional']
-            )
-            
-            # Train physical model with scaled losses
+            if self.save_augmented:
+                self._save_augmented_data(synthetic_trajectories, f"synthetic_cycle_{cycle}")
+
+            # Train physical model
             physical_results = self.physical_trainer.train(
                 self.dataset,
                 num_epochs=self.physical_epochs,
                 verbose=verbose
             )
-            
+
             # Generate physical data
-            physical_trajectories = self._generate_physical_data()
+            physical_trajectories = self._generate_physical_data_batched()
             self.dataset.set_augmented_trajectories(physical_trajectories)
             
-            # Configure synthetic trainer with loss scaling
-            self.synthetic_trainer.set_loss_scaling(
-                real_weight=self.synthetic_loss_config['real_weight'],
-                interaction_weight=self.synthetic_loss_config['interaction_weight'],
-                proportional=self.synthetic_loss_config['proportional']
-            )
-            
-            # Train synthetic model with scaled losses
+            if self.save_augmented:
+                self._save_augmented_data(physical_trajectories, f"physical_cycle_{cycle}")
+
+            # Train synthetic model
             synthetic_results = self.synthetic_trainer.train(
                 self.dataset,
                 num_epochs=self.synthetic_epochs,
@@ -209,114 +224,84 @@ class HybridTrainer:
             results["physical_losses"].append(physical_results["final_loss"])
             results["cycle_times"].append(cycle_time)
 
-        logger.info("\n" + "="*60)
+            logger.info(
+                f"Cycle {cycle + 1} completed in {cycle_time:.2f}s - "
+                f"Synthetic loss: {synthetic_results['final_loss']:.6f}, "
+                f"Physical loss: {physical_results['final_loss']:.6f}"
+            )
+
+        logger.info("\n" + "=" * 60)
         logger.info("Hybrid Training Completed")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         return results
 
-    def _generate_synthetic_data(self) -> List[Tensor]:
+    def _generate_synthetic_data_batched(self) -> List[Tensor]:
         """
-        Generate augmented trajectories using the synthetic model.
-
-        Returns:
-            List of trajectory tensors
+        Generate augmented trajectories using the synthetic model (batched for efficiency).
+        
+        Batches all simulations together for GPU parallelization.
         """
-        trajectories = []
+        train_sims = self.config['trainer']['train_sim']
+        num_steps = self.config['data']['trajectory_length']
+        
+        # Collect all initial states from cache (no disk I/O)
+        initial_states = []
+        for sim_idx in train_sims:
+            sim_data = self.dataset._load_simulation(sim_idx)
+            initial_states.append(sim_data.time[0])
+        
+        # Stack into batch for parallel processing
+        batched_initial = math.stack(initial_states, batch('batch'))
+        
+        # Batched rollout (GPU parallelized)
+        with torch.no_grad():
+            states = [batched_initial]
+            current_state = batched_initial
+            for _ in range(num_steps - 1):
+                next_state = self.synthetic_model(current_state)
+                states.append(next_state)
+                current_state = next_state
+        
+        # Stack time dimension
+        trajectory_batched = math.stack(states, batch('time'))
+        trajectory_batched = math.stop_gradient(trajectory_batched)
+        
+        # Unstack back to list of individual trajectories
+        return [trajectory_batched.batch[i] for i in range(len(train_sims))]
 
-        # Generate trajectories from each training simulation
-        for sim_idx in self.config['trainer']['train_sim']:
-            # Load simulation data
-            sim_path = os.path.join(
-                self.config['data']['data_dir'],
-                f"sim_{sim_idx:04d}.npz"
-            )
-            sim_data = math.load(sim_path)
-
-            # Take first state as initial condition
-            initial_state = sim_data.time[0]
-
-            # Rollout using synthetic model (no batch dimension needed for single rollout)
-            trajectory = self._rollout_synthetic_single(
-                initial_state,
-                self.config['data']['trajectory_length']
-            )
-
-            trajectories.append(trajectory)
-
-        return trajectories
-
-    def _generate_physical_data(self) -> List[Tensor]:
+    def _generate_physical_data_batched(self) -> List[Tensor]:
         """
-        Generate augmented trajectories using the physical model.
-
-        Returns:
-            List of trajectory tensors
+        Generate augmented trajectories using the physical model (batched for efficiency).
         """
-        trajectories = []
-
-        # Generate trajectories from each training simulation
-        for sim_idx in self.config['trainer']['train_sim']:
-            # Load simulation data
-            sim_path = os.path.join(
-                self.config['data']['data_dir'],
-                f"sim_{sim_idx:04d}.npz"
-            )
-            sim_data = math.load(sim_path)
-
-            # Take first state as initial condition
-            initial_state = sim_data.time[0]
-
-            # Add batch dimension using stack (more robust than expand)
-            initial_state_batched = math.stack([initial_state], batch('batch'))
-
-            # Rollout using physical model with current learned params
+        train_sims = self.config['trainer']['train_sim']
+        num_steps = self.config['data']['trajectory_length'] - 1
+        
+        # Collect all initial states from cache
+        initial_states = []
+        for sim_idx in train_sims:
+            sim_data = self.dataset._load_simulation(sim_idx)
+            initial_states.append(sim_data.time[0])
+        
+        # Stack into batch
+        batched_initial = math.stack(initial_states, batch('batch'))
+        
+        # Batched rollout using physical model
+        with torch.no_grad():
             trajectory_batched = self.physical_model.rollout(
-                initial_state_batched,
+                batched_initial,
                 self.physical_model.params,
-                self.config['data']['trajectory_length'] - 1
+                num_steps
             )
-
-            # Remove batch dimension
-            trajectory = trajectory_batched.batch[0]
-
-            # Detach from computational graph
-            trajectory = math.stop_gradient(trajectory)
-
-            trajectories.append(trajectory)
-
-        return trajectories
-
-    def _rollout_synthetic_single(self, initial_state: Tensor, num_steps: int) -> Tensor:
-        """
-        Rollout the synthetic model for multiple steps (single trajectory, no batch).
-
-        Args:
-            initial_state: Initial state tensor (x, y?, field)
-            num_steps: Number of steps to rollout
-
-        Returns:
-            Trajectory tensor (time, x, y?, field)
-        """
-        states = [initial_state]
-        current_state = initial_state
-
-        for _ in range(num_steps - 1):
-            next_state = self.synthetic_model(current_state)
-            states.append(next_state)
-            current_state = next_state
-
-        # Stack along time dimension
-        trajectory = math.stack(states, batch('time'))
-
-        # Detach from computational graph to prevent gradient issues
-        trajectory = math.stop_gradient(trajectory)
-
-        return trajectory
+        
+        trajectory_batched = math.stop_gradient(trajectory_batched)
+        
+        # Unstack back to list
+        return [trajectory_batched.batch[i] for i in range(len(train_sims))]
 
     def _save_augmented_data(self, trajectories: List[Tensor], prefix: str):
         """
-        Save augmented trajectories to cache directory.
+        Save augmented trajectories to cache directory (for debugging).
 
         Args:
             trajectories: List of trajectory tensors
@@ -326,4 +311,4 @@ class HybridTrainer:
             cache_path = self.cache_dir / f"{prefix}_sim_{i:04d}.npz"
             math.save(str(cache_path), trajectory)
 
-        logger.info(f"Saved {len(trajectories)} augmented trajectories to {self.cache_dir}")
+        logger.debug(f"Saved {len(trajectories)} augmented trajectories to {self.cache_dir}")

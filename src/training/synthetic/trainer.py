@@ -1,14 +1,15 @@
-"""PhiML trainer for synthetic models with LR scheduling."""
+"""PhiML trainer for synthetic models with LR scheduling and weighted loss support."""
 
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from tqdm import tqdm
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ExponentialLR
 from phi.torch.flow import *
 from phiml import math as phimath
+from phiml.nn import update_weights
 from phiml import nn as phiml_nn
 
 from src.utils.logger import get_logger
@@ -17,7 +18,12 @@ logger = get_logger(__name__)
 
 
 class SyntheticTrainer:
-    """PhiML trainer for synthetic models with LR scheduling support."""
+    """
+    PhiML trainer for synthetic models with weighted loss support.
+    
+    Supports separate weighting for real data loss (L) and interaction loss (I)
+    for hybrid training: total_loss = real_weight * L + interaction_weight * I
+    """
 
     def __init__(self, config: Dict[str, Any], model):
         self.model = model
@@ -30,30 +36,37 @@ class SyntheticTrainer:
         self.best_val_loss = float("inf")
         self.best_epoch = 0
 
-        # Loss scaling for hybrid training (NEW)
+        # Loss scaling for hybrid training
         self.real_loss_weight = 1.0
         self.interaction_loss_weight = 1.0
         self.proportional_scaling = False
 
-        logger.info(f"Trainer ready: lr={self.learning_rate}, scheduler={self.scheduler_type}")
+        logger.info(f"SyntheticTrainer ready: lr={self.learning_rate}, scheduler={self.scheduler_type}")
 
-    def _parse_config(self, config):
+    def _parse_config(self, config: Dict[str, Any]):
         """Parse training configuration."""
         synthetic_config = config['trainer']['synthetic']
         self.epochs = synthetic_config['epochs']
         self.learning_rate = synthetic_config['learning_rate']
         self.batch_size = config['trainer']['batch_size']
         self.rollout_steps = synthetic_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
+        
+        # Rollout scheduler config
         self.rollout_scheduler = synthetic_config.get('rollout_scheduler', None)
         if self.rollout_scheduler:
             self.rollout_start = self.rollout_scheduler.get('start', 1)
             self.rollout_end = self.rollout_scheduler.get('end', self.rollout_steps)
             self.rollout_strategy = self.rollout_scheduler.get('strategy', 'linear')
             self.rollout_exponent = float(self.rollout_scheduler.get('exponent', 2.0))
-            logger.info(f"Rollout scheduler enabled: {self.rollout_start} -> {self.rollout_end} ({self.rollout_strategy})")
-            self.rollout_steps = self.rollout_start  # Initialize with start value
+            logger.info(f"Rollout scheduler: {self.rollout_start} -> {self.rollout_end} ({self.rollout_strategy})")
+            self.rollout_steps = self.rollout_start
+        
+        # Total epochs for scheduling (may be overridden for hybrid training)
+        self.rollout_total_epochs = self.epochs
+        
         self.scheduler_type = synthetic_config.get('scheduler', 'cosine')
 
+        # Checkpoint path
         model_path_dir = config["model"]["synthetic"]["model_path"]
         model_save_name = config["model"]["synthetic"]["model_save_name"]
         self.checkpoint_path = Path(model_path_dir) / f"{model_save_name}"
@@ -63,9 +76,9 @@ class SyntheticTrainer:
         """Setup PhiML optimizer."""
         self.optimizer = phiml_nn.adam(self.model.network, learning_rate=self.learning_rate)
         
-        if hasattr(torch, 'compile'):
-            logger.info("Compiling model network with torch.compile...")
-            self.model.network = torch.compile(self.model.network)
+        # if hasattr(torch, 'compile'):
+        #     logger.info("Compiling model network with torch.compile...")
+        #     self.model.network = torch.compile(self.model.network)
 
     def _setup_scheduler(self):
         """Setup LR scheduler."""
@@ -78,16 +91,16 @@ class SyntheticTrainer:
         else:
             self.scheduler = None
 
-    def _get_rollout_steps(self, epoch):
+    def _get_rollout_steps(self, epoch: int) -> int:
         """Calculate rollout steps based on current epoch."""
         if not self.rollout_scheduler:
             return self.rollout_steps
 
-        # Use rollout_total_epochs if set (for hybrid training), otherwise use self.epochs
-        total_epochs = getattr(self, 'rollout_total_epochs', self.epochs)
+        # Use rollout_total_epochs for progress calculation
+        total_epochs = self.rollout_total_epochs
         
         # Calculate progress (0 to 1)
-        progress = epoch / total_epochs
+        progress = min(epoch / max(total_epochs, 1), 1.0)
         
         # Apply strategy
         if self.rollout_strategy == 'exponential':
@@ -96,13 +109,12 @@ class SyntheticTrainer:
         # Calculate number of steps in the schedule
         num_steps = self.rollout_end - self.rollout_start + 1
         
-        # Calculate current step index (0 to num_steps-1)
+        # Calculate current step index
         step_index = int(progress * num_steps)
 
         # Calculate current rollout steps
         current_rollout = self.rollout_start + step_index
         
-        # Clamp to max
         return min(current_rollout, self.rollout_end)
 
     def set_loss_scaling(self, real_weight: float, interaction_weight: float, 
@@ -113,16 +125,12 @@ class SyntheticTrainer:
         self.proportional_scaling = proportional
 
     def set_total_epochs_for_hybrid(self, total_epochs: int):
-        """Configure total epochs for both rollout and LR scheduling across hybrid cycles."""
-        # For rollout scheduler
-        if total_epochs <= 0:
-            logger.warning(f"Invalid total_epochs={total_epochs}, skipping scheduler reconfiguration")
-            return
-            
-        # Reset optimizer's learning rate to the original value before creating new scheduler
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = self.learning_rate
-            param_group['initial_lr'] = self.learning_rate
+        """
+        Configure total epochs for both rollout and LR scheduling across hybrid cycles.
+        
+        Args:
+            total_epochs: Total epochs across all hybrid cycles
+        """
         self.rollout_total_epochs = total_epochs
         
         # Recreate LR scheduler with correct T_max
@@ -131,29 +139,30 @@ class SyntheticTrainer:
         elif self.scheduler_type == 'step':
             self.scheduler = StepLR(self.optimizer, step_size=total_epochs // 3, gamma=0.1)
         elif self.scheduler_type == 'exponential':
-            # Exponential doesn't depend on total epochs, but recalculate gamma if needed
             self.scheduler = ExponentialLR(self.optimizer, gamma=0.99)
         
-        logger.info(f"Reconfigured scheduler for hybrid training: {self.scheduler_type} with total_epochs={total_epochs}")
+        logger.info(f"Reconfigured for hybrid training: {self.scheduler_type} with total_epochs={total_epochs}")
 
-    def set_rollout_total_epochs(self, total_epochs: int):
-        """Configure total epochs for rollout scheduling across hybrid cycles."""
-        self.rollout_total_epochs = total_epochs
-    
     def _train_batch(self, separated_batch) -> float:
-        """Train on separated batch with independent loss scaling."""
+        """
+        Train on a batch with separate real/generated loss weighting.
+        
+        Computes: total_loss = real_weight * L + interaction_weight * I
+        where L is loss on real data and I is loss on generated data.
+        """
+        rollout_steps = self.rollout_steps
         
         def compute_loss(init_state, targets):
             """Compute MSE loss for a set of samples."""
             current_state = init_state
             total_loss = phimath.tensor(0.0)
-            for t in range(self.rollout_steps):
+            for t in range(rollout_steps):
                 next_state = self.model(current_state)
                 target_t = targets.time[t]
                 step_loss = phimath.mean((next_state - target_t)**2)
                 total_loss += step_loss
                 current_state = next_state
-            return phimath.mean(total_loss, 'batch') / float(self.rollout_steps)
+            return phimath.mean(total_loss, 'batch') / float(rollout_steps)
         
         def combined_loss_function():
             real_loss = phimath.tensor(0.0)
@@ -174,18 +183,31 @@ class SyntheticTrainer:
             # Apply proportional scaling if enabled
             i_weight = self.interaction_loss_weight
             if self.proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
-                # Scale I to have same magnitude as L
-                
                 ratio = phimath.stop_gradient(real_loss / (interaction_loss + 1e-8))
                 i_weight = self.interaction_loss_weight * ratio
             
             return self.real_loss_weight * real_loss + i_weight * interaction_loss
         
         loss = update_weights(self.model, self.optimizer, combined_loss_function)
+        
+        if self.scheduler is not None:
+            self.scheduler.step()
+        
         return loss
 
     def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
-        """Execute training with separated real/generated batches for loss scaling."""
+        """
+        Execute training for specified number of epochs.
+        
+        Args:
+            dataset: Dataset instance with iterate_batches method
+            num_epochs: Number of epochs to train
+            start_epoch: Starting epoch number (for hybrid training across cycles)
+            verbose: Whether to show progress bar
+            
+        Returns:
+            Dictionary with training results
+        """
         results = {
             "train_losses": [],
             "epochs": [],
@@ -194,7 +216,12 @@ class SyntheticTrainer:
             "best_val_loss": float("inf"),
         }
 
-        pbar = tqdm(range(start_epoch, start_epoch + num_epochs), desc="Training (separated)", unit="epoch", disable=not verbose)
+        pbar = tqdm(
+            range(start_epoch, start_epoch + num_epochs), 
+            desc="Synthetic Training", 
+            unit="epoch", 
+            disable=not verbose
+        )
 
         for epoch in pbar:
             # Update rollout steps if scheduler is active
@@ -235,13 +262,8 @@ class SyntheticTrainer:
                 "time": f"{epoch_time:.2f}s"
             })
 
-            # Step the learning rate scheduler once per epoch
-            if self.scheduler_type is not None:
-                self.scheduler.step()
-
-        results["final_loss"] = results["train_losses"][-1]
+        results["final_loss"] = results["train_losses"][-1] if results["train_losses"] else 0.0
         return results
-
 
     def save_checkpoint(self, epoch: int, loss: float):
         """Save model checkpoint."""
