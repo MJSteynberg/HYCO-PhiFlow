@@ -215,10 +215,6 @@ class Evaluator:
             real_param = real.field[param_name]
             learned_param = learned.field[param_name]
 
-            # Calculate difference and relative error
-            difference = learned_param - real_param
-            relative_error = math.abs(difference) / (math.abs(real_param) + 1e-8)
-
             # Create comparison plot for this parameter
             plot({
                 f'Real {param_name}': real_param,

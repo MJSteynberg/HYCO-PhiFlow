@@ -14,6 +14,7 @@ from src.training.physical.trainer import PhysicalTrainer
 # HybridTrainer imported lazily to avoid circular dependency
 from src.factories.model_factory import ModelFactory
 from src.factories.dataloader_factory import DataLoaderFactory
+from src.data.sparsity import SparsityConfig, TemporalSparsityConfig, SpatialSparsityConfig
 from src.utils.logger import get_logger
 import warnings
 from src.training.hybrid import HybridTrainer
@@ -42,6 +43,18 @@ class TrainerFactory:
     def list_available_trainers() -> List[str]:
         """Get list of available trainer types."""
         return ["synthetic", "physical", "hybrid"]
+
+    @staticmethod
+    def _parse_sparsity_config(config: Dict[str, Any]) -> SparsityConfig:
+        """Parse sparsity configuration from Hydra config."""
+        if 'sparsity' not in config:
+            return SparsityConfig()
+
+        sparsity = config['sparsity']
+        temporal = TemporalSparsityConfig(**sparsity.get('temporal', {}))
+        spatial = SpatialSparsityConfig(**sparsity.get('spatial', {}))
+
+        return SparsityConfig(temporal=temporal, spatial=spatial)
 
     @staticmethod
     def create_trainer(config: Dict[str, Any], num_channels: int = None) -> AbstractTrainer:
@@ -86,8 +99,11 @@ class TrainerFactory:
         # Create model with num_channels from dataset
         model = ModelFactory.create_synthetic_model(config, num_channels=num_channels)
 
-        # Create trainer with model
-        trainer = SyntheticTrainer(config, model)
+        # Parse sparsity configuration
+        sparsity_config = TrainerFactory._parse_sparsity_config(config)
+
+        # Create trainer with model and sparsity config
+        trainer = SyntheticTrainer(config, model, sparsity_config=sparsity_config)
 
         return trainer
 
@@ -106,8 +122,11 @@ class TrainerFactory:
         downsample_factor = config["trainer"]["physical"]["downsample_factor"]
         model = ModelFactory.create_physical_model(config, downsample_factor=downsample_factor)
 
-        # Create trainer with model and params
-        trainer = PhysicalTrainer(config, model)
+        # Parse sparsity configuration
+        sparsity_config = TrainerFactory._parse_sparsity_config(config)
+
+        # Create trainer with model and sparsity config
+        trainer = PhysicalTrainer(config, model, sparsity_config=sparsity_config)
 
         return trainer
 

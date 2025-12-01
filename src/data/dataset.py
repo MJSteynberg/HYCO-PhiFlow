@@ -161,7 +161,25 @@ class Dataset:
         return sorted(result)[:count]
 
     def _get_real_sample(self, sample_idx: int) -> Tuple[Tensor, Tensor]:
-        """Get real sample initial state and targets by index, respecting temporal sparsity."""
+        """
+        Get real sample initial state and targets by index, respecting temporal sparsity.
+
+        IMPORTANT NOTE ON TEMPORAL SPARSITY SEMANTICS:
+        When temporal sparsity is enabled, targets may be non-consecutive timesteps.
+        For example, with 'endpoints' mode, targets might be from timesteps [1, 2, ..., 98, 99, 100]
+        but the model is trained autoregressively (predicting t+1 from t).
+
+        Current behavior: Returns visible targets even if they're non-consecutive.
+        This means the model predicts state at t+1, but loss is computed against
+        potentially distant target at t+k (next visible timestep).
+
+        Alternative design considerations:
+        - Option A: Store timestep gaps and adjust model rollout accordingly
+        - Option B: Train model to predict next visible state directly
+        - Option C: Only use temporal sparsity for validation, not training
+
+        The current implementation uses Option A with padding to ensure rollout_steps targets.
+        """
         sim_list_idx = sample_idx // self.samples_per_sim
         sim_idx = self.train_sim[sim_list_idx]
         time_idx = sample_idx % self.samples_per_sim
@@ -185,8 +203,18 @@ class Dataset:
             if not target_indices:
                 target_indices = self._find_nearest_visible(time_idx, self.rollout_steps)
 
-            # Stack targets from visible indices
-            targets_list = [trajectory.time[t] for t in target_indices]
+            # CRITICAL FIX: Ensure we always have exactly rollout_steps targets
+            # Pad by repeating the last visible target if needed
+            while len(target_indices) < self.rollout_steps:
+                if target_indices:
+                    target_indices.append(target_indices[-1])
+                else:
+                    # Fallback: if somehow no targets, use next timesteps
+                    target_indices = list(range(time_idx + 1, time_idx + 1 + self.rollout_steps))
+                    break
+
+            # Stack targets from visible indices (now guaranteed to be rollout_steps)
+            targets_list = [trajectory.time[t] for t in target_indices[:self.rollout_steps]]
             targets = math.stack(targets_list, batch('time'))
         else:
             targets = trajectory.time[time_idx + 1 : time_idx + 1 + self.rollout_steps]

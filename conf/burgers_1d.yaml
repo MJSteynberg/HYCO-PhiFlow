@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -39,10 +39,10 @@ trainer:
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 2
+    downsample_factor: 0
     method: 'L-BFGS-B'
     abs_tol: 1e-12
-    max_iterations: 10
+    max_iterations: 100
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
       weight: 0.1
@@ -88,7 +88,7 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: true
+    enabled: false
     mode: center
     center_fraction: 0.3
 # For evaluation
