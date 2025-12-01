@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['train', 'evaluate']
+  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -32,7 +32,7 @@ model:
 
 trainer:
   batch_size: 32
-  rollout_steps: 5
+  rollout_steps: 6
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
@@ -47,7 +47,7 @@ trainer:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
       weight: 0.1
   synthetic:
-    epochs: 100
+    epochs: 1000
     rollout_scheduler:
       start: 1
       end: 6
@@ -78,7 +78,19 @@ trainer:
         interaction_weight: 0.1  # Physical model sees weaker interaction loss
         proportional: true       # Or use proportional scaling
 
+sparsity:
+  temporal:
+    enabled: false
+    mode: endpoints
+    start_fraction: 0.1
+    end_fraction: 0.1
+    uniform_stride: 1
+    custom_fractions: []
 
+  spatial:
+    enabled: true
+    mode: center
+    center_fraction: 0.3
 # For evaluation
 evaluation:
   # Which simulations to evaluate

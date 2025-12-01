@@ -132,6 +132,7 @@ class BurgersModel(PhysicalModel):
             # ============================================================
             # STEP 1: Downsample input state if needed
             # ============================================================
+            print(params)
             if downsample_factor > 0:
                 # Convert state tensor to grid at full resolution
                 velocity_tensor_full = math.rename_dims(
@@ -221,13 +222,13 @@ class BurgersModel(PhysicalModel):
         grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
         vector_str = ','.join(self.spatial_dims)
         velocity_grid = CenteredGrid(
-            Noise(scale=self.domain.size/4, smoothness=2.0, vector=vector_str),
+            Noise(batch(batch=batch_size), scale=self.domain.size/4, smoothness=2.0, vector=vector_str),
             extrapolation.PERIODIC,
             bounds=self.domain,
             **grid_kwargs
         )
 
-        velocity = math.expand(velocity_grid.values, batch(batch=batch_size))
+        velocity = velocity_grid.values
         return math.rename_dims(
             velocity, 'vector', channel(field=','.join(self.field_names))
         )

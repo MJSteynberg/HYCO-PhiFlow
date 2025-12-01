@@ -1,0 +1,17 @@
+# Observe every 5th timestep
+temporal:
+  enabled: true
+  mode: uniform
+  start_fraction: 0.1
+  end_fraction: 0.1
+  uniform_stride: 5
+  custom_fractions: []
+
+spatial:
+  enabled: false
+  mode: full
+  x_range: null
+  y_range: null
+  center_fraction: 1.0
+  num_random_points: 100
+  random_seed: 42

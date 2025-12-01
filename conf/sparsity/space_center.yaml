@@ -1,0 +1,17 @@
+# Observe only center 50% of domain
+temporal:
+  enabled: false
+  mode: full
+  start_fraction: 0.0
+  end_fraction: 0.0
+  uniform_stride: 1
+  custom_fractions: []
+
+spatial:
+  enabled: true
+  mode: center
+  x_range: null
+  y_range: null
+  center_fraction: 0.5
+  num_random_points: 100
+  random_seed: 42

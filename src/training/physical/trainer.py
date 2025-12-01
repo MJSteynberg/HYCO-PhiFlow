@@ -2,7 +2,7 @@
 
 import os
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pathlib import Path
 from tqdm import tqdm
 
@@ -10,6 +10,7 @@ from phi.torch.flow import *
 from phi.math import math, Tensor, minimize, Diverged
 
 from src.utils.logger import get_logger
+from src.data.sparsity import SparsityConfig, SpatialMask
 
 logger = get_logger(__name__)
 
@@ -22,7 +23,7 @@ class PhysicalTrainer:
     for hybrid training: total_loss = real_weight * L + interaction_weight * I
     """
 
-    def __init__(self, config: Dict[str, Any], model):
+    def __init__(self, config: Dict[str, Any], model, sparsity_config: SparsityConfig = None):
         self.model = model
         self._parse_config(config)
 
@@ -42,6 +43,10 @@ class PhysicalTrainer:
         self.real_loss_weight = 1.0
         self.interaction_loss_weight = 1.0
         self.proportional_scaling = False
+
+        # Spatial sparsity setup
+        self.sparsity_config = sparsity_config or SparsityConfig()
+        self._spatial_mask = None  # Lazy initialization
 
         # Try to load checkpoint if exists
         if self.checkpoint_path.exists():
@@ -85,10 +90,17 @@ class PhysicalTrainer:
         self.interaction_loss_weight = interaction_weight
         self.proportional_scaling = proportional
 
+    def _get_spatial_mask(self, spatial_shape: Shape) -> Optional[SpatialMask]:
+        """Get or create spatial mask."""
+        if self._spatial_mask is None and self.sparsity_config.spatial.enabled:
+            self._spatial_mask = SpatialMask(self.sparsity_config.spatial, spatial_shape)
+            logger.info(f"Spatial mask initialized: {self._spatial_mask.visible_fraction:.1%} visible")
+        return self._spatial_mask
+
     def _optimize_batch(self, separated_batch, params: Tensor) -> float:
         """
         Optimize parameters over a batch with separate real/generated loss weighting.
-        
+
         Computes: total_loss = real_weight * L + interaction_weight * I
         """
         rollout_steps = self.rollout_steps
@@ -96,7 +108,14 @@ class PhysicalTrainer:
         real_loss_weight = self.real_loss_weight
         interaction_loss_weight = self.interaction_loss_weight
         proportional_scaling = self.proportional_scaling
-        
+
+        # Get spatial mask if enabled (only initialize once)
+        spatial_mask = None
+        if separated_batch.has_real:
+            spatial_mask = self._get_spatial_mask(separated_batch.real_initial_state.shape.spatial)
+        elif separated_batch.has_generated:
+            spatial_mask = self._get_spatial_mask(separated_batch.generated_initial_state.shape.spatial)
+
         def loss_function(params: Tensor) -> Tensor:
             def compute_loss(init_state, targets):
                 total_loss = math.tensor(0.0)
@@ -104,7 +123,13 @@ class PhysicalTrainer:
                 for step in range(rollout_steps):
                     current_state = model.forward(current_state, params)
                     target = targets.time[step]
-                    step_loss = math.mean((current_state - target) ** 2)
+
+                    # Apply spatial mask if enabled
+                    if spatial_mask is not None:
+                        step_loss = spatial_mask.compute_masked_mse(current_state, target)
+                    else:
+                        step_loss = math.mean((current_state - target) ** 2)
+
                     total_loss += step_loss
                 return math.mean(total_loss, 'batch') / rollout_steps
             

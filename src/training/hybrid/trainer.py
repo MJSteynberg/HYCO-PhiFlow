@@ -12,6 +12,7 @@ from phi.math import math, Tensor
 from src.training.synthetic.trainer import SyntheticTrainer
 from src.training.physical.trainer import PhysicalTrainer
 from src.data.dataset import AccessPolicy, Dataset
+from src.data.sparsity import SparsityConfig, TemporalSparsityConfig, SpatialSparsityConfig
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -61,6 +62,9 @@ class HybridTrainer:
 
         self._parse_config(config)
 
+        # Parse sparsity configuration
+        self.sparsity_config = self._parse_sparsity_config(config)
+
         # Determine maximum rollout steps needed (for dataset creation)
         synthetic_config = config['trainer']['synthetic']
         rollout_scheduler = synthetic_config.get('rollout_scheduler', None)
@@ -69,17 +73,18 @@ class HybridTrainer:
         else:
             max_rollout_steps = synthetic_config.get('rollout_steps', config['trainer'].get('rollout_steps', 4))
 
-        # Create dataset with cache sized for all training sims
+        # Create dataset with cache sized for all training sims and temporal sparsity
         self.dataset = Dataset(
             config=config,
             train_sim=config['trainer']['train_sim'],
             rollout_steps=max_rollout_steps,
             max_cached_sims=len(config['trainer']['train_sim']) + 2,  # Cache all + buffer
+            temporal_sparsity=self.sparsity_config.temporal if self.sparsity_config else None
         )
 
-        # Create individual trainers
-        self.synthetic_trainer = SyntheticTrainer(config, synthetic_model)
-        self.physical_trainer = PhysicalTrainer(config, physical_model)
+        # Create individual trainers with sparsity config
+        self.synthetic_trainer = SyntheticTrainer(config, synthetic_model, sparsity_config=self.sparsity_config)
+        self.physical_trainer = PhysicalTrainer(config, physical_model, sparsity_config=self.sparsity_config)
 
         # Optional: cache directory for debugging augmented data
         self.cache_dir = Path(self.augmentation_config.get('cache_dir', 'data/cache_phiml'))
@@ -127,6 +132,27 @@ class HybridTrainer:
             'interaction_weight': loss_scaling.get('physical', {}).get('interaction_weight', 0.1),
             'proportional': loss_scaling.get('physical', {}).get('proportional', False),
         }
+
+    def _parse_sparsity_config(self, config: Dict[str, Any]) -> SparsityConfig:
+        """Parse sparsity configuration from Hydra config."""
+        if 'sparsity' not in config:
+            return SparsityConfig()
+
+        sparsity = config['sparsity']
+
+        temporal = TemporalSparsityConfig(**sparsity.get('temporal', {}))
+        spatial = SpatialSparsityConfig(**sparsity.get('spatial', {}))
+
+        sparsity_config = SparsityConfig(temporal=temporal, spatial=spatial)
+
+        if temporal.enabled or spatial.enabled:
+            logger.info("Sparsity configuration:")
+            if temporal.enabled:
+                logger.info(f"  Temporal: {temporal.mode} mode")
+            if spatial.enabled:
+                logger.info(f"  Spatial: {spatial.mode} mode")
+
+        return sparsity_config
 
     def train(self, verbose: bool = True) -> Dict[str, Any]:
         """

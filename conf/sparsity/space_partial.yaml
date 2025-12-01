@@ -1,0 +1,17 @@
+# Observe only left half of spatial domain (x: 0-50%)
+temporal:
+  enabled: false
+  mode: full
+  start_fraction: 0.0
+  end_fraction: 0.0
+  uniform_stride: 1
+  custom_fractions: []
+
+spatial:
+  enabled: true
+  mode: range
+  x_range: [0.0, 0.5]  # First 50% of x domain
+  y_range: null        # Full y domain (if 2D)
+  center_fraction: 0.5
+  num_random_points: 100
+  random_seed: 42

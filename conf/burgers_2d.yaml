@@ -28,13 +28,12 @@ model:
     model_path: 'results/models'
     model_save_name: 'burgers_synthetic_model_2d'
     architecture:
-      levels: 4
-      filters: 64
+      levels: 3
+      filters: 32
       batch_norm: false
 
 trainer:
   batch_size: 32
-  rollout_steps: 5
   train_sim: [0,1]
   device: 'cuda:0'
   data_access: 'both'
@@ -49,10 +48,10 @@ trainer:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
       weight: 0.1
   synthetic:
-    epochs: 50
+    epochs: 100
     rollout_scheduler:
       start: 1
-      end: 3
+      end: 5
       strategy: 'exponential'
       exponent: 2.0
     learning_rate: 0.0001
@@ -60,8 +59,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10
-    warmup: 5
+    cycles: 1
+    warmup: 1
     augmentation:
       alpha: 0.2
       num_trajectories: 6
@@ -80,7 +79,24 @@ trainer:
         interaction_weight: 0.1  # Physical model sees weaker interaction loss
         proportional: true       # Or use proportional scaling
 
+# Observation sparsity configuration
+sparsity:
+  temporal:
+    enabled: true
+    mode: endpoints
+    start_fraction: 0.1
+    end_fraction: 0.1
+    uniform_stride: 1
+    custom_fractions: []
 
+  spatial:
+    enabled: true
+    mode: range
+    x_range: [0.0, 0.5]
+    y_range: null
+    center_fraction: 0.5
+    num_random_points: 100
+    random_seed: 42
 
 # For evaluation
 evaluation:

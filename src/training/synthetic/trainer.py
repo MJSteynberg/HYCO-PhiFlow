@@ -3,7 +3,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from tqdm import tqdm
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR, ExponentialLR
@@ -13,6 +13,7 @@ from phiml.nn import update_weights
 from phiml import nn as phiml_nn
 
 from src.utils.logger import get_logger
+from src.data.sparsity import SparsityConfig, SpatialMask
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ class SyntheticTrainer:
     for hybrid training: total_loss = real_weight * L + interaction_weight * I
     """
 
-    def __init__(self, config: Dict[str, Any], model):
+    def __init__(self, config: Dict[str, Any], model, sparsity_config: SparsityConfig = None):
         self.model = model
         self.config = config
 
@@ -40,6 +41,10 @@ class SyntheticTrainer:
         self.real_loss_weight = 1.0
         self.interaction_loss_weight = 1.0
         self.proportional_scaling = False
+
+        # Spatial sparsity setup
+        self.sparsity_config = sparsity_config or SparsityConfig()
+        self._spatial_mask = None  # Lazy initialization
 
         logger.info(f"SyntheticTrainer ready: lr={self.learning_rate}, scheduler={self.scheduler_type}")
 
@@ -90,6 +95,13 @@ class SyntheticTrainer:
             self.scheduler = ExponentialLR(self.optimizer, gamma=0.99)
         else:
             self.scheduler = None
+
+    def _get_spatial_mask(self, spatial_shape: Shape) -> Optional[SpatialMask]:
+        """Get or create spatial mask."""
+        if self._spatial_mask is None and self.sparsity_config.spatial.enabled:
+            self._spatial_mask = SpatialMask(self.sparsity_config.spatial, spatial_shape)
+            logger.info(f"Spatial mask initialized: {self._spatial_mask.visible_fraction:.1%} visible")
+        return self._spatial_mask
 
     def _get_rollout_steps(self, epoch: int) -> int:
         """Calculate rollout steps based on current epoch."""
@@ -146,20 +158,33 @@ class SyntheticTrainer:
     def _train_batch(self, separated_batch) -> float:
         """
         Train on a batch with separate real/generated loss weighting.
-        
+
         Computes: total_loss = real_weight * L + interaction_weight * I
         where L is loss on real data and I is loss on generated data.
         """
         rollout_steps = self.rollout_steps
-        
+
+        # Get spatial mask if enabled (only initialize once)
+        spatial_mask = None
+        if separated_batch.has_real:
+            spatial_mask = self._get_spatial_mask(separated_batch.real_initial_state.shape.spatial)
+        elif separated_batch.has_generated:
+            spatial_mask = self._get_spatial_mask(separated_batch.generated_initial_state.shape.spatial)
+
         def compute_loss(init_state, targets):
-            """Compute MSE loss for a set of samples."""
+            """Compute MSE loss for a set of samples with optional spatial masking."""
             current_state = init_state
             total_loss = phimath.tensor(0.0)
             for t in range(rollout_steps):
                 next_state = self.model(current_state)
                 target_t = targets.time[t]
-                step_loss = phimath.mean((next_state - target_t)**2)
+
+                # Apply spatial mask if enabled
+                if spatial_mask is not None:
+                    step_loss = spatial_mask.compute_masked_mse(next_state, target_t)
+                else:
+                    step_loss = phimath.mean((next_state - target_t)**2)
+
                 total_loss += step_loss
                 current_state = next_state
             return phimath.mean(total_loss, 'batch') / float(rollout_steps)

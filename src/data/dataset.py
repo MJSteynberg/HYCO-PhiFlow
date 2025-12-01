@@ -9,6 +9,8 @@ import os
 import random
 from collections import OrderedDict
 
+from src.data.sparsity import TemporalSparsityConfig, TemporalMask
+
 
 class AccessPolicy(Enum):
     """Controls which data samples are accessed during iteration."""
@@ -42,22 +44,23 @@ class Dataset:
     """
 
     def __init__(
-        self, 
-        config: dict, 
-        train_sim: List[int], 
-        rollout_steps: int, 
-        max_cached_sims: int = None
+        self,
+        config: dict,
+        train_sim: List[int],
+        rollout_steps: int,
+        max_cached_sims: int = None,
+        temporal_sparsity: TemporalSparsityConfig = None
     ):
         self.data_dir = config["data"]["data_dir"]
         self.train_sim = train_sim
         self.rollout_steps = rollout_steps
         self.trajectory_length = config["data"]["trajectory_length"]
-        
+
         # Auto-size cache to hold all training sims (efficiency improvement)
         if max_cached_sims is None:
             max_cached_sims = max(len(train_sim), 4)
         self.max_cached_sims = max_cached_sims
-        
+
         # Manual cache: sim_idx -> Tensor
         self._cache: OrderedDict[int, Tensor] = OrderedDict()
 
@@ -65,8 +68,26 @@ class Dataset:
         sample_data = self._load_simulation(train_sim[0])
         self.num_channels, self.field_names = self._extract_channel_info(sample_data)
 
-        # Sample counts
-        self.samples_per_sim = self.trajectory_length - rollout_steps
+        # Temporal sparsity setup
+        self.temporal_sparsity = temporal_sparsity or TemporalSparsityConfig()
+        self._temporal_mask = None  # Lazy initialization (needs trajectory_length)
+        self._visible_time_indices = None
+        self._valid_start_indices = None
+
+        # Sample counts (adjusted for temporal sparsity if enabled)
+        if self.temporal_sparsity.enabled:
+            # Adjust samples based on visible timesteps
+            mask = self._get_temporal_mask()
+            # Can only start from timesteps that have visible successors
+            valid_starts = [t for t in range(self.trajectory_length - 1)
+                            if any(t + offset in self._visible_time_indices
+                                   for offset in range(1, self.rollout_steps + 1))]
+            self.samples_per_sim = len(valid_starts)
+            self._valid_start_indices = valid_starts
+        else:
+            self.samples_per_sim = self.trajectory_length - rollout_steps
+            self._valid_start_indices = None
+
         self.num_real_samples = len(self.train_sim) * self.samples_per_sim
         self.total_samples = self.num_real_samples
 
@@ -107,15 +128,70 @@ class Dataset:
         field_names = raw_names[0] if raw_names and isinstance(raw_names[0], tuple) else raw_names
         return num_channels, field_names
 
+    def _get_temporal_mask(self) -> TemporalMask:
+        """Get or create temporal mask (lazy initialization)."""
+        if self._temporal_mask is None:
+            self._temporal_mask = TemporalMask(self.temporal_sparsity, self.trajectory_length)
+            self._visible_time_indices = set(self._temporal_mask.visible_indices)
+        return self._temporal_mask
+
+    def _is_time_visible(self, time_idx: int) -> bool:
+        """Check if a time index is visible under current sparsity settings."""
+        if not self.temporal_sparsity.enabled:
+            return True
+        mask = self._get_temporal_mask()
+        return time_idx in self._visible_time_indices
+
+    def _find_nearest_visible(self, start_idx: int, count: int) -> List[int]:
+        """Find nearest visible time indices after start_idx."""
+        mask = self._get_temporal_mask()
+        visible = sorted(mask.visible_indices)
+
+        # Find indices after start_idx
+        after = [v for v in visible if v > start_idx]
+
+        if len(after) >= count:
+            return after[:count]
+
+        # If not enough after, also look before
+        before = [v for v in visible if v <= start_idx]
+        before.reverse()
+
+        result = after + before[:count - len(after)]
+        return sorted(result)[:count]
+
     def _get_real_sample(self, sample_idx: int) -> Tuple[Tensor, Tensor]:
-        """Get real sample initial state and targets by index."""
+        """Get real sample initial state and targets by index, respecting temporal sparsity."""
         sim_list_idx = sample_idx // self.samples_per_sim
         sim_idx = self.train_sim[sim_list_idx]
         time_idx = sample_idx % self.samples_per_sim
-        
+
+        # If temporal sparsity is enabled, map to valid start index
+        if self._valid_start_indices is not None:
+            time_idx = self._valid_start_indices[time_idx]
+
         trajectory = self._load_simulation(sim_idx)
+
+        # Get visible time indices for targets
+        if self.temporal_sparsity.enabled:
+            # Find which visible indices fall within rollout window
+            target_indices = []
+            for offset in range(1, self.rollout_steps + 1):
+                t = time_idx + offset
+                if t < self.trajectory_length and t in self._visible_time_indices:
+                    target_indices.append(t)
+
+            # If no visible targets, find nearest visible targets
+            if not target_indices:
+                target_indices = self._find_nearest_visible(time_idx, self.rollout_steps)
+
+            # Stack targets from visible indices
+            targets_list = [trajectory.time[t] for t in target_indices]
+            targets = math.stack(targets_list, batch('time'))
+        else:
+            targets = trajectory.time[time_idx + 1 : time_idx + 1 + self.rollout_steps]
+
         initial_state = trajectory.time[time_idx]
-        targets = trajectory.time[time_idx + 1 : time_idx + 1 + self.rollout_steps]
         return initial_state, targets
 
     def _get_augmented_sample(self, aug_idx: int) -> Tuple[Tensor, Tensor]:
@@ -226,5 +302,12 @@ class Dataset:
                     gen_targets_list.append(tgt)
                 gen_init = math.stack(gen_initial_states, batch('batch'))
                 gen_tgt = math.stack(gen_targets_list, batch('batch'))
-            
+
             yield SeparatedBatch(real_init, real_tgt, gen_init, gen_tgt)
+
+    @property
+    def temporal_mask_info(self) -> Optional[TemporalMask]:
+        """Get temporal mask if sparsity is enabled."""
+        if self.temporal_sparsity.enabled:
+            return self._get_temporal_mask()
+        return None

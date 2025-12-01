@@ -8,6 +8,7 @@ Uses the new streamlined Dataset class that loads PhiML tensors directly.
 from typing import List, Optional
 
 from src.data.dataset import Dataset
+from src.data.sparsity import TemporalSparsityConfig
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +39,7 @@ class DataLoaderFactory:
         config: dict,
         sim_indices: Optional[List[int]] = None,
         rollout_steps: Optional[int] = None,
+        temporal_sparsity: Optional[TemporalSparsityConfig] = None,
         # Legacy parameters (ignored for now - keeping for API compatibility)
         field_names: Optional[List[str]] = None,
         num_frames: Optional[int] = None,
@@ -54,6 +56,7 @@ class DataLoaderFactory:
             config: Full configuration dictionary from Hydra
             sim_indices: Simulation indices to use (default: from config's train_sim)
             rollout_steps: Number of prediction steps (default: from config)
+            temporal_sparsity: Temporal sparsity configuration (default: from config or None)
             field_names: IGNORED (kept for API compatibility)
             num_frames: IGNORED (kept for API compatibility)
             percentage_real_data: IGNORED (kept for API compatibility)
@@ -92,11 +95,18 @@ class DataLoaderFactory:
                 # For hybrid or unknown modes, use global or default
                 rollout_steps = config['trainer'].get('rollout_steps', 4)
 
+        # Extract temporal sparsity from config if not provided
+        if temporal_sparsity is None and 'sparsity' in config:
+            sparsity_cfg = config['sparsity']
+            if 'temporal' in sparsity_cfg:
+                temporal_sparsity = TemporalSparsityConfig(**sparsity_cfg['temporal'])
+
         # Create simplified Dataset (no DataManager, no complex config!)
         dataset = Dataset(
             config=config,
             train_sim=sim_indices,
-            rollout_steps=rollout_steps
+            rollout_steps=rollout_steps,
+            temporal_sparsity=temporal_sparsity
         )
 
         logger.debug(f"PhiML dataset created: {dataset.total_samples} samples")
