@@ -74,13 +74,17 @@ class PhysicalTrainer:
         self.abs_tol = float(physical_config['abs_tol'])
         self.max_iterations = int(physical_config['max_iterations'])
 
+        reg_config = physical_config.get('regularization', {})
+        self.regularization_type = reg_config.get('type', 'none')
+        self.grad_regularization_weight = float(reg_config.get('weight', 0.0))
+
     def set_loss_scaling(self, real_weight: float, interaction_weight: float,
                          proportional: bool = False):
         """Configure loss scaling for hybrid training."""
         self.real_loss_weight = real_weight
         self.interaction_loss_weight = interaction_weight
         self.proportional_scaling = proportional
-    
+
     def _optimize_batch(self, separated_batch, params: Tensor) -> float:
         """
         Optimize parameters over a batch with separate real/generated loss weighting.
@@ -124,13 +128,23 @@ class PhysicalTrainer:
             if proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
                 ratio = math.stop_gradient(real_loss / (interaction_loss + 1e-8))
                 i_weight = interaction_loss_weight * ratio
+
+            # Gradient regularization
+            grad_reg_weight = self.grad_regularization_weight
+            if grad_reg_weight > 0:
+                grad_penalty = math.tensor(0.0)
+                for field_name in model.field_param_names:
+                    field_param = params.field[field_name]
+                    grad = math.spatial_gradient(field_param, padding='periodic')
+                    grad_penalty += math.mean(grad ** 2)
+                
             
-            return real_loss_weight * real_loss + i_weight * interaction_loss
+            return real_loss_weight * real_loss + i_weight * interaction_loss + grad_reg_weight * grad_penalty
         
         estimated_params = minimize(loss_function, self.optimizer)
         self._update_params(estimated_params)
         return float(loss_function(estimated_params))
-
+    
     def _update_params(self, params: Tensor):
         """Update model parameters from optimizer."""
         self.model.params = params

@@ -1,10 +1,10 @@
-"""Advection model using unified field channel dimension."""
+"""Advection model using unified field channel dimension with down/upsampling support."""
 
 from typing import Dict, Any, Tuple
 
 from phi.torch.flow import *
 from phi.math import Shape, Tensor, batch, math
-from phi.field import AngularVelocity
+from phi.field import AngularVelocity, downsample2x, upsample2x
 from phiml.math import channel
 
 from .base import PhysicalModel
@@ -13,7 +13,15 @@ from src.models import ModelRegistry
 
 @ModelRegistry.register_physical("AdvectionModel")
 class AdvectionModel(PhysicalModel):
-    """Advection model with static velocity and dynamic density."""
+    """
+    Advection model with static velocity and dynamic density.
+    
+    Supports optional downsampling for efficient training:
+    - Input states are downsampled before physics
+    - Physics computed at reduced resolution
+    - Output upsampled back to full resolution
+    - Parameters stay at reduced resolution
+    """
 
     def __init__(self, config: dict, downsample_factor: int = 0):
         super().__init__(config, downsample_factor)
@@ -25,6 +33,7 @@ class AdvectionModel(PhysicalModel):
         self._modulation_enabled = modulation_config.get("enabled", False)
         self._modulation_amplitude = float(modulation_config.get("amplitude", 0.0))
         self._modulation_lobes = int(modulation_config.get("lobes", 6))
+        
         self._jit_step = self._create_jit_step()
         self._params = self.get_initial_params()
 
@@ -60,23 +69,28 @@ class AdvectionModel(PhysicalModel):
     def params(self, params: Tensor):
         self._params = params
     
-    def _create_velocity_field(self) -> CenteredGrid:
-        """Create velocity field using AngularVelocity with ring falloff."""
-        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+    def _create_velocity_field(self, use_full_resolution: bool = False) -> Tensor:
+        """
+        Create velocity field using AngularVelocity with ring falloff.
+        
+        Args:
+            use_full_resolution: If True, create at full resolution. Otherwise use working resolution.
+        """
+        if use_full_resolution:
+            grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
+        else:
+            grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
 
         if self.n_spatial_dims == 2:
-            # Create location tensor with proper spatial dimension names
             center_values = [float(self.domain[i].size) / 2 for i in range(2)]
             vector_names = ','.join(self.spatial_dims)
             center = math.tensor(center_values, channel(vector=vector_names))
 
-            # Ring parameters based on domain size
             domain_size = float(self.domain[0].size)
-            ring_radius = domain_size * 0.3  # Ring at 30% of domain size
-            ring_width = domain_size * 0.15  # Width of the ring
+            ring_radius = domain_size * 0.3
+            ring_width = domain_size * 0.15
 
             def ring_falloff(distances):
-                """Ring-like falloff: velocity peaks at ring_radius."""
                 r = math.vec_length(distances)
                 return math.exp(-((r - ring_radius) / ring_width) ** 2)
 
@@ -98,40 +112,31 @@ class AdvectionModel(PhysicalModel):
             velocity_grid = CenteredGrid(velocity_fn, PERIODIC, bounds=self.domain, **grid_kwargs)
             return velocity_grid.values
 
-    def _create_modulation_field(self):
-        """Create the sinusoidal modulation field."""
+    def _create_modulation_field(self) -> Tensor:
+        """Create the sinusoidal modulation field at REDUCED resolution."""
         center_values = [float(self.domain[i].size) / 2 for i in range(2)]
         vector_names = ','.join(self.spatial_dims)
         center = math.tensor(center_values, channel(vector=vector_names))
 
-        # Ring parameters based on domain size
         domain_size = float(self.domain[0].size)
-        ring_radius = domain_size * 0.3  # Ring at 30% of domain size
-        ring_width = domain_size * 0.05  # Width of the ring
+        ring_radius = domain_size * 0.3
+        ring_width = domain_size * 0.05
+        
+        # Use reduced resolution for params
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
         
         def modulated_velocity(location):
-            # Calculate vector from center
             diff = location - center
-            
-            # Calculate distance (r) and angle (theta)
             r = math.vec_length(diff)
             theta = math.arctan(diff.vector['y'], diff.vector['x'])
             
-            # Ring falloff (Gaussian) - same as base field
             falloff = math.exp(-((r - ring_radius) / ring_width) ** 2)
-            
-            # Sinusoidal modulation: additive field with amplitude * sin(n * theta)
             modulation = self._modulation_amplitude * math.sin(self._modulation_lobes * theta)
-            
-            # Total magnitude of the ADDITIVE field
             magnitude = falloff * modulation
             
-            # Direction: Tangent to the circle (-y, x)
             tangent_x = -diff.vector['y'] / (r + 1e-6)
             tangent_y = diff.vector['x'] / (r + 1e-6)
             
-            # Combine
             vel_x = magnitude * tangent_x
             vel_y = magnitude * tangent_y
             
@@ -146,51 +151,106 @@ class AdvectionModel(PhysicalModel):
         return modulation_grid.values
 
     def _create_jit_step(self):
-        """Create JIT-compiled physics step."""
+        """Create JIT-compiled physics step with optional down/upsampling."""
         domain = self.domain
         dt = self.dt
+        downsample_factor = self.downsample_factor
         
+        # Reduced resolution grid kwargs (for physics computation)
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+        
+        # Full resolution grid kwargs (for input/output)
+        full_grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
+        
         static_names = self.static_field_names
         field_params_names = self.field_param_names
-        scalar_params_names = self.scalar_param_names
+        all_field_names = self.field_names
+        spatial_dims = self.spatial_dims
 
         @jit_compile
-        def advection_step(state: Tensor, params: Tensor) -> Tensor:
+        def advection_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
+            # ============================================================
+            # STEP 1: Downsample input state if needed
+            # ============================================================
+            if downsample_factor > 0:
+                # Downsample density
+                density_full = state.field['density']
+                density_grid = CenteredGrid(density_full, PERIODIC, bounds=domain, **full_grid_kwargs)
+                for _ in range(downsample_factor):
+                    density_grid = downsample2x(density_grid)
+                working_density = density_grid.values
+                
+                # Downsample static velocity fields
+                static_full = math.stack(
+                    [state.field[n] for n in static_names],
+                    channel(field=','.join(static_names))
+                )
+                velocity_full = rename_dims(static_full, channel(field=','.join(static_names)), 
+                                           channel(vector=','.join(spatial_dims)))
+                velocity_grid = CenteredGrid(velocity_full, PERIODIC, bounds=domain, **full_grid_kwargs)
+                for _ in range(downsample_factor):
+                    velocity_grid = downsample2x(velocity_grid)
+                working_velocity = velocity_grid.values
+            else:
+                working_density = state.field['density']
+                static = math.stack(
+                    [state.field[n] for n in static_names],
+                    channel(field=','.join(static_names))
+                )
+                working_velocity = rename_dims(static, channel(field=','.join(static_names)), 
+                                              channel(vector=','.join(spatial_dims)))
+
+            # ============================================================
+            # STEP 2: Run physics at reduced resolution
+            # ============================================================
             
-            # Extract and preserve static fields from STATE (which contains original velocity)
-            static = math.stack(
-                [state.field[n] for n in static_names],
-                channel(field=','.join(static_names))
-            )
-            velocity = rename_dims(static, channel(field=','.join(static_names)), channel(vector=','.join(grid_kwargs.keys())))
+            # Create grids from working state
+            density_grid = CenteredGrid(working_density, PERIODIC, bounds=domain, **grid_kwargs)
+            velocity_grid = CenteredGrid(working_velocity, PERIODIC, bounds=domain, **grid_kwargs)
 
-            # Create grids from state
-            density_grid = CenteredGrid(state.field['density'], PERIODIC, bounds=domain, **grid_kwargs)
-            velocity_grid = CenteredGrid(velocity, PERIODIC, bounds=domain, **grid_kwargs)
-
-            # Create grids from params
+            # Create grids from params (already at reduced resolution)
             field_params = math.stack(
                 [params.field[n] for n in field_params_names],
                 channel(field=','.join(field_params_names))
             )
-            modulation_field = rename_dims(field_params, channel(field=','.join(field_params_names)), channel(vector=','.join(grid_kwargs.keys())))   
+            modulation_field = rename_dims(field_params, 
+                                          channel(field=','.join(field_params_names)), 
+                                          channel(vector=','.join(spatial_dims)))
 
             # Velocity added to modulation field
             velocity_field = velocity_grid + modulation_field 
+            
             # Advect density using velocity
             density_grid = advect.semi_lagrangian(density_grid, velocity_field, dt=dt)
 
-            # Create output with field channel
-            density_out = math.expand(density_grid.values, channel(field='density'))
+            # ============================================================
+            # STEP 3: Upsample output if needed
+            # ============================================================
+            if downsample_factor > 0:
+                # Upsample density
+                for _ in range(downsample_factor):
+                    density_grid = upsample2x(density_grid)
+                density_out = math.expand(density_grid.values, channel(field='density'))
+                
+                # Upsample velocity (static fields are passed through)
+                output_velocity_grid = CenteredGrid(velocity_grid.values, PERIODIC, bounds=domain, **grid_kwargs)
+                for _ in range(downsample_factor):
+                    output_velocity_grid = upsample2x(output_velocity_grid)
+                static_out = math.rename_dims(output_velocity_grid.values, 'vector', 
+                                             channel(field=','.join(static_names)))
+            else:
+                density_out = math.expand(density_grid.values, channel(field='density'))
+                static_out = math.rename_dims(velocity_grid.values, 'vector', 
+                                             channel(field=','.join(static_names)))
 
-            return math.concat([density_out, static], 'field'), params
+            return math.concat([density_out, static_out], 'field'), params
 
         return advection_step
 
     def get_initial_state(self, batch_size: int = 1) -> Tensor:
-        """Generate initial state with density and velocity fields."""
-        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+        """Generate initial state with density and velocity fields at FULL resolution."""
+        # Use full resolution for initial state
+        grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
 
         # Random density
         density_grid = CenteredGrid(
@@ -203,8 +263,8 @@ class AdvectionModel(PhysicalModel):
         density = math.expand(density_grid.values, batch(batch=batch_size))
         density = math.expand(density, channel(field='density'))
 
-        # Velocity from pre-computed field (Base velocity only)
-        vel_values = self._create_velocity_field()
+        # Velocity from pre-computed field at full resolution
+        vel_values = self._create_velocity_field(use_full_resolution=True)
         static_names = ','.join(self.static_field_names)
         velocity = math.rename_dims(vel_values, 'vector', channel(field=static_names))
         velocity = math.expand(velocity, batch(batch=batch_size))
@@ -212,23 +272,23 @@ class AdvectionModel(PhysicalModel):
         return math.concat([density, velocity], 'field')
 
     def get_real_params(self) -> Tensor:
+        """Get real/target parameters at REDUCED resolution."""
         modulation_field = self._create_modulation_field()
         field_names = ','.join(self.field_param_names)
         modulation_field = math.rename_dims(modulation_field, 'vector', channel(field=field_names))
         return math.concat([modulation_field], 'field')
 
     def get_initial_params(self) -> Tensor:
+        """Initialize parameters at REDUCED resolution."""
         return math.ones_like(self.get_real_params())
 
     def forward(self, state: Tensor, params: Tensor) -> Tensor:
         """
         Forward pass through the model.
         
-        Args:
-            state: Current state tensor
+        Input state is at full resolution, output is at full resolution.
+        Physics computation happens at reduced resolution internally.
         """
-            
-        # Call JIT step with resolved arguments
         pred, _ = self._jit_step(state, params)
         return pred
 
@@ -244,4 +304,3 @@ class AdvectionModel(PhysicalModel):
 
     def load(self, path):
         self.params = math.load(str(path))
-

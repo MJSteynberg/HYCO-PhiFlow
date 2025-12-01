@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
   mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  tasks: ['train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -27,7 +27,7 @@ model:
     model_path: 'results/models'
     model_save_name: 'burgers_synthetic_model_1d'
     architecture:
-      layers: [128, 128]
+      layers: [32, 32, 32]
       batch_norm: false
 
 trainer:
@@ -39,15 +39,18 @@ trainer:
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 0
+    downsample_factor: 2
     method: 'L-BFGS-B'
     abs_tol: 1e-12
-    max_iterations: 5
+    max_iterations: 10
+    regularization:
+      type: 'l2_gradient'  # or 'tv', 'laplacian'
+      weight: 0.1
   synthetic:
-    epochs: 10
+    epochs: 100
     rollout_scheduler:
       start: 1
-      end: 3
+      end: 6
       strategy: 'exponential'
       exponent: 2.0
     learning_rate: 0.0001
@@ -55,10 +58,12 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 5
+    cycles: 10
     warmup: 2
     augmentation:
-      alpha: 1.0
+      alpha: 0.2
+      num_trajectories: 6
+      trajectory_length: 10
       cache_dir: data/cache_phiml
 
     # NEW: Loss scaling configuration

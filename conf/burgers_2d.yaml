@@ -35,39 +35,57 @@ model:
 trainer:
   batch_size: 32
   rollout_steps: 5
-  train_sim: [0]
+  train_sim: [0,1]
   device: 'cuda:0'
   data_access: 'both'
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 0
+    downsample_factor: 2
     method: 'L-BFGS-B'
-    abs_tol: 1e-6
+    abs_tol: 1e-12
     max_iterations: 10
+    regularization:
+      type: 'l2_gradient'  # or 'tv', 'laplacian'
+      weight: 0.1
   synthetic:
-    epochs: 10
+    epochs: 50
     rollout_scheduler:
       start: 1
-      end: 6
+      end: 3
       strategy: 'exponential'
-      exponent: 3.0
+      exponent: 2.0
     learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
     cycles: 10
-    warmup: 1
+    warmup: 5
     augmentation:
-      alpha: 1.0
+      alpha: 0.2
+      num_trajectories: 6
+      trajectory_length: 10
       cache_dir: data/cache_phiml
+
+    # NEW: Loss scaling configuration
+    loss_scaling:
+      synthetic:
+        real_weight: 1.0        # L coefficient
+        interaction_weight: 1.0  # I coefficient
+        proportional: false      # Auto-scale I to match L magnitude
+      
+      physical:
+        real_weight: 1.0
+        interaction_weight: 0.1  # Physical model sees weaker interaction loss
+        proportional: true       # Or use proportional scaling
+
 
 
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0]
+  test_sim: [0,1,2,3]
 
   # Model checkpoint to evaluate
   synthetic_checkpoint: "results/models/burgers_synthetic_model_2d.pth"

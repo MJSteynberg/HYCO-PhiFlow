@@ -1,8 +1,9 @@
-"""Abstract base class for physical PDE models."""
+"""Abstract base class for physical PDE models with optional down/upsampling."""
 
 from abc import ABC, abstractmethod
-from phi.flow import Field, Box, math, batch, iterate
+from phi.flow import Field, Box, math, batch, iterate, CenteredGrid
 from phi.math import Shape, spatial, Tensor
+from phi.field import downsample2x, upsample2x
 from phiml.math import channel
 from typing import Dict, Any, Tuple
 
@@ -10,6 +11,12 @@ from typing import Dict, Any, Tuple
 class PhysicalModel(ABC):
     """
     Base class for physical PDE models with tensor-first architecture.
+    
+    Supports optional downsampling for efficient training:
+    - Input states are downsampled before physics computation
+    - Physics runs at reduced resolution
+    - Outputs are upsampled back to original resolution
+    - Parameters (learnable fields) stay at reduced resolution
 
     State format: Tensor(batch?, x, y?, field='vel_x,vel_y,...')
     """
@@ -25,11 +32,16 @@ class PhysicalModel(ABC):
         box_kwargs = {name: dim['size'] for name, dim in dim_config.items()}
         self.domain = Box(**box_kwargs)
 
-        res_kwargs = {
+        # Store FULL resolution (original data resolution)
+        full_res_kwargs = {name: dim['resolution'] for name, dim in dim_config.items()}
+        self.full_resolution = spatial(**full_res_kwargs)
+
+        # Store REDUCED resolution for physics computation
+        reduced_res_kwargs = {
             name: dim['resolution'] // (2**downsample_factor)
             for name, dim in dim_config.items()
         }
-        self.resolution = spatial(**res_kwargs)
+        self.resolution = spatial(**reduced_res_kwargs)  # This is the working resolution
 
         self.spatial_dims = list(dim_config.keys())
         self.n_spatial_dims = len(self.spatial_dims)
@@ -65,6 +77,68 @@ class PhysicalModel(ABC):
     def get_initial_state(self, batch_size: int = 1) -> Tensor:
         """Generate random initial state as unified tensor."""
         pass
+
+    def _downsample_state(self, state: Tensor, field_names: Tuple[str, ...]) -> Tensor:
+        """
+        Downsample state tensor from full resolution to working resolution.
+        
+        Args:
+            state: Tensor at full resolution with 'field' channel dimension
+            field_names: Names of the fields for grid creation
+            
+        Returns:
+            Downsampled tensor at self.resolution
+        """
+        if self.downsample_factor == 0:
+            return state
+        
+        # Get full resolution grid kwargs
+        full_grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
+        
+        # Create grid from state values
+        grid = CenteredGrid(
+            state,
+            extrapolation.PERIODIC,
+            bounds=self.domain,
+            **full_grid_kwargs
+        )
+        
+        # Apply downsample2x repeatedly
+        for _ in range(self.downsample_factor):
+            grid = downsample2x(grid)
+        
+        return grid.values
+
+    def _upsample_state(self, state: Tensor, field_names: Tuple[str, ...]) -> Tensor:
+        """
+        Upsample state tensor from working resolution back to full resolution.
+        
+        Args:
+            state: Tensor at working resolution with 'field' channel dimension
+            field_names: Names of the fields for grid creation
+            
+        Returns:
+            Upsampled tensor at self.full_resolution
+        """
+        if self.downsample_factor == 0:
+            return state
+        
+        # Get working resolution grid kwargs
+        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
+        
+        # Create grid from state values
+        grid = CenteredGrid(
+            state,
+            extrapolation.PERIODIC,
+            bounds=self.domain,
+            **grid_kwargs
+        )
+        
+        # Apply upsample2x repeatedly
+        for _ in range(self.downsample_factor):
+            grid = upsample2x(grid)
+        
+        return grid.values
 
     def forward(self, state: Tensor) -> Tensor:
         """Single physics step."""

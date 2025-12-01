@@ -93,7 +93,7 @@ class Evaluator:
 
         # Create model with num_channels
         self.model = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
-        self.model.network = torch.compile(self.model.network)
+        
 
         # Get static fields from model to determine which are dynamic
         self.static_fields = self.model.static_fields if hasattr(self.model, 'static_fields') else []
@@ -105,8 +105,11 @@ class Evaluator:
         checkpoint_path = Path(self.eval_config['synthetic_checkpoint'])
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        self.model.load(str(checkpoint_path))
+        try:    
+            self.model.load(str(checkpoint_path))
+        except Exception as e:
+            self.model.network = torch.compile(self.model.network)
+            self.model.load(str(checkpoint_path))
 
         logger.info(f"Loaded PhiML model from {checkpoint_path}")
 
