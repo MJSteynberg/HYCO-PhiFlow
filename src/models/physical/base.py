@@ -1,7 +1,7 @@
 """Abstract base class for physical PDE models with optional down/upsampling."""
 
 from abc import ABC, abstractmethod
-from phi.flow import Field, Box, math, batch, iterate, CenteredGrid
+from phi.flow import *
 from phi.math import Shape, spatial, Tensor
 from phi.field import downsample2x, upsample2x
 from phiml.math import channel
@@ -112,20 +112,20 @@ class PhysicalModel(ABC):
     def _upsample_state(self, state: Tensor, field_names: Tuple[str, ...]) -> Tensor:
         """
         Upsample state tensor from working resolution back to full resolution.
-        
+
         Args:
             state: Tensor at working resolution with 'field' channel dimension
             field_names: Names of the fields for grid creation
-            
+
         Returns:
             Upsampled tensor at self.full_resolution
         """
         if self.downsample_factor == 0:
             return state
-        
+
         # Get working resolution grid kwargs
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
-        
+
         # Create grid from state values
         grid = CenteredGrid(
             state,
@@ -133,12 +133,52 @@ class PhysicalModel(ABC):
             bounds=self.domain,
             **grid_kwargs
         )
-        
+
         # Apply upsample2x repeatedly
         for _ in range(self.downsample_factor):
             grid = upsample2x(grid)
-        
+
         return grid.values
+
+    def _downsample_targets(self, targets: Tensor) -> Tensor:
+        """
+        Downsample target trajectory from full resolution to working resolution.
+
+        Used during training to compare predictions at reduced resolution.
+
+        Args:
+            targets: Tensor at full resolution with 'time' and 'field' dimensions
+
+        Returns:
+            Downsampled tensor at self.resolution
+        """
+        if self.downsample_factor == 0:
+            return targets
+
+        # Get full resolution grid kwargs
+        full_grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
+
+        # Downsample each timestep
+        downsampled_steps = []
+        for t in range(targets.shape.get_size('time')):
+            target_step = targets.time[t]
+
+            # Create grid from target values
+            grid = CenteredGrid(
+                target_step,
+                extrapolation.PERIODIC,
+                bounds=self.domain,
+                **full_grid_kwargs
+            )
+
+            # Apply downsample2x repeatedly
+            for _ in range(self.downsample_factor):
+                grid = downsample2x(grid)
+
+            downsampled_steps.append(grid.values)
+
+        # Stack back into time dimension
+        return math.stack(downsampled_steps, batch('time'))
 
     def forward(self, state: Tensor) -> Tensor:
         """Single physics step."""

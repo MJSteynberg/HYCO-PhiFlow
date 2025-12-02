@@ -15,11 +15,11 @@ from src.models import ModelRegistry
 class AdvectionModel(PhysicalModel):
     """
     Advection model with static velocity and dynamic density.
-    
+
     Supports optional downsampling for efficient training:
-    - Input states are downsampled before physics
+    - Input states are downsampled during physics step
     - Physics computed at reduced resolution
-    - Output upsampled back to full resolution
+    - Output stays at reduced resolution (upsample via forward() if needed)
     - Parameters stay at reduced resolution
     """
 
@@ -151,7 +151,14 @@ class AdvectionModel(PhysicalModel):
         return modulation_grid.values
 
     def _create_jit_step(self):
-        """Create JIT-compiled physics step with optional down/upsampling."""
+        """
+        Create JIT-compiled physics step with optional downsampling.
+
+        If downsample_factor > 0:
+        1. Downsample input state from full resolution
+        2. Run physics at reduced resolution
+        3. Return output at reduced resolution (upsampling done externally)
+        """
         domain = self.domain
         dt = self.dt
         downsample_factor = self.downsample_factor
@@ -224,24 +231,13 @@ class AdvectionModel(PhysicalModel):
             density_grid = advect.semi_lagrangian(density_grid, velocity_field, dt=dt)
 
             # ============================================================
-            # STEP 3: Upsample output if needed
+            # STEP 3: Convert back to tensor format (NO upsampling)
             # ============================================================
-            if downsample_factor > 0:
-                # Upsample density
-                for _ in range(downsample_factor):
-                    density_grid = upsample2x(density_grid)
-                density_out = math.expand(density_grid.values, channel(field='density'))
-                
-                # Upsample velocity (static fields are passed through)
-                output_velocity_grid = CenteredGrid(velocity_grid.values, PERIODIC, bounds=domain, **grid_kwargs)
-                for _ in range(downsample_factor):
-                    output_velocity_grid = upsample2x(output_velocity_grid)
-                static_out = math.rename_dims(output_velocity_grid.values, 'vector', 
-                                             channel(field=','.join(static_names)))
-            else:
-                density_out = math.expand(density_grid.values, channel(field='density'))
-                static_out = math.rename_dims(velocity_grid.values, 'vector', 
-                                             channel(field=','.join(static_names)))
+            # Output stays at reduced resolution for training efficiency
+            # Upsampling happens externally in forward() when needed
+            density_out = math.expand(density_grid.values, channel(field='density'))
+            static_out = math.rename_dims(velocity_grid.values, 'vector',
+                                         channel(field=','.join(static_names)))
 
             return math.concat([density_out, static_out], 'field'), params
 
@@ -282,21 +278,57 @@ class AdvectionModel(PhysicalModel):
         """Initialize parameters at REDUCED resolution."""
         return math.ones_like(self.get_real_params())
 
-    def forward(self, state: Tensor, params: Tensor) -> Tensor:
+    def forward(self, state: Tensor, params: Tensor, upsample_output: bool = True) -> Tensor:
         """
         Forward pass through the model.
-        
-        Input state is at full resolution, output is at full resolution.
-        Physics computation happens at reduced resolution internally.
+
+        Args:
+            state: Input state (at full resolution if downsample_factor > 0)
+            params: Model parameters (at reduced resolution)
+            upsample_output: If True, upsample output to full resolution.
+                           If False, return at reduced resolution (for training).
+
+        Returns:
+            Prediction at full resolution (if upsample_output=True) or
+            reduced resolution (if upsample_output=False)
         """
         pred, _ = self._jit_step(state, params)
+
+        # Upsample if requested and downsampling is enabled
+        if upsample_output and self.downsample_factor > 0:
+            pred = self._upsample_state(pred, self.field_names)
+
         return pred
 
-    def rollout(self, initial_state: Tensor, params: Tensor, num_steps: int) -> Tensor:
-        """Rollout simulation for multiple steps."""
+    def rollout(self, initial_state: Tensor, params: Tensor, num_steps: int,
+                upsample_output: bool = True) -> Tensor:
+        """
+        Rollout simulation for multiple steps.
+
+        Args:
+            initial_state: Initial state (at full resolution)
+            params: Model parameters (at reduced resolution)
+            num_steps: Number of steps to simulate
+            upsample_output: If True, upsample trajectory to full resolution.
+                           If False, return at reduced resolution.
+
+        Returns:
+            Trajectory at full resolution (if upsample_output=True) or
+            reduced resolution (if upsample_output=False)
+        """
         trajectory, _ = iterate(self._jit_step, batch(time=num_steps), initial_state, params)
         if isinstance(trajectory, tuple):
             trajectory = trajectory[0]
+
+        # Upsample each timestep if requested
+        if upsample_output and self.downsample_factor > 0:
+            upsampled_steps = []
+            for t in range(trajectory.shape.get_size('time')):
+                step = trajectory.time[t]
+                upsampled_step = self._upsample_state(step, self.field_names)
+                upsampled_steps.append(upsampled_step)
+            trajectory = math.stack(upsampled_steps, batch('time'))
+
         return trajectory
 
     def save(self, path):

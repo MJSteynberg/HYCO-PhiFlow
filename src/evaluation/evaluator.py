@@ -226,6 +226,51 @@ class Evaluator:
             plt.close('all')
             logger.info(f"Saved {param_name} comparison to {output_path}")
 
+            # If this is a potential field, also visualize the gradient (forcing)
+            if 'potential' in param_name.lower():
+                logger.info(f"Creating gradient visualization for potential field: {param_name}")
+                try:
+                    # Get domain information from physical model
+                    domain = self.physical_model.domain
+                    spatial_dims = self.physical_model.spatial_dims
+                    grid_kwargs = {name: self.physical_model.resolution.get_size(name) for name in spatial_dims}
+
+                    # Create grids from the parameter tensors
+                    real_potential_grid = CenteredGrid(real_param, PERIODIC, bounds=domain, **grid_kwargs)
+                    learned_potential_grid = CenteredGrid(learned_param, PERIODIC, bounds=domain, **grid_kwargs)
+
+                    # Compute gradients (forcing = -∇φ)
+                    real_grad = real_potential_grid.gradient(boundary=PERIODIC)
+                    learned_grad = learned_potential_grid.gradient(boundary=PERIODIC)
+
+                    # Forcing is negative gradient
+                    real_forcing = -real_grad
+                    learned_forcing = -learned_grad
+
+                    # Plot the forcing fields (vector or magnitude)
+                    if self.physical_model.n_spatial_dims == 2:
+                        # For 2D, plot magnitude of forcing
+                        plot({
+                            f'Real Forcing |f|': 0.1 * real_forcing,
+                            f'Learned Forcing |f|': 0.1 * learned_forcing,
+                        })
+                    else:
+                        # For 1D, plot the forcing directly
+                        plot({
+                            f'Real Forcing f': real_forcing.values,
+                            f'Learned Forcing f': learned_forcing.values,
+                        })
+
+                    output_path = self.output_dir / f'param_{param_name}_forcing_comparison.png'
+                    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+                    plt.close('all')
+                    logger.info(f"Saved {param_name} forcing comparison to {output_path}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to create gradient visualization for {param_name}: {e}")
+
+
+
         # Also create vector field visualization if 2D
         try:
             if 'mod_field_x' in param_names and 'mod_field_y' in param_names:

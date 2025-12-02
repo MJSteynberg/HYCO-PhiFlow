@@ -1,0 +1,121 @@
+general:
+  experiment_name: 'inviscid_burgers_2d_experiment'
+  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['generate', 'train', 'evaluate']
+
+data:
+  data_dir: 'data/inviscid_burgers_2d'
+  dset_name: 'inviscid_burgers_2d'
+  num_simulations: 6
+  trajectory_length: 50
+
+model:
+  physical:
+    name: 'InviscidBurgersModel'
+    model_path: 'results/models'
+    model_save_name: 'inviscid_burgers_physical_model_2d'
+    domain:
+      dimensions:
+        x: {size: 100, resolution: 128}
+        y: {size: 100, resolution: 128}
+    dt: 0.5
+    pde_params:
+      name: 'potential_field'
+      type: 'field'
+      value: 'math.cos(math.pi * x/size_x)**2 * math.sin(math.pi * y/size_y)**2'  # Spatially-varying potential field to learn (forcing = -∇φ)
+  synthetic:
+    name: 'UNet'
+    model_path: 'results/models'
+    model_save_name: 'inviscid_burgers_synthetic_model_2d'
+    architecture:
+      levels: 4
+      filters: 64
+      batch_norm: false
+
+trainer:
+  batch_size: 64
+  rollout_steps: 5
+  train_sim: [0]
+  device: 'cuda:0'
+  data_access: 'both'
+  physical:
+    epochs: 1
+    rollout_steps: 1
+    downsample_factor: 0
+    method: 'L-BFGS-B'
+    abs_tol: 1e-12
+    max_iterations: 10
+    regularization:
+      type: 'l2_gradient'  # or 'tv', 'laplacian'
+      weight: 1e-6  # May need less regularization than diffusion
+  synthetic:
+    epochs: 100
+    rollout_scheduler:
+      start: 1
+      end: 4
+      strategy: 'exponential'
+      exponent: 2.0
+    learning_rate: 0.0001
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  hybrid:
+    cycles: 10
+    warmup: 5
+    augmentation:
+      alpha: 1.0
+      num_trajectories: 10
+      trajectory_length: 10
+      cache_dir: data/cache_phiml
+
+    # Loss scaling configuration
+    loss_scaling:
+      synthetic:
+        real_weight: 1.0        # L coefficient
+        interaction_weight: 1.0  # I coefficient
+        proportional: false      # Auto-scale I to match L magnitude
+
+      physical:
+        real_weight: 1.0
+        interaction_weight: 0.001  # Physical model sees weaker interaction loss
+        proportional: false       # Or use proportional scaling
+
+# Observation sparsity configuration
+sparsity:
+  temporal:
+    enabled: false
+    mode: endpoints
+    start_fraction: 0.1
+    end_fraction: 0.1
+    uniform_stride: 1
+    custom_fractions: []
+
+  spatial:
+    enabled: false
+    mode: range
+    x_range: [0.0, 0.5]
+    y_range: null
+    center_fraction: 0.5
+    num_random_points: 100
+    random_seed: 42
+
+# For evaluation
+evaluation:
+  # Which simulations to evaluate
+  test_sim: [0, 1, 2, 3]
+
+  # Model checkpoint to evaluate
+  synthetic_checkpoint: "results/models/inviscid_burgers_synthetic_model_2d.pth"
+  physical_checkpoint: "results/models/inviscid_burgers_physical_model_2d.npz"
+
+  # How many timesteps to rollout
+  num_frames: 100
+
+  # Output directory
+  output_dir: "results/evaluation/inviscid_burgers_2d"
+
+  # Visualization settings
+  visualization:
+    format: "gif"  # or "mp4"
+    fps: 10
+    dpi: 100

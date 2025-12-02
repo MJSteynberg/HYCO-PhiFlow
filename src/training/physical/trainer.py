@@ -82,6 +82,7 @@ class PhysicalTrainer:
         reg_config = physical_config.get('regularization', {})
         self.regularization_type = reg_config.get('type', 'none')
         self.grad_regularization_weight = float(reg_config.get('weight', 0.0))
+        self.grad_difference = reg_config.get('difference', 'central')
 
     def set_loss_scaling(self, real_weight: float, interaction_weight: float,
                          proportional: bool = False):
@@ -100,9 +101,15 @@ class PhysicalTrainer:
     def _optimize_batch(self, separated_batch, params: Tensor) -> float:
         """
         Optimize parameters over a batch with separate real/generated loss weighting.
-        
+
+        Training at reduced resolution when downsample_factor > 0:
+        - Targets are downsampled to match model's working resolution
+        - Model forward called with upsample_output=False
+        - Loss computed at reduced resolution throughout
+
         Sparsity is applied ONLY to real data:
-        - Spatial mask applied to real_loss computation
+        - Spatial mask created at reduced resolution
+        - Applied to real_loss computation
         - Generated/interaction loss uses full spatial domain
         """
         rollout_steps = self.rollout_steps
@@ -112,20 +119,30 @@ class PhysicalTrainer:
         proportional_scaling = self.proportional_scaling
 
         # Get spatial mask for real data only
+        # IMPORTANT: Mask must be created at REDUCED resolution since we compare at reduced resolution
         spatial_mask = None
         if separated_batch.has_real:
-            spatial_mask = self._get_spatial_mask(separated_batch.real_initial_state.shape.spatial)
+            # Use model's working resolution, not full resolution
+            working_spatial_shape = spatial(**{name: model.resolution.get_size(name)
+                                              for name in model.spatial_dims})
+            spatial_mask = self._get_spatial_mask(working_spatial_shape)
 
         def loss_function(params: Tensor) -> Tensor:
             def compute_loss(init_state, targets, apply_spatial_mask: bool = False):
-                """Compute loss with optional spatial masking."""
+                """Compute loss with optional spatial masking at reduced resolution."""
+                # Downsample targets ONCE before the rollout loop
+                # This keeps everything at reduced resolution during training
+                working_targets = model._downsample_targets(targets)
+
                 total_loss = math.tensor(0.0)
                 current_state = init_state
                 for step in range(rollout_steps):
-                    current_state = model.forward(current_state, params)
-                    target = targets.time[step]
+                    # Forward WITHOUT upsampling - keep at reduced resolution
+                    current_state = model.forward(current_state, params, upsample_output=False)
+                    target = working_targets.time[step]
 
                     # Apply spatial mask ONLY if requested (for real data)
+                    # Note: Mask must be created at reduced resolution
                     if apply_spatial_mask and spatial_mask is not None:
                         step_loss = spatial_mask.compute_masked_mse(current_state, target)
                     else:
@@ -165,7 +182,7 @@ class PhysicalTrainer:
             if grad_reg_weight > 0:
                 for field_name in model.field_param_names:
                     field_param = params.field[field_name]
-                    grad = math.spatial_gradient(field_param, padding='periodic', difference='central')
+                    grad = math.spatial_gradient(field_param, padding='periodic', difference=self.grad_difference)
                     grad_penalty += math.mean(grad ** 2)
             
             return real_loss_weight * real_loss + i_weight * interaction_loss + grad_reg_weight * grad_penalty

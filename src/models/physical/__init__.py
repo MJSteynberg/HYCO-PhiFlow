@@ -8,6 +8,5 @@ from .base import PhysicalModel
 
 # You can add other models here later
 from .burgers import BurgersModel
-
-
+from .inviscid_burgers import InviscidBurgersModel
 from .advection import AdvectionModel

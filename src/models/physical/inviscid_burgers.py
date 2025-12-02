@@ -1,4 +1,4 @@
-"""Burgers model using unified field channel dimension with trainable diffusion and down/upsampling."""
+"""Inviscid Burgers model with trainable potential field (forcing via gradient)."""
 
 from typing import Dict, Any, Tuple
 
@@ -11,10 +11,16 @@ from .base import PhysicalModel
 from src.models import ModelRegistry
 
 
-@ModelRegistry.register_physical("BurgersModel")
-class BurgersModel(PhysicalModel):
+@ModelRegistry.register_physical("InviscidBurgersModel")
+class InviscidBurgersModel(PhysicalModel):
     """
-    Burgers equation model with trainable diffusion coefficient.
+    Inviscid Burgers equation model with trainable potential field.
+
+    PDE: ∂u/∂t + u·∇u = -∇φ(x)
+
+    where φ(x) is the unknown potential field to identify.
+    The forcing is computed as the negative gradient of the potential,
+    allowing the forcing to "push around" the solution in any direction.
 
     Supports optional downsampling for efficient training:
     - Input states at full resolution are downsampled during physics step
@@ -27,14 +33,10 @@ class BurgersModel(PhysicalModel):
         super().__init__(config, downsample_factor)
 
         pde_params = config["model"]["physical"]["pde_params"]
-        self._diffusion_type = pde_params['type']  # 'scalar' or 'field'
-        self._diffusion_value_str = pde_params['value']
+        self._potential_type = pde_params['type']  # 'scalar' or 'field'
+        self._potential_value_str = pde_params['value']
 
-        # Calculate max stable diffusion at REDUCED resolution: D <= 0.5 * dx^2 / dt
-        grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
-        dx_vals = [self.domain.size[d] / grid_kwargs[d] for d in self.spatial_dims]
-        min_dx = min(dx_vals)
-        self._max_diffusion = 0.5 * (min_dx ** 2) / self.dt
+        # No stability constraints needed for potential-based forcing
 
         self._jit_step = self._create_jit_step()
         self._params = self.get_initial_params()
@@ -53,14 +55,14 @@ class BurgersModel(PhysicalModel):
 
     @property
     def scalar_param_names(self) -> Tuple[str, ...]:
-        if self._diffusion_type == 'scalar':
-            return ('diffusion_coeff',)
+        if self._potential_type == 'scalar':
+            return ('potential_coeff',)
         return ()
 
     @property
     def field_param_names(self) -> Tuple[str, ...]:
-        if self._diffusion_type == 'field':
-            return ('diffusion_field',)
+        if self._potential_type == 'field':
+            return ('potential_field',)
         return ()
 
     @property
@@ -69,16 +71,16 @@ class BurgersModel(PhysicalModel):
 
     @params.setter
     def params(self, params: Tensor):
-        # Enforce stability clipping when updating parameters
-        self._params = math.clip(params, 0.0, self._max_diffusion)
+        # No clipping needed for potential field (can be any value)
+        self._params = params
 
-    def _create_diffusion_field(self) -> Tensor:
-        """Create spatial diffusion field from config at REDUCED resolution."""
+    def _create_potential_field(self) -> Tensor:
+        """Create spatial potential field from config at REDUCED resolution."""
         # Use reduced resolution for params
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
         sizes = {f'size_{d}': float(self.domain[i].size) for i, d in enumerate(self.spatial_dims)}
 
-        def diffusion_fn(location):
+        def potential_fn(location):
             local_vars = {'math': math, **sizes}
 
             if self.n_spatial_dims == 1:
@@ -91,18 +93,18 @@ class BurgersModel(PhysicalModel):
                 local_vars['y'] = location.vector['y']
                 local_vars['z'] = location.vector['z']
 
-            result = eval(self._diffusion_value_str, local_vars)
+            result = eval(self._potential_value_str, local_vars)
             if not isinstance(result, math.Tensor):
                 result = math.ones_like(location if self.n_spatial_dims == 1 else location.vector['x']) * result
             return result
 
-        diffusion_grid = CenteredGrid(
-            diffusion_fn,
+        potential_grid = CenteredGrid(
+            potential_fn,
             extrapolation.PERIODIC,
             bounds=self.domain,
             **grid_kwargs
         )
-        return diffusion_grid.values
+        return potential_grid.values
 
     def _create_jit_step(self):
         """
@@ -117,18 +119,18 @@ class BurgersModel(PhysicalModel):
         dt = self.dt
         field_names = self.field_names
         spatial_dims = self.spatial_dims
-        diffusion_type = self._diffusion_type
+        potential_type = self._potential_type
         downsample_factor = self.downsample_factor
-        max_diffusion = self._max_diffusion
-        
+        n_spatial_dims = self.n_spatial_dims
+
         # Reduced resolution grid kwargs (for physics computation)
         grid_kwargs = {name: self.resolution.get_size(name) for name in spatial_dims}
-        
+
         # Full resolution grid kwargs (for input/output)
         full_grid_kwargs = {name: self.full_resolution.get_size(name) for name in spatial_dims}
 
         @jit_compile
-        def burgers_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
+        def inviscid_burgers_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
             # ============================================================
             # STEP 1: Downsample input state if needed
             # ============================================================
@@ -138,61 +140,52 @@ class BurgersModel(PhysicalModel):
                     state, 'field', channel(vector=','.join(spatial_dims))
                 )
                 state_grid = CenteredGrid(velocity_tensor_full, PERIODIC, bounds=domain, **full_grid_kwargs)
-                
+
                 # Downsample repeatedly
                 for _ in range(downsample_factor):
                     state_grid = downsample2x(state_grid)
-                
+
                 # Back to tensor format
                 working_state = math.rename_dims(
                     state_grid.values, 'vector', channel(field=','.join(field_names))
                 )
             else:
                 working_state = state
-            
+
             # ============================================================
             # STEP 2: Run physics at reduced resolution
             # ============================================================
-            
-            # Extract diffusion coefficient from params (already at reduced resolution)
-            if diffusion_type == 'scalar':
-                diffusion_coeff = params.field['diffusion_coeff']
-                diffusion_coeff = math.clip(diffusion_coeff, 0.0, max_diffusion)
+
+            # Extract potential from params (already at reduced resolution)
+            if potential_type == 'scalar':
+                potential_coeff = params.field['potential_coeff']
             else:
-                diffusion_coeff_tensor = params.field['diffusion_field']
-                diffusion_coeff_tensor = math.clip(diffusion_coeff_tensor, 0.0, max_diffusion)
+                potential_field_tensor = params.field['potential_field']
 
             # Convert field -> vector for physics
             velocity_tensor = math.rename_dims(
                 working_state, 'field', channel(vector=','.join(spatial_dims))
             )
 
-            # Advection at reduced resolution
+            # Advection at reduced resolution (inviscid: u·∇u term)
             velocity_grid = CenteredGrid(velocity_tensor, PERIODIC, bounds=domain, **grid_kwargs)
             velocity_grid = advect.semi_lagrangian(velocity_grid, velocity_grid, dt=dt)
 
-            # Diffusion
-            if diffusion_type == 'scalar':
-                velocity_grid = diffuse.explicit(velocity_grid, diffusion_coeff, dt=dt, substeps=5)
+            # Compute forcing as f = -∇φ
+            if potential_type == 'scalar':
+                # Scalar potential: uniform, gradient is zero (no forcing)
+                # This case doesn't make much physical sense, but we handle it
+                pass  # No forcing applied
             else:
-                # Spatially-varying diffusion: ∇·(D∇u) = D∇²u + ∇D·∇u
-                diffusion_coeff_grid = CenteredGrid(diffusion_coeff_tensor, PERIODIC, bounds=domain, **grid_kwargs)
-                grad_D = diffusion_coeff_grid.gradient(boundary=PERIODIC)
+                # Field potential: compute gradient to get forcing
+                potential_grid = CenteredGrid(potential_field_tensor, PERIODIC, bounds=domain, **grid_kwargs)
 
-                components = list(math.unstack(velocity_grid, channel('vector')))
+                # Compute gradient: ∇φ
+                grad_potential = potential_grid.gradient(boundary=PERIODIC)
 
-                for i, u_comp in enumerate(components):
-                    laplacian_u = u_comp.laplace()
-                    grad_u = u_comp.gradient()
-
-                    diffusion_term = diffusion_coeff_grid.values * laplacian_u
-                    advection_term = math.sum(grad_D.values * grad_u.values, 'vector')
-
-                    u_new = u_comp.values + dt * (diffusion_term + advection_term)
-                    u_comp = CenteredGrid(u_new, PERIODIC, bounds=domain, **grid_kwargs)
-                    components[i] = u_comp
-
-                velocity_grid = math.stack(components, channel('vector'))
+                # Apply forcing: u_new = u_advected - dt * ∇φ
+                # The negative sign makes high potential push flow away (like pressure)
+                velocity_grid = velocity_grid - dt * grad_potential
 
             # ============================================================
             # STEP 3: Convert back to tensor format (NO upsampling)
@@ -205,7 +198,7 @@ class BurgersModel(PhysicalModel):
 
             return next_state, params
 
-        return burgers_step
+        return inviscid_burgers_step
 
     def get_initial_state(self, batch_size: int = 1) -> Tensor:
         """Generate noisy initial velocity at FULL resolution."""
@@ -226,20 +219,20 @@ class BurgersModel(PhysicalModel):
 
     def get_real_params(self) -> Tensor:
         """Get real/target parameters at REDUCED resolution."""
-        if self._diffusion_type == 'scalar':
-            diffusion_value = float(eval(self._diffusion_value_str))
-            diffusion_tensor = math.wrap(diffusion_value)
-            return math.expand(diffusion_tensor, channel(field='diffusion_coeff'))
+        if self._potential_type == 'scalar':
+            potential_value = float(eval(self._potential_value_str))
+            potential_tensor = math.wrap(potential_value)
+            return math.expand(potential_tensor, channel(field='potential_coeff'))
         else:
-            diffusion_field = self._create_diffusion_field()
-            return math.expand(diffusion_field, channel(field='diffusion_field'))
+            potential_field = self._create_potential_field()
+            return math.expand(potential_field, channel(field='potential_field'))
 
     def get_initial_params(self) -> Tensor:
-        """Initialize parameters at REDUCED resolution."""
-        if self._diffusion_type == 'scalar':
-            return math.expand(math.wrap(1.0), channel(field='diffusion_coeff'))
+        """Initialize parameters at REDUCED resolution (start from zero potential)."""
+        if self._potential_type == 'scalar':
+            return math.expand(math.wrap(0.0), channel(field='potential_coeff'))
         else:
-            return math.ones_like(self.get_real_params())
+            return math.zeros_like(self.get_real_params())
 
     def forward(self, state: Tensor, params: Tensor, upsample_output: bool = True) -> Tensor:
         """

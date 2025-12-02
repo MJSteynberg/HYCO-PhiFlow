@@ -33,7 +33,7 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 32
+  batch_size: 16
   rollout_steps: 5
   train_sim: [0,1,2,3]
   device: 'cuda:0'
