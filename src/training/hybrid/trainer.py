@@ -114,6 +114,28 @@ class HybridTrainer:
             config['data']['trajectory_length']
         )
 
+        # New: Trajectory generation strategy for hybrid training
+        # Full trajectory length for physical model (used to train synthetic)
+        self.full_physical_trajectory_length = self.augmentation_config.get(
+            'full_trajectory_length',
+            config['data']['trajectory_length']
+        )
+        # Short trajectory length for synthetic model (used to train physical)
+        self.synthetic_short_trajectory_length = self.augmentation_config.get(
+            'synthetic_trajectory_length',
+            self.augment_trajectory_length
+        )
+        # Number of starting points to sample from physical trajectory
+        self.num_synthetic_start_points = self.augmentation_config.get(
+            'num_start_points',
+            self.num_augment_trajectories
+        )
+        # Sampling strategy: 'uniform' or 'random'
+        self.start_point_sampling = self.augmentation_config.get(
+            'start_point_sampling',
+            'uniform'
+        )
+
         # Get epochs for each model
         self.synthetic_epochs = config['trainer']['synthetic']['epochs']
         self.physical_epochs = config['trainer']['physical']['epochs']
@@ -226,12 +248,14 @@ class HybridTrainer:
             logger.info(f"\n--- Hybrid Cycle {cycle + 1}/{self.cycles} ---")
             cycle_start = time.time()
 
-            # Step 1: Generate random ICs and physical trajectories
-            logger.info(f"Generating {self.num_augment_trajectories} random ICs for physical model...")
-            random_ics_for_synthetic = self._generate_random_initial_states(self.num_augment_trajectories)
-            physical_trajectories = self._generate_physical_trajectories_from_ics(random_ics_for_synthetic)
+            # Step 1: Generate FULL physical trajectories for synthetic model training
+            logger.info(f"Generating {self.num_augment_trajectories} full physical trajectories "
+                       f"(length={self.full_physical_trajectory_length})...")
+            physical_trajectories = self._generate_full_physical_trajectory(
+                num_trajectories=self.num_augment_trajectories
+            )
 
-            # Step 2: Train synthetic model on physical trajectories
+            # Step 2: Train synthetic model on full physical trajectories
             self.dataset.set_augmented_trajectories(physical_trajectories)
 
             if self.save_augmented:
@@ -244,12 +268,20 @@ class HybridTrainer:
                 verbose=verbose
             )
 
-            # Step 3: Generate NEW random ICs and synthetic trajectories
-            logger.info(f"Generating {self.num_augment_trajectories} random ICs for synthetic model...")
-            random_ics_for_physical = self._generate_random_initial_states(self.num_augment_trajectories)
-            synthetic_trajectories = self._generate_synthetic_trajectories(random_ics_for_physical)
+            # Step 3: Sample starting states from physical trajectories for synthetic model
+            logger.info(f"Sampling {self.num_synthetic_start_points} starting points per trajectory "
+                       f"({self.start_point_sampling} sampling)...")
+            starting_states = self._sample_starting_states_from_trajectories(
+                physical_trajectories,
+                self.num_synthetic_start_points
+            )
 
-            # Step 4: Train physical model on synthetic trajectories
+            # Step 4: Generate SHORT synthetic trajectories from sampled starting points
+            logger.info(f"Generating {len(starting_states)} short synthetic trajectories "
+                       f"(length={self.synthetic_short_trajectory_length})...")
+            synthetic_trajectories = self._generate_short_synthetic_trajectories(starting_states)
+
+            # Step 5: Train physical model on short synthetic trajectories
             self.dataset.set_augmented_trajectories(synthetic_trajectories)
 
             if self.save_augmented:
@@ -343,6 +375,102 @@ class HybridTrainer:
                     current = next_state
 
                 # Stack along time dimension
+                trajectory = math.stack(states, batch('time'))
+                trajectory = math.stop_gradient(trajectory)
+                trajectories.append(trajectory)
+
+        return trajectories
+
+    def _generate_full_physical_trajectory(self, num_trajectories: int = 1) -> List[Tensor]:
+        """
+        Generate full-length physical trajectories for synthetic model training.
+
+        Args:
+            num_trajectories: Number of full trajectories to generate
+
+        Returns:
+            List of trajectory tensors (each with time dimension of full_physical_trajectory_length)
+        """
+        # Generate random initial conditions
+        batched_ics = self.physical_model.get_initial_state(batch_size=num_trajectories)
+
+        # Rollout for full trajectory length
+        with torch.no_grad():
+            trajectory_batched = self.physical_model.rollout(
+                batched_ics,
+                self.physical_model.params,
+                self.full_physical_trajectory_length - 1
+            )
+
+        trajectory_batched = math.stop_gradient(trajectory_batched)
+        return list(math.unstack(trajectory_batched, 'batch'))
+
+    def _sample_starting_states_from_trajectories(
+        self,
+        trajectories: List[Tensor],
+        num_points_per_trajectory: int
+    ) -> List[Tensor]:
+        """
+        Sample states from various positions along trajectories to use as starting points.
+
+        Args:
+            trajectories: List of full trajectory tensors (each with 'time' dimension)
+            num_points_per_trajectory: Number of starting points to sample per trajectory
+
+        Returns:
+            List of state tensors sampled from along the trajectories
+        """
+        starting_states = []
+
+        for trajectory in trajectories:
+            traj_length = trajectory.shape.get_size('time')
+            # Leave room for short trajectory rollout
+            max_start_idx = traj_length - self.synthetic_short_trajectory_length
+
+            if max_start_idx <= 0:
+                # Trajectory too short, just use initial state
+                starting_states.append(trajectory.time[0])
+                continue
+
+            if self.start_point_sampling == 'uniform':
+                # Uniformly spaced starting points
+                if num_points_per_trajectory >= max_start_idx:
+                    indices = list(range(max_start_idx))
+                else:
+                    step = max_start_idx / num_points_per_trajectory
+                    indices = [int(i * step) for i in range(num_points_per_trajectory)]
+            else:  # 'random'
+                import random
+                indices = random.sample(range(max_start_idx), min(num_points_per_trajectory, max_start_idx))
+
+            for idx in indices:
+                starting_states.append(trajectory.time[idx])
+
+        return starting_states
+
+    def _generate_short_synthetic_trajectories(self, initial_states: List[Tensor]) -> List[Tensor]:
+        """
+        Generate short trajectories from synthetic model using given initial conditions.
+
+        Args:
+            initial_states: List of initial state tensors (sampled from physical trajectory)
+
+        Returns:
+            List of short trajectory tensors (each with time dimension)
+        """
+        trajectories = []
+
+        with torch.no_grad():
+            for initial_state in initial_states:
+                states = [initial_state]
+                current = initial_state
+
+                # Rollout for short trajectory length
+                for _ in range(self.synthetic_short_trajectory_length - 1):
+                    next_state = self.synthetic_model(current)
+                    states.append(next_state)
+                    current = next_state
+
                 trajectory = math.stack(states, batch('time'))
                 trajectory = math.stop_gradient(trajectory)
                 trajectories.append(trajectory)

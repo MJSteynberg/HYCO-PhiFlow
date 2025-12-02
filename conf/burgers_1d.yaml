@@ -64,7 +64,14 @@ trainer:
     augmentation:
       alpha: 0.2
       num_trajectories: 6
-      trajectory_length: 10
+      trajectory_length: 10  # Legacy, kept for backward compatibility
+
+      # NEW: Variable trajectory length options
+      full_trajectory_length: 100    # Full physical trajectory for synthetic training
+      synthetic_trajectory_length: 10  # Short synthetic trajectory for physical training
+      num_start_points: 10           # Starting points sampled per physical trajectory
+      start_point_sampling: 'uniform'  # 'uniform' or 'random'
+
       cache_dir: data/cache_phiml
 
     # NEW: Loss scaling configuration
