@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['train', 'evaluate']
+  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: [ 'generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -16,7 +16,7 @@ model:
     model_save_name: 'burgers_physical_model_1d'
     domain:
       dimensions:
-        x: {size: 100, resolution: 128}
+        x: {size: 100, resolution: 256}
     dt: 0.1
     pde_params:
       name: 'diffusion_field'
@@ -32,23 +32,23 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 128
+  batch_size: 128 
   rollout_steps: 6
-  train_sim: [0,1]
+  train_sim: [0, 1,2]
   device: 'cuda:0'
   data_access: 'both'
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 0
+    downsample_factor: 1
     method: 'L-BFGS-B'
     abs_tol: 1e-13
     max_iterations: 10
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
-      weight: 1e-15
+      weight: 1e-10
   synthetic:
-    epochs: 1000
+    epochs: 100
     rollout_scheduler:
       start: 1
       end: 6
@@ -76,8 +76,8 @@ trainer:
       
       physical:
         real_weight: 1.0
-        interaction_weight: 0.1  # Physical model sees weaker interaction loss
-        proportional: true       # Or use proportional scaling
+        interaction_weight: 1e-3  # Physical model sees weaker interaction loss
+        proportional: false       # Or use proportional scaling
 
 sparsity:
   temporal:
@@ -91,7 +91,7 @@ sparsity:
   spatial:
     enabled: false
     mode: center
-    center_fraction: 0.3
+    center_fraction: 0.8
 # For evaluation
 evaluation:
   # Which simulations to evaluate

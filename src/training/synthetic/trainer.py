@@ -177,14 +177,14 @@ class SyntheticTrainer:
                 next_state = self.model(current_state)
                 target_t = targets.time[t]
 
-            # Apply spatial mask ONLY if requested (for real data)
-            if apply_spatial_mask and spatial_mask is not None:
-                step_loss = spatial_mask.compute_masked_mse(next_state, target_t)
-            else:
-                step_loss = phimath.mean((next_state - target_t)**2)
+                # Apply spatial mask ONLY if requested (for real data)
+                if apply_spatial_mask and spatial_mask is not None:
+                    step_loss = spatial_mask.compute_masked_mse(next_state, target_t)
+                else:
+                    step_loss = phimath.mean((next_state - target_t)**2)
 
-            total_loss += step_loss
-            current_state = next_state
+                total_loss += step_loss
+                current_state = next_state
             return phimath.mean(total_loss, 'batch') / float(rollout_steps)
     
         def combined_loss_function():
@@ -251,6 +251,7 @@ class SyntheticTrainer:
         )
 
         for epoch in pbar:
+    
             # Update rollout steps if scheduler is active
             if self.rollout_scheduler:
                 new_rollout_steps = self._get_rollout_steps(epoch)

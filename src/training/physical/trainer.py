@@ -165,7 +165,7 @@ class PhysicalTrainer:
             if grad_reg_weight > 0:
                 for field_name in model.field_param_names:
                     field_param = params.field[field_name]
-                    grad = math.spatial_gradient(field_param, padding='periodic')
+                    grad = math.spatial_gradient(field_param, padding='periodic', difference='central')
                     grad_penalty += math.mean(grad ** 2)
             
             return real_loss_weight * real_loss + i_weight * interaction_loss + grad_reg_weight * grad_penalty

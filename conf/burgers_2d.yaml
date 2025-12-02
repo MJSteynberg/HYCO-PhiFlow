@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_2d_experiment'
   mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  tasks: ['train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_2d'
@@ -16,20 +16,20 @@ model:
     model_save_name: 'burgers_physical_model_2d'
     domain:
       dimensions:
-        x: {size: 100, resolution: 64}
-        y: {size: 100, resolution: 64}
-    dt: 0.5
+        x: {size: 100, resolution: 128}
+        y: {size: 100, resolution: 128}
+    dt: 0.1
     pde_params:
       name: 'diffusion_field'
       type: 'field'
-      value: '0.5 * ((x/size_x)**3 + (y/size_y)**3)'  # Spatially-varying diffusion field to learn
+      value: 'math.sin(math.pi * x/size_x)**2 * math.sin(math.pi * y/size_y)**2'  # Spatially-varying diffusion field to learn
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
     model_save_name: 'burgers_synthetic_model_2d'
     architecture:
-      levels: 3
-      filters: 32
+      levels: 4
+      filters: 64
       batch_norm: false
 
 trainer:
@@ -41,18 +41,18 @@ trainer:
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 0
+    downsample_factor: 1
     method: 'L-BFGS-B'
     abs_tol: 1e-12
     max_iterations: 10
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
-      weight: 0.01
+      weight: 1e-12
   synthetic:
-    epochs: 10
+    epochs: 100
     rollout_scheduler:
       start: 1
-      end: 3
+      end: 4
       strategy: 'exponential'
       exponent: 2.0
     learning_rate: 0.0001
@@ -60,8 +60,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 1
-    warmup: 1
+    cycles: 10
+    warmup: 5
     augmentation:
       alpha: 0.2
       num_trajectories: 6
@@ -77,8 +77,8 @@ trainer:
       
       physical:
         real_weight: 1.0
-        interaction_weight: 0.1  # Physical model sees weaker interaction loss
-        proportional: true       # Or use proportional scaling
+        interaction_weight: 0.001  # Physical model sees weaker interaction loss
+        proportional: false       # Or use proportional scaling
 
 # Observation sparsity configuration
 sparsity:
