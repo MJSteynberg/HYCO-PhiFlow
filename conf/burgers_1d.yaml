@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['generate', 'train', 'evaluate']
+  mode: 'synthetic' # Options: 'physical', 'synthetic', 'hybrid'
+  tasks: ['train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -27,7 +27,8 @@ model:
     model_path: 'results/models'
     model_save_name: 'burgers_synthetic_model_1d'
     architecture:
-      layers: [32, 32, 32]
+      levels: 3
+      filters: 32
       batch_norm: false
 
 trainer:
@@ -47,7 +48,7 @@ trainer:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
       weight: 1e-15
   synthetic:
-    epochs: 100
+    epochs: 1000
     rollout_scheduler:
       start: 1
       end: 6
@@ -88,13 +89,13 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: true
+    enabled: false
     mode: center
     center_fraction: 0.3
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0]
+  test_sim: [0,1]
 
   # Model checkpoint to evaluate
   synthetic_checkpoint: "results/models/burgers_synthetic_model_1d.pth"

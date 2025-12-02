@@ -100,8 +100,10 @@ class PhysicalTrainer:
     def _optimize_batch(self, separated_batch, params: Tensor) -> float:
         """
         Optimize parameters over a batch with separate real/generated loss weighting.
-
-        Computes: total_loss = real_weight * L + interaction_weight * I
+        
+        Sparsity is applied ONLY to real data:
+        - Spatial mask applied to real_loss computation
+        - Generated/interaction loss uses full spatial domain
         """
         rollout_steps = self.rollout_steps
         model = self.model
@@ -109,23 +111,22 @@ class PhysicalTrainer:
         interaction_loss_weight = self.interaction_loss_weight
         proportional_scaling = self.proportional_scaling
 
-        # Get spatial mask if enabled (only initialize once)
+        # Get spatial mask for real data only
         spatial_mask = None
         if separated_batch.has_real:
             spatial_mask = self._get_spatial_mask(separated_batch.real_initial_state.shape.spatial)
-        elif separated_batch.has_generated:
-            spatial_mask = self._get_spatial_mask(separated_batch.generated_initial_state.shape.spatial)
 
         def loss_function(params: Tensor) -> Tensor:
-            def compute_loss(init_state, targets):
+            def compute_loss(init_state, targets, apply_spatial_mask: bool = False):
+                """Compute loss with optional spatial masking."""
                 total_loss = math.tensor(0.0)
                 current_state = init_state
                 for step in range(rollout_steps):
                     current_state = model.forward(current_state, params)
                     target = targets.time[step]
 
-                    # Apply spatial mask if enabled
-                    if spatial_mask is not None:
+                    # Apply spatial mask ONLY if requested (for real data)
+                    if apply_spatial_mask and spatial_mask is not None:
                         step_loss = spatial_mask.compute_masked_mse(current_state, target)
                     else:
                         step_loss = math.mean((current_state - target) ** 2)
@@ -137,15 +138,19 @@ class PhysicalTrainer:
             interaction_loss = math.tensor(0.0)
             
             if separated_batch.has_real:
+                # Apply spatial mask for real data
                 real_loss = compute_loss(
                     separated_batch.real_initial_state,
-                    separated_batch.real_targets
+                    separated_batch.real_targets,
+                    apply_spatial_mask=True
                 )
             
             if separated_batch.has_generated:
+                # NO spatial mask for generated/interaction data
                 interaction_loss = compute_loss(
                     separated_batch.generated_initial_state,
-                    separated_batch.generated_targets
+                    separated_batch.generated_targets,
+                    apply_spatial_mask=False
                 )
             
             # Proportional scaling
@@ -156,13 +161,12 @@ class PhysicalTrainer:
 
             # Gradient regularization
             grad_reg_weight = self.grad_regularization_weight
+            grad_penalty = math.tensor(0.0)
             if grad_reg_weight > 0:
-                grad_penalty = math.tensor(0.0)
                 for field_name in model.field_param_names:
                     field_param = params.field[field_name]
                     grad = math.spatial_gradient(field_param, padding='periodic')
                     grad_penalty += math.mean(grad ** 2)
-                
             
             return real_loss_weight * real_loss + i_weight * interaction_loss + grad_reg_weight * grad_penalty
         

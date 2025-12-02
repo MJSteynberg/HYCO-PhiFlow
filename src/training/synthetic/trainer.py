@@ -168,41 +168,43 @@ class SyntheticTrainer:
         spatial_mask = None
         if separated_batch.has_real:
             spatial_mask = self._get_spatial_mask(separated_batch.real_initial_state.shape.spatial)
-        elif separated_batch.has_generated:
-            spatial_mask = self._get_spatial_mask(separated_batch.generated_initial_state.shape.spatial)
 
-        def compute_loss(init_state, targets):
-            """Compute MSE loss for a set of samples with optional spatial masking."""
+        def compute_loss(init_state, targets, apply_spatial_mask: bool = False):
+            """Compute MSE loss with optional spatial masking."""
             current_state = init_state
             total_loss = phimath.tensor(0.0)
             for t in range(rollout_steps):
                 next_state = self.model(current_state)
                 target_t = targets.time[t]
 
-                # Apply spatial mask if enabled
-                if spatial_mask is not None:
-                    step_loss = spatial_mask.compute_masked_mse(next_state, target_t)
-                else:
-                    step_loss = phimath.mean((next_state - target_t)**2)
+            # Apply spatial mask ONLY if requested (for real data)
+            if apply_spatial_mask and spatial_mask is not None:
+                step_loss = spatial_mask.compute_masked_mse(next_state, target_t)
+            else:
+                step_loss = phimath.mean((next_state - target_t)**2)
 
-                total_loss += step_loss
-                current_state = next_state
+            total_loss += step_loss
+            current_state = next_state
             return phimath.mean(total_loss, 'batch') / float(rollout_steps)
-        
+    
         def combined_loss_function():
             real_loss = phimath.tensor(0.0)
             interaction_loss = phimath.tensor(0.0)
             
             if separated_batch.has_real:
+                # Apply spatial mask for real data
                 real_loss = compute_loss(
                     separated_batch.real_initial_state,
-                    separated_batch.real_targets
+                    separated_batch.real_targets,
+                    apply_spatial_mask=True
                 )
             
             if separated_batch.has_generated:
+                # NO spatial mask for generated/interaction data
                 interaction_loss = compute_loss(
                     separated_batch.generated_initial_state,
-                    separated_batch.generated_targets
+                    separated_batch.generated_targets,
+                    apply_spatial_mask=False
                 )
             
             # Apply proportional scaling if enabled
