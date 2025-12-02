@@ -173,6 +173,13 @@ class PhysicalTrainer:
     def _update_params(self, params: Tensor):
         """Update model parameters from optimizer."""
         self.model.params = params
+        self.optimizer = math.Solve(
+            method=self.method,
+            abs_tol=self.abs_tol,
+            x0=params,  # Next run starts from current solution
+            max_iterations=self.max_iterations,
+            suppress=(math.NotConverged,),
+        )
 
     def train(self, dataset, num_epochs: int, verbose: bool = True) -> Dict[str, Any]:
         """

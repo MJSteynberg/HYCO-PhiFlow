@@ -132,7 +132,6 @@ class BurgersModel(PhysicalModel):
             # ============================================================
             # STEP 1: Downsample input state if needed
             # ============================================================
-            print(params)
             if downsample_factor > 0:
                 # Convert state tensor to grid at full resolution
                 velocity_tensor_full = math.rename_dims(

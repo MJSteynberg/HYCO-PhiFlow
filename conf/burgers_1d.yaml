@@ -1,7 +1,7 @@
 general:
   experiment_name: 'burgers_1d_experiment'
   mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
-  tasks: ['train', 'evaluate']
+  tasks: ['generate', 'train', 'evaluate']
 
 data:
   data_dir: 'data/burgers_1d'
@@ -21,7 +21,7 @@ model:
     pde_params:
       name: 'diffusion_field'
       type: 'field'
-      value: '(x/size_x)**2'  # Spatially-varying diffusion field to learn
+      value: 'math.sin(math.pi * x/size_x)**2'  # Spatially-varying diffusion field to learn
   synthetic:
     name: 'ResNet'
     model_path: 'results/models'
@@ -31,9 +31,9 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 32
+  batch_size: 128
   rollout_steps: 6
-  train_sim: [0]
+  train_sim: [0,1]
   device: 'cuda:0'
   data_access: 'both'
   physical:
@@ -41,13 +41,13 @@ trainer:
     rollout_steps: 1
     downsample_factor: 0
     method: 'L-BFGS-B'
-    abs_tol: 1e-12
-    max_iterations: 100
+    abs_tol: 1e-13
+    max_iterations: 10
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
-      weight: 0.1
+      weight: 1e-15
   synthetic:
-    epochs: 1000
+    epochs: 100
     rollout_scheduler:
       start: 1
       end: 6
@@ -88,7 +88,7 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: false
+    enabled: true
     mode: center
     center_fraction: 0.3
 # For evaluation

@@ -1,6 +1,6 @@
 general:
   experiment_name: 'burgers_2d_experiment'
-  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
+  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
   tasks: ['generate', 'train', 'evaluate']
 
 data:
@@ -34,24 +34,25 @@ model:
 
 trainer:
   batch_size: 32
-  train_sim: [0,1]
+  rollout_steps: 5
+  train_sim: [0,1,2,3]
   device: 'cuda:0'
   data_access: 'both'
   physical:
     epochs: 1
     rollout_steps: 1
-    downsample_factor: 2
+    downsample_factor: 0
     method: 'L-BFGS-B'
     abs_tol: 1e-12
     max_iterations: 10
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
-      weight: 0.1
+      weight: 0.01
   synthetic:
-    epochs: 100
+    epochs: 10
     rollout_scheduler:
       start: 1
-      end: 5
+      end: 3
       strategy: 'exponential'
       exponent: 2.0
     learning_rate: 0.0001
@@ -82,7 +83,7 @@ trainer:
 # Observation sparsity configuration
 sparsity:
   temporal:
-    enabled: true
+    enabled: false
     mode: endpoints
     start_fraction: 0.1
     end_fraction: 0.1
@@ -90,7 +91,7 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: true
+    enabled: false
     mode: range
     x_range: [0.0, 0.5]
     y_range: null
