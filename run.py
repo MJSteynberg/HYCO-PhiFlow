@@ -29,6 +29,18 @@ from src.utils.logger import setup_logger
 # Setup root logger
 logger = setup_logger("hyco_phiflow", level=logging.INFO)
 
+OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
+OmegaConf.register_new_resolver("add", lambda x, y: x + y, replace=True)
+OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
+OmegaConf.register_new_resolver("divide", lambda x, y: x // y if isinstance(x, int) and isinstance(y, int) else x / y, replace=True)
+
+# Convenience resolver for total synthetic epochs in standalone mode
+# Usage: ${total_synthetic_epochs:${trainer.synthetic.epochs},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
+OmegaConf.register_new_resolver(
+    "total_synthetic_epochs",
+    lambda epochs, cycles, warmup: epochs * (cycles + warmup),
+    replace=True
+)
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig) -> None:

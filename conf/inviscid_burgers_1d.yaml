@@ -38,7 +38,9 @@ trainer:
   device: 'cuda:0'
   data_access: 'both'
   physical:
-    epochs: 1
+    epochs_per_cycle: 1  # Base value used in hybrid training
+    epochs: ${trainer.physical.epochs_per_cycle}  # Default: same as per-cycle
+    standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
     downsample_factor: 2
     method: 'L-BFGS-B'
@@ -49,7 +51,9 @@ trainer:
       weight: 1e-3  # May need less regularization than diffusion
       difference: 'forward'
   synthetic:
-    epochs: 100
+    epochs_per_cycle: 100  # Base value used in hybrid training
+    epochs: ${trainer.synthetic.epochs_per_cycle}  # Default: same as per-cycle
+    standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
       start: 1
       end: 6
@@ -60,16 +64,14 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10
-    warmup: 2
+    cycles: 50
+    warmup: 10
     augmentation:
       alpha: 1.0
-      num_trajectories: 2
+      num_trajectories: 5
        # NEW: Variable trajectory length options
-      full_trajectory_length: 100    # Full physical trajectory for synthetic training
+      physical_trajectory_length: 50    # Full physical trajectory for synthetic training
       synthetic_trajectory_length: 10  # Short synthetic trajectory for physical training
-      num_start_points: 10           # Starting points sampled per physical trajectory
-      start_point_sampling: 'uniform'  # 'uniform' or 'random'
       cache_dir: data/cache_phiml
 
     # Loss scaling configuration
@@ -102,9 +104,17 @@ evaluation:
   # Which simulations to evaluate
   test_sim: [0, 1]
 
-  # Model checkpoint to evaluate
+  # Primary synthetic model checkpoint (e.g., trained on real data only)
   synthetic_checkpoint: "results/models/inviscid_burgers_synthetic_model_1d.pth"
+  
+  # Hybrid synthetic model checkpoint (optional, from HYCO training)
+  synthetic_checkpoint_hybrid: "results/models/inviscid_burgers_hybrid_synthetic_1d.pth"
+
+  # Primary physical model checkpoint (e.g., trained on real data only)  
   physical_checkpoint: "results/models/inviscid_burgers_physical_model_1d.npz"
+  
+  # Hybrid physical model checkpoint (optional, from HYCO training)
+  physical_checkpoint_hybrid: "results/models/inviscid_burgers_hybrid_physical_1d.npz"
 
   # How many timesteps to rollout
   num_frames: 100
@@ -114,6 +124,6 @@ evaluation:
 
   # Visualization settings
   visualization:
-    format: "gif"  # or "mp4"
+    format: "gif"
     fps: 10
     dpi: 100

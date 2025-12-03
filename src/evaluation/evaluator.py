@@ -1,12 +1,17 @@
 """
-Simple Evaluator for comparing real vs generated trajectories.
+Evaluator for comparing real vs generated trajectories with multiple model support.
+
+Supports comparing:
+- Two synthetic models (e.g., synthetic-only vs hybrid-synthetic)
+- Two physical models (e.g., physical-only vs hybrid-physical)
+- Ground truth parameters
 
 Uses PhiFlow's built-in visualization tools for easy plotting.
 Fully compatible with PhiML-only codebase.
 """
 
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from phi.vis import plot, show, close, smooth
 from phi.torch.flow import *
 from phi.math import nan_to_0, math
@@ -21,14 +26,19 @@ logger = get_logger(__name__)
 
 class Evaluator:
     """
-    Simple evaluator that generates predictions and creates comparison animations.
+    Evaluator that generates predictions and creates comparison animations.
+
+    Supports multiple models for comparison:
+    - synthetic_checkpoint: Primary synthetic model (e.g., trained on real data only)
+    - synthetic_checkpoint_hybrid: Secondary synthetic model (e.g., from hybrid training)
+    - physical_checkpoint: Primary physical model (e.g., trained on real data only)
+    - physical_checkpoint_hybrid: Secondary physical model (e.g., from hybrid training)
 
     Workflow:
-    1. Load model checkpoint (PhiML format)
+    1. Load model checkpoints (PhiML format)
     2. Load test simulations (PhiML format)
     3. Generate predictions (autoregressive rollout using PhiML tensors)
-    4. Convert tensors to Fields for visualization
-    5. Create comparison animations using PhiFlow's plot()
+    4. Create comparison animations/plots showing all models
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -43,11 +53,10 @@ class Evaluator:
         # Data configuration
         self.data_dir = config['data']['data_dir']
         self.trajectory_length = config['data']['trajectory_length']
-        # field_names will be inferred from loaded data tensor shape
         self.field_names = None
 
-        # Model will be loaded in evaluate()
-        self._load_synthetic_model()
+        # Models will be loaded in evaluate()
+        self._load_synthetic_models()
         self._load_physical_parameters()
 
     def evaluate(self):
@@ -56,28 +65,26 @@ class Evaluator:
 
         Creates comparison animations for each simulation showing:
         - Real trajectory (from data)
-        - Generated trajectory (from model)
-        Side by side for each field.
+        - Synthetic model predictions
+        - Hybrid synthetic model predictions (if available)
         """
         logger.info("Starting evaluation...")
         self._visualize_modulation_field()
+        
         # Evaluate each test simulation
         test_sims = self.eval_config['test_sim']
         for sim_idx in test_sims:
             logger.info(f"Evaluating simulation {sim_idx}...")
             self._evaluate_simulation(sim_idx)
-        
-        # Visualize modulation field if available
-        
 
         logger.info(f"Evaluation complete! Results saved to {self.output_dir}")
 
-    def _load_synthetic_model(self):
-        """Load model from checkpoint (PhiML format)."""
+    def _load_synthetic_models(self):
+        """Load synthetic model checkpoints."""
         from src.factories.model_factory import ModelFactory
         import os
 
-        # Load a sample trajectory to get num_channels and field_names
+        # Load sample trajectory to get num_channels and field_names
         test_sims = self.eval_config['test_sim']
         sample_path = os.path.join(self.data_dir, f"sim_{test_sims[0]:04d}.npz")
         sample_data = math.load(sample_path)
@@ -85,103 +92,147 @@ class Evaluator:
         # Get num_channels and field_names from tensor shape
         num_channels = sample_data.shape['field'].size
         raw_names = sample_data.shape['field'].item_names
-        # item_names can be nested like (('field1', 'field2'),) - extract properly
         if raw_names and isinstance(raw_names[0], tuple):
             self.field_names = list(raw_names[0])
         else:
             self.field_names = list(raw_names) if raw_names else None
 
-        # Create model with num_channels
-        self.model = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
-        
-
-        # Get static fields from model to determine which are dynamic
-        self.static_fields = self.model.static_fields if hasattr(self.model, 'static_fields') else []
-        self.dynamic_fields = [f for f in self.field_names if f not in self.static_fields]
         logger.info(f"Loaded sample data: {num_channels} channels, fields={self.field_names}")
-        logger.info(f"Dynamic fields (will be visualized): {self.dynamic_fields}")
 
-        # Load checkpoint using PhiML's load method
-        checkpoint_path = Path(self.eval_config['synthetic_checkpoint'])
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-        try:    
-            self.model.load(str(checkpoint_path))
+        # Initialize model containers
+        self.model = None  # Primary synthetic model
+        self.model_hybrid = None  # Hybrid synthetic model
+
+        # Load primary synthetic model
+        checkpoint_path = self.eval_config.get('synthetic_checkpoint')
+        if checkpoint_path and Path(checkpoint_path).exists():
+            self.model = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
+            self._load_model_checkpoint(self.model, checkpoint_path, "synthetic")
+            
+            # Get static/dynamic fields from model
+            self.static_fields = self.model.static_fields if hasattr(self.model, 'static_fields') else []
+            self.dynamic_fields = [f for f in self.field_names if f not in self.static_fields]
+            logger.info(f"Dynamic fields (will be visualized): {self.dynamic_fields}")
+        else:
+            logger.warning(f"Primary synthetic checkpoint not found: {checkpoint_path}")
+            self.static_fields = []
+            self.dynamic_fields = self.field_names or []
+
+        # Load hybrid synthetic model (optional)
+        hybrid_checkpoint_path = self.eval_config.get('synthetic_checkpoint_hybrid')
+        if hybrid_checkpoint_path and Path(hybrid_checkpoint_path).exists():
+            self.model_hybrid = ModelFactory.create_synthetic_model(self.config, num_channels=num_channels)
+            self._load_model_checkpoint(self.model_hybrid, hybrid_checkpoint_path, "hybrid synthetic")
+        else:
+            logger.info("No hybrid synthetic checkpoint specified or found")
+
+    def _load_model_checkpoint(self, model, checkpoint_path: str, name: str):
+        """Load a model checkpoint with error handling."""
+        try:
+            model.load(str(checkpoint_path))
+            logger.info(f"Loaded {name} model from {checkpoint_path}")
         except Exception as e:
-            self.model.network = torch.compile(self.model.network)
-            self.model.load(str(checkpoint_path))
-
-        logger.info(f"Loaded PhiML model from {checkpoint_path}")
+            try:
+                model.network = torch.compile(model.network)
+                model.load(str(checkpoint_path))
+                logger.info(f"Loaded {name} model (compiled) from {checkpoint_path}")
+            except Exception as e2:
+                logger.warning(f"Failed to load {name} model: {e2}")
 
     def _load_physical_parameters(self):
         """Load physical model parameters for visualization."""
         from src.factories.model_factory import ModelFactory
-        
-        # Only load if physical checkpoint is specified
-        physical_checkpoint_path = self.eval_config.get('physical_checkpoint', None)
-        if not physical_checkpoint_path or not Path(physical_checkpoint_path).exists():
-            logger.info("No physical checkpoint specified or found, skipping parameter visualization")
+
+        # Initialize parameter containers
+        self.physical_model = None
+        self.ground_truth_params = None
+        self.learned_params = None  # Primary physical model params
+        self.learned_params_hybrid = None  # Hybrid physical model params
+
+        # Check if any physical checkpoint is specified
+        physical_checkpoint = self.eval_config.get('physical_checkpoint')
+        physical_checkpoint_hybrid = self.eval_config.get('physical_checkpoint_hybrid')
+
+        if not physical_checkpoint and not physical_checkpoint_hybrid:
+            logger.info("No physical checkpoints specified, skipping parameter visualization")
             return
 
+        # Create physical model for ground truth
         self.physical_model = ModelFactory.create_physical_model(self.config)
-
-        # Load learned parameters (Tensor)
-        try:
-            self.learned_params = math.load(str(physical_checkpoint_path))
-            logger.info(f"Loaded learned parameters from {physical_checkpoint_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load checkpoint: {e}")
-            return
-
-        # Get ground truth parameters
         self.ground_truth_params = self.physical_model.get_real_params()
-        
+
+        # Load primary physical parameters
+        if physical_checkpoint and Path(physical_checkpoint).exists():
+            try:
+                self.learned_params = math.load(str(physical_checkpoint))
+                logger.info(f"Loaded physical parameters from {physical_checkpoint}")
+            except Exception as e:
+                logger.warning(f"Failed to load physical checkpoint: {e}")
+
+        # Load hybrid physical parameters
+        if physical_checkpoint_hybrid and Path(physical_checkpoint_hybrid).exists():
+            try:
+                self.learned_params_hybrid = math.load(str(physical_checkpoint_hybrid))
+                logger.info(f"Loaded hybrid physical parameters from {physical_checkpoint_hybrid}")
+            except Exception as e:
+                logger.warning(f"Failed to load hybrid physical checkpoint: {e}")
+
     def _visualize_modulation_field(self):
-        """Create visualization comparing ground truth vs learned parameters (both scalar and field)."""
-        if not hasattr(self, 'learned_params') or not hasattr(self, 'ground_truth_params'):
+        """Create visualization comparing ground truth vs learned parameters."""
+        if self.ground_truth_params is None:
             logger.info("No parameters to visualize")
             return
 
-        from phi.vis import plot
+        if self.learned_params is None and self.learned_params_hybrid is None:
+            logger.info("No learned parameters to visualize")
+            return
 
         logger.info("Creating parameter visualizations...")
 
-        real = self.ground_truth_params
-        learned = self.learned_params
-
-        # Visualize scalar parameters (e.g., diffusion coefficient)
+        # Visualize scalar parameters
         scalar_param_names = self.physical_model.scalar_param_names
         if scalar_param_names:
             logger.info(f"Visualizing scalar parameters: {scalar_param_names}")
-            self._visualize_scalar_parameters(scalar_param_names, real, learned)
+            self._visualize_scalar_parameters(scalar_param_names)
 
-        # Get field parameter names from physical model
+        # Visualize field parameters
         field_param_names = self.physical_model.field_param_names
         if field_param_names:
             logger.info(f"Visualizing field parameters: {field_param_names}")
-            self._visualize_field_parameters(field_param_names, real, learned)
+            self._visualize_field_parameters(field_param_names)
 
-    def _visualize_scalar_parameters(self, param_names, real, learned):
-        """Visualize scalar parameters as bar chart."""
-        # Extract scalar values
-        real_values = []
-        learned_values = []
+    def _visualize_scalar_parameters(self, param_names):
+        """Visualize scalar parameters as bar chart with multiple models."""
+        real = self.ground_truth_params
 
-        for param_name in param_names:
-            real_val = float(real.field[param_name])
-            learned_val = float(learned.field[param_name])
-            real_values.append(real_val)
-            learned_values.append(learned_val)
+        # Collect values
+        real_values = [float(real.field[name]) for name in param_names]
 
-            logger.info(f"  {param_name}: Real={real_val:.6f}, Learned={learned_val:.6f}, Error={abs(learned_val - real_val):.6f}")
+        labels = ['Ground Truth']
+        all_values = [real_values]
+        colors = ['#2E86AB']  # Blue
+
+        if self.learned_params is not None:
+            learned_values = [float(self.learned_params.field[name]) for name in param_names]
+            labels.append('Physical Only')
+            all_values.append(learned_values)
+            colors.append('#E94F37')  # Red
+
+        if self.learned_params_hybrid is not None:
+            hybrid_values = [float(self.learned_params_hybrid.field[name]) for name in param_names]
+            labels.append('Hybrid Physical')
+            all_values.append(hybrid_values)
+            colors.append('#44AF69')  # Green
 
         # Create bar chart
         fig, ax = plt.subplots(figsize=(10, 6))
         x = np.arange(len(param_names))
-        width = 0.35
+        n_bars = len(all_values)
+        width = 0.8 / n_bars
 
-        ax.bar(x - width/2, real_values, width, label='Ground Truth', alpha=0.8, color='#2E86AB')
-        ax.bar(x + width/2, learned_values, width, label='Learned', alpha=0.8, color='#A23B72')
+        for i, (values, label, color) in enumerate(zip(all_values, labels, colors)):
+            offset = (i - n_bars / 2 + 0.5) * width
+            bars = ax.bar(x + offset, values, width, label=label, alpha=0.8, color=color)
 
         ax.set_xlabel('Parameter', fontsize=12)
         ax.set_ylabel('Value', fontsize=12)
@@ -191,13 +242,16 @@ class Evaluator:
         ax.legend(fontsize=11)
         ax.grid(axis='y', alpha=0.3)
 
-        # Add text labels showing exact values and error
-        for i, (gt, learned_val) in enumerate(zip(real_values, learned_values)):
-            error = abs(learned_val - gt)
-            error_pct = (error / abs(gt) * 100) if gt != 0 else float('inf')
-            y_pos = max(gt, learned_val) * 1.05
-            ax.text(i, y_pos, f'Error: {error:.6f}\n({error_pct:.2f}%)',
-                   ha='center', va='bottom', fontsize=9, bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+        # Log errors
+        for i, name in enumerate(param_names):
+            gt = real_values[i]
+            if self.learned_params is not None:
+                po_err = abs(all_values[1][i] - gt)
+                logger.info(f"  {name}: Physical-Only Error = {po_err:.6f}")
+            if self.learned_params_hybrid is not None:
+                idx = 2 if self.learned_params is not None else 1
+                hp_err = abs(all_values[idx][i] - gt)
+                logger.info(f"  {name}: Hybrid-Physical Error = {hp_err:.6f}")
 
         plt.tight_layout()
         output_path = self.output_dir / 'scalar_parameter_recovery.png'
@@ -205,234 +259,218 @@ class Evaluator:
         plt.close(fig)
         logger.info(f"Saved scalar parameter comparison to {output_path}")
 
-    def _visualize_field_parameters(self, param_names, real, learned):
-        """Visualize field parameters as spatial plots."""
-        # Visualize each field parameter component separately
+    def _visualize_field_parameters(self, param_names):
+        """Visualize field parameters as spatial plots with multiple models."""
+        real = self.ground_truth_params
+
         for param_name in param_names:
             logger.info(f"Creating visualization for parameter: {param_name}")
 
-            # Extract individual field component
             real_param = real.field[param_name]
-            learned_param = learned.field[param_name]
 
-            # Create comparison plot for this parameter
-            plot({
-                f'Real {param_name}': real_param,
-                f'Learned {param_name}': learned_param,
-            })
+            # Build plot dictionary
+            plot_dict = {f'Ground Truth': real_param}
+
+            if self.learned_params is not None:
+                plot_dict['Physical Only'] = self.learned_params.field[param_name]
+
+            if self.learned_params_hybrid is not None:
+                plot_dict['Hybrid Physical'] = self.learned_params_hybrid.field[param_name]
+
+            # Create comparison plot
+            plot(plot_dict)
 
             output_path = self.output_dir / f'param_{param_name}_comparison.png'
             plt.savefig(output_path, dpi=150, bbox_inches='tight')
             plt.close('all')
             logger.info(f"Saved {param_name} comparison to {output_path}")
 
-            # If this is a potential field, also visualize the gradient (forcing)
+            # Visualize gradient (forcing) for potential fields
             if 'potential' in param_name.lower():
-                logger.info(f"Creating gradient visualization for potential field: {param_name}")
-                try:
-                    # Get domain information from physical model
-                    domain = self.physical_model.domain
-                    spatial_dims = self.physical_model.spatial_dims
-                    grid_kwargs = {name: self.physical_model.resolution.get_size(name) for name in spatial_dims}
+                self._visualize_forcing_field(param_name)
 
-                    # Create grids from the parameter tensors
-                    real_potential_grid = CenteredGrid(real_param, PERIODIC, bounds=domain, **grid_kwargs)
-                    learned_potential_grid = CenteredGrid(learned_param, PERIODIC, bounds=domain, **grid_kwargs)
+        # Vector field visualization for 2D modulation fields
+        self._visualize_vector_field_if_applicable(param_names)
 
-                    # Compute gradients (forcing = -∇φ)
-                    real_grad = real_potential_grid.gradient(boundary=PERIODIC)
-                    learned_grad = learned_potential_grid.gradient(boundary=PERIODIC)
+    def _visualize_forcing_field(self, param_name: str):
+        """Visualize forcing field (gradient of potential) for all models."""
+        logger.info(f"Creating gradient visualization for potential field: {param_name}")
 
-                    # Forcing is negative gradient
-                    real_forcing = -real_grad
-                    learned_forcing = -learned_grad
-
-                    # Plot the forcing fields (vector or magnitude)
-                    if self.physical_model.n_spatial_dims == 2:
-                        # For 2D, plot magnitude of forcing
-                        plot({
-                            f'Real Forcing |f|': 0.1 * real_forcing,
-                            f'Learned Forcing |f|': 0.1 * learned_forcing,
-                        })
-                    else:
-                        # For 1D, plot the forcing directly
-                        plot({
-                            f'Real Forcing f': real_forcing.values,
-                            f'Learned Forcing f': learned_forcing.values,
-                        })
-
-                    output_path = self.output_dir / f'param_{param_name}_forcing_comparison.png'
-                    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-                    plt.close('all')
-                    logger.info(f"Saved {param_name} forcing comparison to {output_path}")
-
-                except Exception as e:
-                    logger.warning(f"Failed to create gradient visualization for {param_name}: {e}")
-
-
-
-        # Also create vector field visualization if 2D
         try:
-            if 'mod_field_x' in param_names and 'mod_field_y' in param_names:
-                logger.info("Creating vector field visualization...")
+            domain = self.physical_model.domain
+            spatial_dims = self.physical_model.spatial_dims
+            grid_kwargs = {name: self.physical_model.resolution.get_size(name) for name in spatial_dims}
 
-                # Rename field channel to vector channel for vector visualization
-                real_vec = math.stack(
-                    [real.field['mod_field_x'], real.field['mod_field_y']],
-                    channel(vector='x,y')
+            real_param = self.ground_truth_params.field[param_name]
+            real_grid = CenteredGrid(real_param, PERIODIC, bounds=domain, **grid_kwargs)
+            real_forcing = -real_grid.gradient(boundary=PERIODIC)
+
+            # Build plot dictionary
+            if self.physical_model.n_spatial_dims == 2:
+                plot_dict = {'Ground Truth |f|': 0.1 * real_forcing}
+            else:
+                plot_dict = {'Ground Truth f': real_forcing.values}
+
+            if self.learned_params is not None:
+                learned_grid = CenteredGrid(
+                    self.learned_params.field[param_name], PERIODIC, bounds=domain, **grid_kwargs
                 )
+                learned_forcing = -learned_grid.gradient(boundary=PERIODIC)
+                if self.physical_model.n_spatial_dims == 2:
+                    plot_dict['Physical Only |f|'] = 0.1 * learned_forcing
+                else:
+                    plot_dict['Physical Only f'] = learned_forcing.values
+
+            if self.learned_params_hybrid is not None:
+                hybrid_grid = CenteredGrid(
+                    self.learned_params_hybrid.field[param_name], PERIODIC, bounds=domain, **grid_kwargs
+                )
+                hybrid_forcing = -hybrid_grid.gradient(boundary=PERIODIC)
+                if self.physical_model.n_spatial_dims == 2:
+                    plot_dict['Hybrid Physical |f|'] = 0.1 * hybrid_forcing
+                else:
+                    plot_dict['Hybrid Physical f'] = hybrid_forcing.values
+
+            plot(plot_dict)
+
+            output_path = self.output_dir / f'param_{param_name}_forcing_comparison.png'
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close('all')
+            logger.info(f"Saved {param_name} forcing comparison to {output_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create gradient visualization for {param_name}: {e}")
+
+    def _visualize_vector_field_if_applicable(self, param_names):
+        """Create vector field visualization if 2D modulation fields exist."""
+        if 'mod_field_x' not in param_names or 'mod_field_y' not in param_names:
+            return
+
+        try:
+            logger.info("Creating vector field visualization...")
+
+            real = self.ground_truth_params
+            real_vec = math.stack(
+                [real.field['mod_field_x'], real.field['mod_field_y']],
+                channel(vector='x,y')
+            )
+
+            plot_dict = {'Ground Truth': math.norm(real_vec)}
+
+            if self.learned_params is not None:
                 learned_vec = math.stack(
-                    [learned.field['mod_field_x'], learned.field['mod_field_y']],
+                    [self.learned_params.field['mod_field_x'], self.learned_params.field['mod_field_y']],
                     channel(vector='x,y')
                 )
+                plot_dict['Physical Only'] = math.norm(learned_vec)
 
-                # Create vector field comparison
-                plot({
-                    'Real Modulation (Vector)': math.norm(real_vec),
-                    'Learned Modulation (Vector)': math.norm(learned_vec),
-                })
+            if self.learned_params_hybrid is not None:
+                hybrid_vec = math.stack(
+                    [self.learned_params_hybrid.field['mod_field_x'], self.learned_params_hybrid.field['mod_field_y']],
+                    channel(vector='x,y')
+                )
+                plot_dict['Hybrid Physical'] = math.norm(hybrid_vec)
 
-                output_path = self.output_dir / 'modulation_vector_field_comparison.png'
-                plt.savefig(output_path, dpi=150, bbox_inches='tight')
-                plt.close('all')
-                logger.info(f"Saved vector field comparison to {output_path}")
+            plot(plot_dict)
 
-                # Calculate and log statistics
-                l2_error = math.sqrt(math.sum((real_vec - learned_vec) ** 2))
-                max_error = math.max(math.abs(real_vec - learned_vec))
-                logger.info(f"Vector field L2 error: {l2_error:.6f}")
-                logger.info(f"Vector field max error: {max_error:.6f}")
+            output_path = self.output_dir / 'modulation_vector_field_comparison.png'
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close('all')
+            logger.info(f"Saved vector field comparison to {output_path}")
 
         except Exception as e:
             logger.warning(f"Could not create vector field visualization: {e}")
 
     def _evaluate_simulation(self, sim_idx: int):
-        """Evaluate a single simulation."""
-        # Load real data (PhiML format)
+        """Evaluate a single simulation with all available models."""
+        # Load real data
         real_data = self._load_real_trajectory(sim_idx)
 
-        # Generate predictions (PhiML tensors)
-        generated_data = self.generate_predictions(real_data)
+        # Generate predictions from all available models
+        predictions = {}
+
+        if self.model is not None:
+            predictions['Synthetic'] = self._generate_predictions(self.model, real_data)
+
+        if self.model_hybrid is not None:
+            predictions['Hybrid Synthetic'] = self._generate_predictions(self.model_hybrid, real_data)
 
         # Create visualizations
-        self._create_comparison_animation(sim_idx, real_data, generated_data)
+        self._create_comparison_animation(sim_idx, real_data, predictions)
 
     def _load_real_trajectory(self, sim_idx: int) -> Tensor:
-        """
-        Load real trajectory from data using PhiML.
-
-        Returns:
-            Unified tensor: Tensor(time, x, y?, field)
-        """
+        """Load real trajectory from data using PhiML."""
         import os
-        from phi.math import Tensor
 
-        # Load simulation using PhiML's math.load
         sim_path = os.path.join(self.data_dir, f"sim_{sim_idx:04d}.npz")
         if not os.path.exists(sim_path):
             raise FileNotFoundError(f"Simulation not found: {sim_path}")
 
         sim_data = math.load(sim_path)
-
         logger.debug(f"Loaded simulation {sim_idx} from {sim_path}, shape={sim_data.shape}")
         return sim_data
-    
-    def generate_predictions(self, sim_data: Tensor) -> Tensor:
-        """
-        Generate autoregressive predictions from initial state using unified tensors.
 
-        Args:
-            sim_data: Unified tensor with shape (time, x, y?, field)
-
-        Returns:
-            Predicted trajectory as unified tensor (time, x, y?, field)
-        """
-        from phi.math import Tensor
-
+    def _generate_predictions(self, model, sim_data: Tensor) -> Tensor:
+        """Generate autoregressive predictions from initial state."""
         logger.info("Generating predictions...")
 
-        # Get the number of timesteps from tensor shape
         num_steps = sim_data.shape.get_size('time')
-
-        # Extract initial state (t=0) - unified tensor
         initial_state = sim_data.time[0]
 
-        # Generate predictions autoregressively
         current_state = initial_state
-        predictions = [initial_state]  # Start with initial state at t=0
+        predictions = [initial_state]
 
-        for step in range(num_steps - 1):  # Predict remaining timesteps
-            # Predict next state (unified tensor)
-            next_state = self.model(current_state)
+        for step in range(num_steps - 1):
+            next_state = model(current_state)
             predictions.append(next_state)
             current_state = next_state
 
-        # Stack predictions along time dimension
-        # expand_values=True handles dimension mismatches from native_call output
         prediction_trajectory = math.stack(predictions, math.batch('time'), expand_values=True)
-
-        logger.info(f"Generated {num_steps} timesteps (including initial state)")
+        logger.info(f"Generated {num_steps} timesteps")
         return prediction_trajectory
 
+    # Keep backward compatibility with old single-model generate_predictions
+    def generate_predictions(self, sim_data: Tensor) -> Tensor:
+        """Generate predictions using the primary synthetic model."""
+        if self.model is None:
+            raise RuntimeError("No synthetic model loaded")
+        return self._generate_predictions(self.model, sim_data)
 
     def _create_comparison_animation(
         self,
         sim_idx: int,
         real_data: Tensor,
-        generated_data: Tensor
+        predictions: Dict[str, Tensor]
     ):
-        """
-        Create comparison animation using PhiFlow's visualization.
+        """Create comparison animation using PhiFlow's visualization."""
 
-        Args:
-            sim_idx: Simulation index
-            real_data: Unified tensor (time, x, y?, field)
-            generated_data: Unified tensor (time, x, y?, field)
-        """
-        from phi.math import spatial, batch, channel
-        from phi.geom import Box
-
-        # Only visualize dynamic fields (static fields don't change)
-        for i, field_name in enumerate(self.dynamic_fields):
+        for field_name in self.dynamic_fields:
             logger.info(f"Creating visualization for dynamic field: {field_name}")
 
-            # Get real and generated data for this field using field dimension
-            real_field_data = real_data.field[field_name]
-            gen_field_data = generated_data.field[field_name]
+            real_field = real_data.field[field_name]
+            max_real = math.max(real_field) * 1.2
+            min_real = math.min(real_field) * 0.8
 
-            # Use data directly (already scalar after field selection)
-            real_viz = real_field_data
-            gen_viz = gen_field_data
+            # Build plot dictionary
+            plot_dict = {'Real': real_field}
 
-            # Limit the max values for better visualization
-            max_real = math.max(real_viz)
-            min_real = math.min(real_viz)
-            gen_viz = math.clip(gen_viz, min_real, max_real)
+            for model_name, pred_data in predictions.items():
+                pred_field = pred_data.field[field_name]
+                pred_field = math.clip(pred_field, min_real, max_real)
+                plot_dict[model_name] = pred_field
 
-            # Create animation
-            plot({
-                'Real': real_viz.time[0],
-                'Generated': gen_viz.time[0]
-            })
+            # Save static frame comparisons (t=0, t=1)
+            plot({k: v.time[0] for k, v in plot_dict.items()})
+            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_t0.png')
+            plt.close('all')
 
-            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_0.png')
-            plot({
-                'Real': real_viz.time[1],
-                'Generated': gen_viz.time[1]
-            })
+            plot({k: v.time[1] for k, v in plot_dict.items()})
+            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_t1.png')
+            plt.close('all')
 
-            plt.savefig(self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison_1.png')
+            # Create and save animation
+            ani = plot(plot_dict, animate='time')
 
-            ani = plot(
-                {
-                    'Real': real_viz,
-                    'Generated': gen_viz
-                },
-                animate='time',
-            )
-
-            # Save animation
             output_path = self.output_dir / f'sim_{sim_idx:04d}_{field_name}_comparison.gif'
-            ani.save(output_path, fps=10)
+            ani.save(str(output_path), fps=10)
             logger.info(f"Saved animation to {output_path}")
-
