@@ -23,7 +23,7 @@ model:
       type: 'field'
       value: ' math.sin(2 * math.pi * x / size_x)'  # Spatially-varying potential field to learn (forcing = -∇φ)
   synthetic:
-    name: 'ResNet'
+    name: 'UNet'
     model_path: 'results/models'
     model_save_name: 'inviscid_burgers_synthetic_model_1d'
     architecture:
@@ -102,7 +102,7 @@ sparsity:
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0, 1]
+  test_sim: [0, 1,2,3,4,5]
 
   # Primary synthetic model checkpoint (e.g., trained on real data only)
   synthetic_checkpoint: "results/models/inviscid_burgers_synthetic_model_1d.pth"

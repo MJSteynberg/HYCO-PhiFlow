@@ -449,7 +449,7 @@ class Evaluator:
 
             real_field = real_data.field[field_name]
             max_real = math.max(real_field) * 1.2
-            min_real = math.min(real_field) * 0.8
+            min_real = math.min(real_field) * 1.2
 
             # Build plot dictionary
             plot_dict = {'Real': real_field}

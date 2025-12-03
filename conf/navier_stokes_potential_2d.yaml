@@ -1,0 +1,124 @@
+general:
+  experiment_name: 'navier_stokes_potential_2d_experiment'
+  mode: 'synthetic'
+  tasks: ['generate', 'evaluate']
+
+data:
+  data_dir: 'data/navier_stokes_potential_2d'
+  dset_name: 'navier_stokes_potential_2d'
+  num_simulations: 1
+  trajectory_length: 100
+
+model:
+  physical:
+    name: 'NavierStokesForceModel'
+    model_path: 'results/models'
+    model_save_name: 'navier_stokes_potential_physical_model_2d'
+    domain:
+      dimensions:
+        x: {size: 100, resolution: 128}
+        y: {size: 100, resolution: 128}
+    dt: 0.5
+    pde_params:
+      name: 'force_potential'
+      type: 'potential'  # Force = -∇φ (conservative force)
+      viscosity: 0.01
+      # Potential field: high values push flow away (like pressure)
+      # This creates sources/sinks that drive the flow
+      value: ' math.sin(2*math.pi*x/size_x) * math.cos(2*math.pi*y/size_y)'
+  synthetic:
+    name: 'UNet'
+    model_path: 'results/models'
+    model_save_name: 'navier_stokes_potential_synthetic_model_2d'
+    architecture:
+      levels: 4
+      filters: 64
+      batch_norm: false
+
+trainer:
+  batch_size: 32
+  rollout_steps: 4
+  train_sim: [0]
+  device: 'cuda:0'
+  data_access: 'both'
+  physical:
+    epochs_per_cycle: 1
+    epochs: ${trainer.physical.epochs_per_cycle}
+    standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
+    rollout_steps: 1
+    downsample_factor: 0
+    method: 'L-BFGS-B'
+    abs_tol: 1e-10
+    max_iterations: 15
+    regularization:
+      type: 'l2_gradient'
+      weight: 1e-4
+  synthetic:
+    epochs_per_cycle: 10
+    epochs: ${trainer.synthetic.epochs_per_cycle}
+    standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
+    rollout_scheduler:
+      start: 1
+      end: 4
+      strategy: 'exponential'
+      exponent: 2.0
+    learning_rate: 0.0001
+    optimizer: 'adam'
+    scheduler: 'cosine'
+    weight_decay: 0.0
+  hybrid:
+    cycles: 1
+    warmup: 1
+    augmentation:
+      alpha: 1.0
+      num_trajectories: 5
+      physical_trajectory_length: 50
+      synthetic_trajectory_length: 10
+      cache_dir: data/cache_phiml
+
+    loss_scaling:
+      synthetic:
+        real_weight: 1.0
+        interaction_weight: 1.0
+        proportional: false
+
+      physical:
+        real_weight: 1.0
+        interaction_weight: 0.01
+        proportional: false
+
+sparsity:
+  temporal:
+    enabled: false
+    mode: endpoints
+    start_fraction: 0.1
+    end_fraction: 0.1
+    uniform_stride: 1
+    custom_fractions: []
+
+  spatial:
+    enabled: true
+    mode: center
+    center_fraction: 0.6
+
+evaluation:
+  test_sim: [0]
+
+  synthetic_checkpoint: "results/models/navier_stokes_potential_synthetic_model_2d.pth"
+  synthetic_checkpoint_hybrid: "results/models/navier_stokes_potential_hybrid_synthetic_2d.pth"
+  
+  physical_checkpoint: "results/models/navier_stokes_potential_physical_model_2d.npz"
+  physical_checkpoint_hybrid: "results/models/navier_stokes_potential_hybrid_physical_2d.npz"
+
+  num_frames: 100
+  output_dir: "results/evaluation/navier_stokes_potential_2d"
+
+  visualization:
+    format: "gif"
+    fps: 10
+    dpi: 100
+
+
+
+
+
