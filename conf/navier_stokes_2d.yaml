@@ -1,35 +1,32 @@
 general:
-  experiment_name: 'navier_stokes_potential_2d_experiment'
-  mode: 'synthetic'
-  tasks: ['generate', 'evaluate']
+  experiment_name: 'smoke_plume_2d_experiment'
+  mode: 'hybrid'
+  tasks: ['evaluate']
 
 data:
-  data_dir: 'data/navier_stokes_potential_2d'
-  dset_name: 'navier_stokes_potential_2d'
-  num_simulations: 1
+  data_dir: 'data/smoke_plume_2d'
+  dset_name: 'smoke_plume_2d'
+  num_simulations: 5
   trajectory_length: 100
 
 model:
   physical:
-    name: 'NavierStokesForceModel'
+    name: 'SmokePlumeModel'
     model_path: 'results/models'
-    model_save_name: 'navier_stokes_potential_physical_model_2d'
+    model_save_name: 'smoke_plume_physical_model_2d'
     domain:
       dimensions:
-        x: {size: 100, resolution: 128}
-        y: {size: 100, resolution: 128}
-    dt: 0.5
+        x: {size: 100, resolution: 64}
+        y: {size: 100, resolution: 64}
+    dt: 0.1
     pde_params:
-      name: 'force_potential'
-      type: 'potential'  # Force = -∇φ (conservative force)
-      viscosity: 0.01
-      # Potential field: high values push flow away (like pressure)
-      # This creates sources/sinks that drive the flow
-      value: ' math.sin(2*math.pi*x/size_x) * math.cos(2*math.pi*y/size_y)'
+      name: 'buoyancy_field'
+      type: 'field'  # 'scalar' or 'field'
+      value: '1.0 + 0.4 * math.sin(2 * math.pi * x / size_x)'
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
-    model_save_name: 'navier_stokes_potential_synthetic_model_2d'
+    model_save_name: 'smoke_plume_synthetic_model_2d'
     architecture:
       levels: 4
       filters: 64
@@ -67,13 +64,13 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 1
-    warmup: 1
+    cycles: 10
+    warmup: 2
     augmentation:
       alpha: 1.0
       num_trajectories: 5
-      physical_trajectory_length: 50
-      synthetic_trajectory_length: 10
+      physical_trajectory_length: 100
+      synthetic_trajectory_length: 20
       cache_dir: data/cache_phiml
 
     loss_scaling:
@@ -97,28 +94,23 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: true
+    enabled: false
     mode: center
     center_fraction: 0.6
 
 evaluation:
-  test_sim: [0]
+  test_sim: [0, 1]
 
-  synthetic_checkpoint: "results/models/navier_stokes_potential_synthetic_model_2d.pth"
-  synthetic_checkpoint_hybrid: "results/models/navier_stokes_potential_hybrid_synthetic_2d.pth"
+  synthetic_checkpoint: "results/models/smoke_plume_synthetic_model_2d.pth"
+  synthetic_checkpoint_hybrid: "results/models/smoke_plume_hybrid_synthetic_2d.pth"
   
-  physical_checkpoint: "results/models/navier_stokes_potential_physical_model_2d.npz"
-  physical_checkpoint_hybrid: "results/models/navier_stokes_potential_hybrid_physical_2d.npz"
+  physical_checkpoint: "results/models/smoke_plume_physical_model_2d.npz"
+  physical_checkpoint_hybrid: "results/models/smoke_plume_hybrid_physical_2d.npz"
 
   num_frames: 100
-  output_dir: "results/evaluation/navier_stokes_potential_2d"
+  output_dir: "results/evaluation/smoke_plume_2d"
 
   visualization:
     format: "gif"
     fps: 10
     dpi: 100
-
-
-
-
-

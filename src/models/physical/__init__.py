@@ -10,4 +10,4 @@ from .base import PhysicalModel
 from .burgers import BurgersModel
 from .inviscid_burgers import InviscidBurgersModel
 from .advection import AdvectionModel
-from .navier_stokes import NavierStokesForceModel
+from .navier_stokes import SmokePlumeModel
