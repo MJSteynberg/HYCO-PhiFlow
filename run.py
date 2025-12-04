@@ -25,6 +25,14 @@ from src.factories.trainer_factory import TrainerFactory
 from src.factories.dataloader_factory import DataLoaderFactory
 from src.evaluation import Evaluator
 from src.utils.logger import setup_logger
+import torch
+import gc
+# Clear the gpu cache at the start (in case of multiple runs in one session)
+# Clear cached memory
+torch.cuda.empty_cache()
+
+# Force garbage collection
+gc.collect()
 
 # Setup root logger
 logger = setup_logger("hyco_phiflow", level=logging.INFO)

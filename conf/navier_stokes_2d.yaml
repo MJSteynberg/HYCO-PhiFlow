@@ -1,23 +1,23 @@
 general:
-  experiment_name: 'smoke_plume_2d_experiment'
+  experiment_name: 'navier_stokes_2d_experiment'
   mode: 'hybrid'
-  tasks: ['evaluate']
+  tasks: [ 'generate', 'evaluate']
 
 data:
-  data_dir: 'data/smoke_plume_2d'
-  dset_name: 'smoke_plume_2d'
-  num_simulations: 5
+  data_dir: 'data/navier_stokes_2d'
+  dset_name: 'navier_stokes_2d'
+  num_simulations: 1
   trajectory_length: 100
 
 model:
   physical:
-    name: 'SmokePlumeModel'
+    name: 'NavierStokesModel'
     model_path: 'results/models'
-    model_save_name: 'smoke_plume_physical_model_2d'
+    model_save_name: 'navier_stokes_physical_model_2d'
     domain:
       dimensions:
-        x: {size: 100, resolution: 64}
-        y: {size: 100, resolution: 64}
+        x: {size: 100, resolution: 128}
+        y: {size: 100, resolution: 128}
     dt: 0.1
     pde_params:
       name: 'buoyancy_field'
@@ -26,14 +26,14 @@ model:
   synthetic:
     name: 'UNet'
     model_path: 'results/models'
-    model_save_name: 'smoke_plume_synthetic_model_2d'
+    model_save_name: 'navier_stokes_synthetic_model_2d'
     architecture:
       levels: 4
       filters: 64
       batch_norm: false
 
 trainer:
-  batch_size: 32
+  batch_size: 16
   rollout_steps: 4
   train_sim: [0]
   device: 'cuda:0'
@@ -43,15 +43,15 @@ trainer:
     epochs: ${trainer.physical.epochs_per_cycle}
     standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
-    downsample_factor: 0
-    method: 'L-BFGS-B'
+    downsample_factor: 1
+    method: 'Newton-CG'
     abs_tol: 1e-10
-    max_iterations: 15
+    max_iterations: 1
     regularization:
       type: 'l2_gradient'
       weight: 1e-4
   synthetic:
-    epochs_per_cycle: 10
+    epochs_per_cycle: 5
     epochs: ${trainer.synthetic.epochs_per_cycle}
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
@@ -64,11 +64,11 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10
-    warmup: 2
+    cycles: 1
+    warmup: 1
     augmentation:
       alpha: 1.0
-      num_trajectories: 5
+      num_trajectories: 3
       physical_trajectory_length: 100
       synthetic_trajectory_length: 20
       cache_dir: data/cache_phiml
@@ -81,8 +81,8 @@ trainer:
 
       physical:
         real_weight: 1.0
-        interaction_weight: 0.01
-        proportional: false
+        interaction_weight: 0.1
+        proportional: true
 
 sparsity:
   temporal:
@@ -99,16 +99,16 @@ sparsity:
     center_fraction: 0.6
 
 evaluation:
-  test_sim: [0, 1]
+  test_sim: [0]
 
-  synthetic_checkpoint: "results/models/smoke_plume_synthetic_model_2d.pth"
-  synthetic_checkpoint_hybrid: "results/models/smoke_plume_hybrid_synthetic_2d.pth"
+  synthetic_checkpoint: "results/models/navier_stokes_synthetic_model_2d.pth"
+  synthetic_checkpoint_hybrid: "results/models/navier_stokes_hybrid_synthetic_2d.pth"
   
-  physical_checkpoint: "results/models/smoke_plume_physical_model_2d.npz"
-  physical_checkpoint_hybrid: "results/models/smoke_plume_hybrid_physical_2d.npz"
+  physical_checkpoint: "results/models/navier_stokes_physical_model_2d.npz"
+  physical_checkpoint_hybrid: "results/models/navier_stokes_hybrid_physical_2d.npz"
 
   num_frames: 100
-  output_dir: "results/evaluation/smoke_plume_2d"
+  output_dir: "results/evaluation/navier_stokes_2d"
 
   visualization:
     format: "gif"

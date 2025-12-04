@@ -14,13 +14,13 @@ from typing import Tuple
 
 from phi.torch.flow import *
 from phi.math import Shape, Tensor, batch, math, channel
-
+from phi.field import downsample2x, upsample2x
 from .base import PhysicalModel
 from src.models import ModelRegistry
 
 
-@ModelRegistry.register_physical("SmokePlumeModel")
-class SmokePlumeModel(PhysicalModel):
+@ModelRegistry.register_physical("NavierStokesModel")
+class NavierStokesModel(PhysicalModel):
     """Buoyancy-driven smoke with trainable buoyancy field."""
 
     def __init__(self, config: dict, downsample_factor: int = 0):
@@ -32,10 +32,6 @@ class SmokePlumeModel(PhysicalModel):
         
         # Initial smoke blob config
         initial = pde_params.get('initial_smoke', {})
-        self._smoke_x = float(initial.get('x', self.domain.size['x'] / 2))
-        self._smoke_y = float(initial.get('y', self.domain.size['y'] * 0.25))
-        self._smoke_radius = float(initial.get('radius', 10.0))
-        self._smoke_amplitude = float(initial.get('amplitude', 1.0))
 
         self._jit_step = self._create_jit_step()
         self._params = self.get_initial_params()
@@ -69,7 +65,7 @@ class SmokePlumeModel(PhysicalModel):
         self._params = math.maximum(params, 0.0)
 
     def _create_buoyancy_field(self) -> Tensor:
-        """Create ground truth buoyancy field."""
+        """Create ground truth buoyancy field at REDUCED resolution."""
         grid_kwargs = {name: self.resolution.get_size(name) for name in self.spatial_dims}
         
         coords = {}
@@ -93,25 +89,57 @@ class SmokePlumeModel(PhysicalModel):
             return math.expand(self._create_buoyancy_field(), channel(field='buoyancy_field'))
 
     def get_initial_params(self) -> Tensor:
-        return math.ones_like(self.get_real_params()) * 0.05
+        return math.ones_like(self.get_real_params())
 
     def _create_jit_step(self):
-        """Create physics step function."""
+        """Create physics step function with downsampling support."""
         domain = self.domain
-        resolution = self.resolution
+        resolution = self.resolution  # REDUCED resolution
+        full_resolution = self.full_resolution
         spatial_dims = self.spatial_dims
         dt = self.dt
         buoyancy_type = self._buoyancy_type
+        downsample_factor = self.downsample_factor
+        field_names = self.field_names
+        
+        # Grid kwargs at REDUCED resolution
         grid_kwargs = {name: resolution.get_size(name) for name in spatial_dims}
 
-        @jit_compile
+        # @jit_compile
         def smoke_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
-            # Unpack state
-            vel_x = state.field['vel_x']
-            vel_y = state.field['vel_y']
-            smoke_data = state.field['smoke']
+            # ============================================================
+            # STEP 1: Downsample state if needed
+            # ============================================================
+            if downsample_factor > 0:
+                # Convert tensor to grid for downsampling
+                full_grid_kwargs = {name: full_resolution.get_size(name) for name in spatial_dims}
+                
+                # Stack velocity components for vector field
+                vel_tensor = math.stack([state.field['vel_x'], state.field['vel_y']], 
+                                       channel(vector='x,y'))
+                vel_grid = CenteredGrid(vel_tensor, 0, bounds=domain, **full_grid_kwargs)
+                smoke_grid = CenteredGrid(state.field['smoke'], ZERO_GRADIENT, 
+                                         bounds=domain, **full_grid_kwargs)
+                
+                # Downsample
+                for _ in range(downsample_factor):
+                    vel_grid = downsample2x(vel_grid)
+                    smoke_grid = downsample2x(smoke_grid)
+                
+                # Extract working tensors at reduced resolution
+                vel_x = vel_grid.values.vector['x']
+                vel_y = vel_grid.values.vector['y']
+                smoke_data = smoke_grid.values
+            else:
+                vel_x = state.field['vel_x']
+                vel_y = state.field['vel_y']
+                smoke_data = state.field['smoke']
             
-            # Create grids
+            # ============================================================
+            # STEP 2: Run physics at reduced resolution
+            # ============================================================
+            
+            # Create grids at reduced resolution
             smoke = CenteredGrid(smoke_data, ZERO_GRADIENT, bounds=domain, **grid_kwargs)
             vel_centered = CenteredGrid(
                 math.stack([vel_x, vel_y], channel(vector='x,y')),
@@ -127,32 +155,37 @@ class SmokePlumeModel(PhysicalModel):
                 b = params.field['buoyancy_coeff']
             else:
                 b = params.field['buoyancy_field']
-            buoyancy = resample(CenteredGrid(b, 0, bounds=domain, **grid_kwargs) * smoke * vec(x=0, y=1), to=velocity)
+            buoyancy = resample(
+                CenteredGrid(b, 0, bounds=domain, **grid_kwargs) * smoke * vec(x=0, y=1), 
+                to=velocity
+            )
             
             velocity = advect.semi_lagrangian(velocity, velocity, dt=dt) + buoyancy * dt
-            velocity, _ = fluid.make_incompressible(velocity, solve=Solve('CG', 1e-3, 1e-3,  suppress=[Diverged, NotConverged]))
+            velocity, _ = fluid.make_incompressible(
+                velocity, 
+                solve=Solve('auto', 1e-3, 1e-3, suppress=[Diverged, NotConverged])
+            )
 
-            # Pack output
+            # ============================================================
+            # STEP 3: Pack output (stays at reduced resolution)
+            # ============================================================
             vel_out = velocity.at_centers()
-            return math.stack([vel_out.values.vector['x'], vel_out.values.vector['y'], smoke.values],
-                            channel(field='vel_x,vel_y,smoke')), params
+            next_state = math.stack(
+                [vel_out.values.vector['x'], vel_out.values.vector['y'], smoke.values],
+                channel(field='vel_x,vel_y,smoke')
+            )
+
+            return next_state, params
 
         return smoke_step
 
     def get_initial_state(self, batch_size: int = 1) -> Tensor:
-        """Initial state: zero velocity, Gaussian smoke blob."""
-        res_x = self.full_resolution.get_size('x')
-        res_y = self.full_resolution.get_size('y')
-        size_x = self.domain.size['x']
-        size_y = self.domain.size['y']
-        
-        x = math.linspace(size_x / (2 * res_x), size_x - size_x / (2 * res_x), spatial(x=res_x))
-        y = math.linspace(size_y / (2 * res_y), size_y - size_y / (2 * res_y), spatial(y=res_y))
+        """Initial state at FULL resolution: zero velocity, random smooth smoke."""
         grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
-        vector_str = ','.join(self.spatial_dims)
-        # Gaussian smoke blob
+        
+        # Random smooth smoke field using Noise
         smoke = CenteredGrid(
-            Noise(batch(batch=batch_size), scale=self.domain.size/10, smoothness=1.5),
+            Noise(batch(batch=batch_size), scale=self.domain.size['x'] / 10, smoothness=1.5),
             extrapolation.PERIODIC,
             bounds=self.domain,
             **grid_kwargs
@@ -162,19 +195,44 @@ class SmokePlumeModel(PhysicalModel):
         vel_y = math.zeros(smoke.shape)
         
         state = math.stack([vel_x, vel_y, smoke], channel(field='vel_x,vel_y,smoke'))
-        
-        
         return state
 
     def forward(self, state: Tensor, params: Tensor, upsample_output: bool = True) -> Tensor:
+        """Single step forward. Optionally upsample output to full resolution."""
         pred, _ = self._jit_step(state, params)
+        if upsample_output and self.downsample_factor > 0:
+            pred = self._upsample_state(pred, self.field_names)
         return pred
 
     def rollout(self, initial_state: Tensor, params: Tensor, num_steps: int,
                 upsample_output: bool = True) -> Tensor:
+        """
+        Roll out simulation for multiple steps.
+        
+        Args:
+            initial_state: Initial state (at full resolution)
+            params: Model parameters (at reduced resolution)
+            num_steps: Number of steps to simulate
+            upsample_output: If True, upsample trajectory to full resolution.
+                           If False, return at reduced resolution.
+
+        Returns:
+            Trajectory at full resolution (if upsample_output=True) or
+            reduced resolution (if upsample_output=False)
+        """
         trajectory, _ = iterate(self._jit_step, batch(time=num_steps), initial_state, params)
         if isinstance(trajectory, tuple):
             trajectory = trajectory[0]
+
+        # Upsample each timestep if requested
+        if upsample_output and self.downsample_factor > 0:
+            upsampled_steps = []
+            for t in range(trajectory.shape.get_size('time')):
+                step = trajectory.time[t]
+                upsampled_step = self._upsample_state(step, self.field_names)
+                upsampled_steps.append(upsampled_step)
+            trajectory = math.stack(upsampled_steps, batch('time'))
+
         return trajectory
 
     def save(self, path):
