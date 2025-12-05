@@ -1,7 +1,7 @@
 general:
   experiment_name: 'navier_stokes_2d_experiment'
   mode: 'hybrid'
-  tasks: [ 'generate', 'evaluate']
+  tasks: [ 'train','evaluate']
 
 data:
   data_dir: 'data/navier_stokes_2d'
@@ -33,7 +33,7 @@ model:
       batch_norm: false
 
 trainer:
-  batch_size: 16
+  batch_size: 64
   rollout_steps: 4
   train_sim: [0]
   device: 'cuda:0'
@@ -44,14 +44,14 @@ trainer:
     standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
     downsample_factor: 1
-    method: 'Newton-CG'
+    method: 'L-BFGS-B'
     abs_tol: 1e-10
     max_iterations: 1
     regularization:
       type: 'l2_gradient'
       weight: 1e-4
   synthetic:
-    epochs_per_cycle: 5
+    epochs_per_cycle: 100
     epochs: ${trainer.synthetic.epochs_per_cycle}
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
@@ -64,8 +64,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 1
-    warmup: 1
+    cycles: 50
+    warmup: 5
     augmentation:
       alpha: 1.0
       num_trajectories: 3

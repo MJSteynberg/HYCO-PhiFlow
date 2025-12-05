@@ -105,7 +105,7 @@ class NavierStokesModel(PhysicalModel):
         # Grid kwargs at REDUCED resolution
         grid_kwargs = {name: resolution.get_size(name) for name in spatial_dims}
 
-        # @jit_compile
+        @jit_compile
         def smoke_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
             # ============================================================
             # STEP 1: Downsample state if needed
@@ -163,7 +163,7 @@ class NavierStokesModel(PhysicalModel):
             velocity = advect.semi_lagrangian(velocity, velocity, dt=dt) + buoyancy * dt
             velocity, _ = fluid.make_incompressible(
                 velocity, 
-                solve=Solve('auto', 1e-3, 1e-3, suppress=[Diverged, NotConverged])
+                solve=Solve('CG', 1e-3, rank_deficiency=0, suppress=[Diverged, NotConverged])
             )
 
             # ============================================================

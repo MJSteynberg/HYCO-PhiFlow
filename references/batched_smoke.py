@@ -15,7 +15,8 @@ This example runs multiple smoke simulations in parallel, varying inflow positio
 
 # Commented out IPython magic to ensure Python compatibility.
 # %pip install phiflow
-from phi.jax.flow import *
+from phi.torch.flow import *
+import matplotlib.pyplot as plt
 # from phi.flow import *  # If JAX is not installed. You can use phi.torch or phi.tf as well.
 
 """We use a batch dimension `setting` to parallelize multiple simulations.
@@ -40,7 +41,7 @@ def step(v, s, p, dt=1.):
     s = advect.mac_cormack(s, v, dt) + inflow_rate * resample(inflow, to=s, soft=True)
     buoyancy = resample(s * (0, 0.1), to=v)
     v = advect.semi_lagrangian(v, v, dt) + buoyancy * dt
-    v, p = fluid.make_incompressible(v, obstacle, Solve(x0=p))
+    v, p = fluid.make_incompressible(v, obstacle, Solve('CG', 1e-3, rank_deficiency=0, suppress=[phi.math.NotConverged]))
     return v, s, p
 
 v0 = StaggeredGrid(0, 0, domain, x=64, y=64)
@@ -48,3 +49,4 @@ smoke0 = CenteredGrid(0, ZERO_GRADIENT, domain, x=200, y=200)
 v_trj, s_trj, p_trj = iterate(step, batch(time=100), v0, smoke0, None)
 
 plot(obstacle, inflow, s_trj, animate='time', overlay='args')
+plt.show()
