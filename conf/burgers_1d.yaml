@@ -1,6 +1,6 @@
 general:
   experiment_name: 'burgers_1d_experiment'
-  mode: 'physical' # Options: 'physical', 'synthetic', 'hybrid'
+  mode: 'hybrid' # Options: 'physical', 'synthetic', 'hybrid'
   tasks: [ 'generate', 'train', 'evaluate']
 
 data:
@@ -34,7 +34,7 @@ model:
 trainer:
   batch_size: 128 
   rollout_steps: 6
-  train_sim: [0, 1,2]
+  train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
   physical:
@@ -59,8 +59,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 10
-    warmup: 2
+    cycles: 50
+    warmup: 5
     augmentation:
       alpha: 0.2
       num_trajectories: 6
@@ -83,8 +83,15 @@ trainer:
       
       physical:
         real_weight: 1.0
-        interaction_weight: 1e-3  # Physical model sees weaker interaction loss
+        interaction_weight: 1.0e-3  # Physical model sees weaker interaction loss
         proportional: false       # Or use proportional scaling
+
+    # Loss-based reversion: revert parameters if loss doesn't improve enough
+    reversion:
+      enabled: true             # Enable/disable reversion 
+      synthetic: true             # Apply to synthetic model
+      physical: true              # Apply to physical model
+      min_improvement: 0.005      # Minimum relative improvement required (1%)
 
 sparsity:
   temporal:

@@ -108,9 +108,18 @@ class NavierStokesModel(PhysicalModel):
         @jit_compile
         def smoke_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
             # ============================================================
-            # STEP 1: Downsample state if needed
+            # STEP 1: Get working state (downsample only if at full resolution)
             # ============================================================
-            if downsample_factor > 0:
+            # Detect if input is at full or reduced resolution
+            # This is needed because iterate() feeds output back as input
+            first_spatial_dim = spatial_dims[0]
+            input_res = state.shape.get_size(first_spatial_dim)
+            full_res = full_resolution.get_size(first_spatial_dim)
+            
+            # Only downsample if input is at full resolution
+            needs_downsample = downsample_factor > 0 and input_res == full_res
+            
+            if needs_downsample:
                 # Convert tensor to grid for downsampling
                 full_grid_kwargs = {name: full_resolution.get_size(name) for name in spatial_dims}
                 
@@ -131,6 +140,7 @@ class NavierStokesModel(PhysicalModel):
                 vel_y = vel_grid.values.vector['y']
                 smoke_data = smoke_grid.values
             else:
+                # Input already at working resolution (or no downsampling needed)
                 vel_x = state.field['vel_x']
                 vel_y = state.field['vel_y']
                 smoke_data = state.field['smoke']

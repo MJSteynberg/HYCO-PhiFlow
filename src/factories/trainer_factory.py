@@ -151,7 +151,8 @@ class TrainerFactory:
             num_channels = dataset.num_channels
 
         # Create physical model first (needed for 'auto' static_fields inference)
-        physical_model = ModelFactory.create_physical_model(config)
+        downsample_factor = config["trainer"]["physical"].get("downsample_factor", 0)
+        physical_model = ModelFactory.create_physical_model(config, downsample_factor=downsample_factor)
 
         # Create synthetic model (can infer static_fields from physical model if config says 'auto')
         synthetic_model = ModelFactory.create_synthetic_model(

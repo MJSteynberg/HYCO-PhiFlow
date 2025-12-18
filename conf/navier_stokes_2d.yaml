@@ -43,7 +43,7 @@ trainer:
     epochs: ${trainer.physical.epochs_per_cycle}
     standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
-    downsample_factor: 1
+    downsample_factor: 0
     method: 'L-BFGS-B'
     abs_tol: 1e-10
     max_iterations: 1
@@ -51,7 +51,7 @@ trainer:
       type: 'l2_gradient'
       weight: 1e-4
   synthetic:
-    epochs_per_cycle: 100
+    epochs_per_cycle: 5
     epochs: ${trainer.synthetic.epochs_per_cycle}
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
@@ -64,8 +64,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 50
-    warmup: 5
+    cycles: 1
+    warmup: 1
     augmentation:
       alpha: 1.0
       num_trajectories: 3
@@ -83,6 +83,12 @@ trainer:
         real_weight: 1.0
         interaction_weight: 0.1
         proportional: true
+
+    # Loss-based model reversion: only keep trained models if loss improved
+    reversion:
+      enabled: false  # Set to true to enable
+      synthetic: true  # Revert synthetic model if its loss increased
+      physical: true   # Revert physical model if its loss increased
 
 sparsity:
   temporal:

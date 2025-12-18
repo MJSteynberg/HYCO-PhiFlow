@@ -130,9 +130,18 @@ class BurgersModel(PhysicalModel):
         @jit_compile
         def burgers_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
             # ============================================================
-            # STEP 1: Downsample input state if needed
+            # STEP 1: Get working state (downsample only if at full resolution)
             # ============================================================
-            if downsample_factor > 0:
+            # Detect if input is at full or reduced resolution
+            # This is needed because iterate() feeds output back as input
+            first_spatial_dim = spatial_dims[0]
+            input_res = state.shape.get_size(first_spatial_dim)
+            full_res = full_grid_kwargs[first_spatial_dim]
+            
+            # Only downsample if input is at full resolution
+            needs_downsample = downsample_factor > 0 and input_res == full_res
+            
+            if needs_downsample:
                 # Convert state tensor to grid at full resolution
                 velocity_tensor_full = math.rename_dims(
                     state, 'field', channel(vector=','.join(spatial_dims))
@@ -148,6 +157,7 @@ class BurgersModel(PhysicalModel):
                     state_grid.values, 'vector', channel(field=','.join(field_names))
                 )
             else:
+                # Input already at working resolution (or no downsampling needed)
                 working_state = state
             
             # ============================================================
@@ -279,18 +289,35 @@ class BurgersModel(PhysicalModel):
             Trajectory at full resolution (if upsample_output=True) or
             reduced resolution (if upsample_output=False)
         """
-        trajectory, _ = iterate(self._jit_step, batch(time=num_steps), initial_state, params)
-        if isinstance(trajectory, tuple):
-            trajectory = trajectory[0]
+        if self.downsample_factor > 0:
+            # Manual loop needed because jit_step expects full-res input but outputs reduced-res
+            # We need to upsample between steps to maintain consistent input resolution
+            trajectory_states = [initial_state]
+            current_state = initial_state
 
-        # Upsample each timestep if requested
-        if upsample_output and self.downsample_factor > 0:
-            upsampled_steps = []
-            for t in range(trajectory.shape.get_size('time')):
-                step = trajectory.time[t]
-                upsampled_step = self._upsample_state(step, self.field_names)
-                upsampled_steps.append(upsampled_step)
-            trajectory = math.stack(upsampled_steps, batch('time'))
+            for _ in range(num_steps):
+                # Run one step (input: full res, output: reduced res)
+                pred, _ = self._jit_step(current_state, params)
+                # Upsample back to full resolution for next iteration
+                pred_full = self._upsample_state(pred, self.field_names)
+                trajectory_states.append(pred_full)
+                current_state = pred_full
+
+            trajectory = math.stack(trajectory_states, batch('time'))
+
+            # If not upsampling output, downsample the trajectory
+            if not upsample_output:
+                downsampled_steps = []
+                for t in range(trajectory.shape.get_size('time')):
+                    step = trajectory.time[t]
+                    downsampled_step = self._downsample_state(step, self.field_names)
+                    downsampled_steps.append(downsampled_step)
+                trajectory = math.stack(downsampled_steps, batch('time'))
+        else:
+            # No downsampling - can use efficient iterate
+            trajectory, _ = iterate(self._jit_step, batch(time=num_steps), initial_state, params)
+            if isinstance(trajectory, tuple):
+                trajectory = trajectory[0]
 
         return trajectory
 

@@ -2,7 +2,8 @@
 
 import os
 import time
-from typing import Dict, Any, List
+import copy
+from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import torch
 
@@ -126,9 +127,10 @@ class HybridTrainer:
             self.augment_trajectory_length
         )
 
-        # Get epochs for each model
+        # Get epochs and batch size for each model
         self.synthetic_epochs = config['trainer']['synthetic']['epochs']
         self.physical_epochs = config['trainer']['physical']['epochs']
+        self.batch_size = config['trainer']['batch_size']
 
         # Loss scaling config
         loss_scaling = hybrid_config.get('loss_scaling', {})
@@ -144,6 +146,14 @@ class HybridTrainer:
             'interaction_weight': loss_scaling.get('physical', {}).get('interaction_weight', 0.1),
             'proportional': loss_scaling.get('physical', {}).get('proportional', False),
         }
+
+        # Loss-based model reversion config
+        reversion_config = hybrid_config.get('reversion', {})
+        self.enable_reversion = reversion_config.get('enabled', False)
+        self.revert_synthetic = reversion_config.get('synthetic', True)
+        self.revert_physical = reversion_config.get('physical', True)
+        # Minimum relative improvement required to keep new parameters (e.g., 0.01 = 1%)
+        self.min_improvement = float(reversion_config.get('min_improvement', 0.0))
 
     def _parse_sparsity_config(self, config: Dict[str, Any]) -> SparsityConfig:
         """Parse sparsity configuration from Hydra config."""
@@ -166,9 +176,116 @@ class HybridTrainer:
 
         return sparsity_config
 
+    # =========================================================================
+    # Model State Management (for loss-based reversion)
+    # =========================================================================
+
+    def _save_synthetic_state(self) -> Dict[str, Any]:
+        """Save the current state of the synthetic model's network."""
+        # Use PyTorch's state_dict for network weights
+        return copy.deepcopy(self.synthetic_model.network.state_dict())
+
+    def _restore_synthetic_state(self, state: Dict[str, Any]):
+        """Restore the synthetic model's network to a saved state."""
+        self.synthetic_model.network.load_state_dict(state)
+
+    def _save_physical_state(self) -> Tensor:
+        """Save the current state of the physical model's parameters."""
+        return math.stop_gradient(self.physical_model.params)
+
+    def _restore_physical_state(self, state: Tensor):
+        """Restore the physical model's parameters to a saved state."""
+        self.physical_model.params = state
+
+    def _evaluate_synthetic_loss(self) -> float:
+        """
+        Evaluate synthetic model loss on real data only (no training).
+
+        Returns:
+            Average MSE loss on real data
+        """
+        self.dataset.access_policy = AccessPolicy.REAL_ONLY
+        self.dataset.alpha = 1.0
+
+        total_loss = 0.0
+        num_batches = 0
+        rollout_steps = self.synthetic_trainer.rollout_steps
+
+        with torch.no_grad():
+            for batch in self.dataset.iterate_batches(self.batch_size, shuffle=False):
+                if not batch.has_real:
+                    continue
+
+                current_state = batch.real_initial_state
+                batch_loss = 0.0
+
+                for t in range(min(rollout_steps, batch.real_targets.shape.get_size('time'))):
+                    next_state = self.synthetic_model(current_state)
+                    target_t = batch.real_targets.time[t]
+                    mse = math.mean((next_state - target_t) ** 2)
+                    step_loss = float(math.mean(mse, 'batch').native().item())
+                    batch_loss += step_loss
+                    current_state = next_state
+
+                total_loss += batch_loss / rollout_steps
+                num_batches += 1
+
+        # Restore dataset config
+        self.dataset.access_policy = AccessPolicy.BOTH
+        self.dataset.alpha = self.alpha
+
+        return total_loss / max(num_batches, 1)
+
+    def _evaluate_physical_loss(self) -> float:
+        """
+        Evaluate physical model loss on real data only (no training).
+
+        Returns:
+            Average MSE loss on real data
+        """
+        self.dataset.access_policy = AccessPolicy.REAL_ONLY
+        self.dataset.alpha = 1.0
+
+        total_loss = 0.0
+        num_batches = 0
+        rollout_steps = self.physical_trainer.rollout_steps
+
+        with torch.no_grad():
+            for batch in self.dataset.iterate_batches(self.batch_size, shuffle=False):
+                if not batch.has_real:
+                    continue
+
+                # Physical model rollout
+                trajectory = self.physical_model.rollout(
+                    batch.real_initial_state,
+                    self.physical_model.params,
+                    rollout_steps
+                )
+
+                # Compute loss against targets
+                batch_loss = 0.0
+                for t in range(min(rollout_steps, batch.real_targets.shape.get_size('time'))):
+                    pred_t = trajectory.time[t + 1]  # +1 because rollout includes initial
+                    target_t = batch.real_targets.time[t]
+                    mse = math.mean((pred_t - target_t) ** 2)
+                    step_loss = float(math.mean(mse, 'batch').native().item())
+                    batch_loss += step_loss
+
+                total_loss += batch_loss / rollout_steps
+                num_batches += 1
+
+        # Restore dataset config
+        self.dataset.access_policy = AccessPolicy.BOTH
+        self.dataset.alpha = self.alpha
+
+        return total_loss / max(num_batches, 1)
+
     def train(self, verbose: bool = True) -> Dict[str, Any]:
         """
         Execute hybrid training.
+
+        If reversion is enabled, models are only updated if their loss on real
+        data decreases after training. Otherwise, they revert to pre-cycle state.
 
         Returns:
             Dictionary with training results
@@ -178,11 +295,22 @@ class HybridTrainer:
             "synthetic_losses": [],
             "physical_losses": [],
             "cycle_times": [],
+            "synthetic_reversions": [],  # Track which cycles had reversions
+            "physical_reversions": [],
         }
 
         logger.info("=" * 60)
         logger.info("Starting Hybrid Training")
+        if self.enable_reversion:
+            logger.info(f"Loss-based reversion ENABLED (synthetic={self.revert_synthetic}, physical={self.revert_physical})")
+            if self.min_improvement > 0:
+                logger.info(f"  Minimum improvement threshold: {self.min_improvement:.1%}")
         logger.info("=" * 60)
+
+        # Configure schedulers to span ALL training (warmup + hybrid cycles)
+        # This must be done BEFORE any training so LR decays properly over entire run
+        total_synthetic_epochs = (self.warmup_cycles + self.cycles) * self.synthetic_epochs
+        self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
 
         # Warmup phase: Train on real data only
         if self.warmup_cycles > 0:
@@ -214,10 +342,6 @@ class HybridTrainer:
         logger.info(f"HYBRID PHASE: Training with data augmentation ({self.cycles} cycles)")
         logger.info(f"{'=' * 60}\n")
 
-        # Configure schedulers to span all hybrid cycles
-        total_synthetic_epochs = self.cycles * self.synthetic_epochs
-        self.synthetic_trainer.set_total_epochs_for_hybrid(total_synthetic_epochs)
-
         # Set loss scaling once (doesn't change between cycles)
         self.physical_trainer.set_loss_scaling(
             real_weight=self.physical_loss_config['real_weight'],
@@ -234,20 +358,42 @@ class HybridTrainer:
         self.dataset.access_policy = AccessPolicy.BOTH
         self.dataset.alpha = self.alpha
 
+        # Track best losses and states for reversion decisions
+        best_synthetic_loss = float('inf')
+        best_synthetic_state = None
+        best_physical_loss = float('inf')
+        best_physical_state = None
+        # Track rollout to reset best loss when it changes
+        last_synthetic_rollout = self.synthetic_trainer.rollout_steps
+
         for cycle in range(self.cycles):
             logger.info(f"\n--- Hybrid Cycle {cycle + 1}/{self.cycles} ---")
             cycle_start = time.time()
 
-            # Step 1: Generate initial states for physical trajectories
+            synthetic_reverted = False
+            physical_reverted = False
+
+            # =========================================================
+            # SYNTHETIC MODEL TRAINING (with optional reversion)
+            # =========================================================
+
+            # Check if rollout changed - if so, reset best loss and state
+            current_rollout = self.synthetic_trainer.rollout_steps
+            if current_rollout != last_synthetic_rollout:
+                logger.info(f"  Rollout changed ({last_synthetic_rollout} -> {current_rollout}), resetting best synthetic loss")
+                best_synthetic_loss = float('inf')
+                best_synthetic_state = None
+                last_synthetic_rollout = current_rollout
+
+            # Step 1: Generate physical trajectories for synthetic training
             initial_states = self._generate_random_initial_states(self.num_augment_trajectories)
             physical_trajectories = self._generate_physical_trajectories(initial_states)
-
-            # Step 2: Train synthetic model on full physical trajectories
             self.dataset.set_augmented_trajectories(physical_trajectories)
 
             if self.save_augmented:
                 self._save_augmented_data(physical_trajectories, f"physical_cycle_{cycle}")
 
+            # Train synthetic model (trainer keeps its own best checkpoint)
             synthetic_results = self.synthetic_trainer.train(
                 self.dataset,
                 num_epochs=self.synthetic_epochs,
@@ -255,21 +401,104 @@ class HybridTrainer:
                 verbose=verbose
             )
 
-            # Step 2: Generate SHORT synthetic trajectories from sampled starting points
+            # Check if we should revert synthetic model
+            if self.enable_reversion and self.revert_synthetic:
+                # Get best loss achieved during this cycle (from trainer's tracking)
+                best_in_cycle_loss = synthetic_results.get('best_val_loss', synthetic_results['final_loss'])
+                
+                # Load the best-in-cycle checkpoint to get that state
+                try:
+                    self.synthetic_trainer.load_checkpoint()
+                except FileNotFoundError:
+                    pass  # No checkpoint, use current state
+                
+                # Evaluate loss with best-in-cycle state
+                loss_after_synthetic = self._evaluate_synthetic_loss()
+                logger.info(f"  Synthetic best-in-cycle loss: {loss_after_synthetic:.6f} (from epoch {synthetic_results.get('best_epoch', '?')})")
+
+                if best_synthetic_loss == float('inf'):
+                    # First cycle - just save as best
+                    best_synthetic_loss = loss_after_synthetic
+                    best_synthetic_state = self._save_synthetic_state()
+                    logger.info(f"  Synthetic model KEPT (first baseline): {loss_after_synthetic:.6f}")
+                elif loss_after_synthetic > best_synthetic_loss:
+                    # Best-in-cycle is worse than global best - revert to global best
+                    logger.warning(
+                        f"  REVERTING synthetic model: best-in-cycle {loss_after_synthetic:.6f} > global best {best_synthetic_loss:.6f}"
+                    )
+                    self._restore_synthetic_state(best_synthetic_state)
+                    synthetic_reverted = True
+                else:
+                    # Check if improvement meets threshold
+                    improvement = (best_synthetic_loss - loss_after_synthetic) / (best_synthetic_loss + 1e-10)
+                    if improvement < self.min_improvement:
+                        logger.warning(
+                            f"  REVERTING synthetic model: improvement {improvement:.2%} < threshold {self.min_improvement:.2%} "
+                            f"({best_synthetic_loss:.6f} -> {loss_after_synthetic:.6f})"
+                        )
+                        self._restore_synthetic_state(best_synthetic_state)
+                        synthetic_reverted = True
+                    else:
+                        # Update global best
+                        best_synthetic_loss = loss_after_synthetic
+                        best_synthetic_state = self._save_synthetic_state()
+                        logger.info(f"  Synthetic model KEPT: loss improved by {improvement:.2%} to {loss_after_synthetic:.6f}")
+
+            # =========================================================
+            # PHYSICAL MODEL TRAINING (with optional reversion)
+            # =========================================================
+
+            # Step 2: Generate synthetic trajectories for physical training
             initial_states = self._generate_random_initial_states(self.num_augment_trajectories)
             synthetic_trajectories = self._generate_synthetic_trajectories(initial_states)
-
-            # Step 3: Train physical model on short synthetic trajectories
             self.dataset.set_augmented_trajectories(synthetic_trajectories)
 
             if self.save_augmented:
                 self._save_augmented_data(synthetic_trajectories, f"synthetic_cycle_{cycle}")
 
+            # Train physical model
             physical_results = self.physical_trainer.train(
                 self.dataset,
                 num_epochs=self.physical_epochs,
                 verbose=verbose
             )
+            
+            # Check if we should revert physical model
+            if self.enable_reversion and self.revert_physical:
+                loss_after_physical = self._evaluate_physical_loss()
+                logger.info(f"  Physical loss after training: {loss_after_physical:.6f}")
+
+                if best_physical_loss == float('inf'):
+                    # First cycle - just save as best
+                    best_physical_loss = loss_after_physical
+                    best_physical_state = self._save_physical_state()
+                    logger.info(f"  Physical model KEPT (first baseline): {loss_after_physical:.6f}")
+                elif loss_after_physical > best_physical_loss:
+                    # Loss increased - revert to global best
+                    logger.warning(
+                        f"  REVERTING physical model: current {loss_after_physical:.6f} > global best {best_physical_loss:.6f}"
+                    )
+                    self._restore_physical_state(best_physical_state)
+                    physical_reverted = True
+                else:
+                    # Check if improvement meets threshold
+                    improvement = (best_physical_loss - loss_after_physical) / (best_physical_loss + 1e-10)
+                    if improvement < self.min_improvement:
+                        logger.warning(
+                            f"  REVERTING physical model: improvement {improvement:.2%} < threshold {self.min_improvement:.2%} "
+                            f"({best_physical_loss:.6f} -> {loss_after_physical:.6f})"
+                        )
+                        self._restore_physical_state(best_physical_state)
+                        physical_reverted = True
+                    else:
+                        # Update global best
+                        best_physical_loss = loss_after_physical
+                        best_physical_state = self._save_physical_state()
+                        logger.info(f"  Physical model KEPT: loss improved by {improvement:.2%} to {loss_after_physical:.6f}")
+
+            # =========================================================
+            # Record Results
+            # =========================================================
 
             cycle_time = time.time() - cycle_start
 
@@ -277,16 +506,29 @@ class HybridTrainer:
             results["synthetic_losses"].append(synthetic_results["final_loss"])
             results["physical_losses"].append(physical_results["final_loss"])
             results["cycle_times"].append(cycle_time)
+            results["synthetic_reversions"].append(synthetic_reverted)
+            results["physical_reversions"].append(physical_reverted)
+
+            # Summary log
+            reversion_info = ""
+            if self.enable_reversion:
+                reversion_info = f" [S:{'REV' if synthetic_reverted else 'OK'}, P:{'REV' if physical_reverted else 'OK'}]"
 
             logger.info(
                 f"Cycle {cycle + 1} completed in {cycle_time:.2f}s - "
                 f"Synthetic loss: {synthetic_results['final_loss']:.6f}, "
-                f"Physical loss: {physical_results['final_loss']:.6f}"
+                f"Physical loss: {physical_results['final_loss']:.6f}{reversion_info}"
             )
 
         logger.info("\n" + "=" * 60)
         logger.info("Hybrid Training Completed")
         logger.info("=" * 60)
+
+        # Log reversion summary if enabled
+        if self.enable_reversion:
+            syn_revs = sum(results["synthetic_reversions"])
+            phy_revs = sum(results["physical_reversions"])
+            logger.info(f"Reversion summary: Synthetic={syn_revs}/{self.cycles}, Physical={phy_revs}/{self.cycles}")
 
         return results
 

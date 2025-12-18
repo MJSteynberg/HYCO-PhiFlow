@@ -132,8 +132,9 @@ class SyntheticTrainer:
     def set_loss_scaling(self, real_weight: float, interaction_weight: float, 
                          proportional: bool = False):
         """Configure loss scaling for hybrid training."""
-        self.real_loss_weight = real_weight
-        self.interaction_loss_weight = interaction_weight
+        # Ensure weights are float (YAML may parse scientific notation as string)
+        self.real_loss_weight = float(real_weight)
+        self.interaction_loss_weight = float(interaction_weight)
         self.proportional_scaling = proportional
 
     def set_total_epochs_for_hybrid(self, total_epochs: int):
@@ -217,9 +218,6 @@ class SyntheticTrainer:
         
         loss = update_weights(self.model, self.optimizer, combined_loss_function)
         
-        if self.scheduler is not None:
-            self.scheduler.step()
-        
         return loss
 
     def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
@@ -271,6 +269,10 @@ class SyntheticTrainer:
             avg_epoch_loss = epoch_loss / num_batches if num_batches > 0 else epoch_loss
             results["train_losses"].append(float(avg_epoch_loss))
             results["epochs"].append(epoch + 1)
+
+            # Step scheduler once per epoch (not per batch)
+            if self.scheduler is not None:
+                self.scheduler.step()
 
             loss_value = float(avg_epoch_loss)
             if loss_value < self.best_val_loss:

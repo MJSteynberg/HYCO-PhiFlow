@@ -87,8 +87,9 @@ class PhysicalTrainer:
     def set_loss_scaling(self, real_weight: float, interaction_weight: float,
                          proportional: bool = False):
         """Configure loss scaling for hybrid training."""
-        self.real_loss_weight = real_weight
-        self.interaction_loss_weight = interaction_weight
+        # Ensure weights are float (YAML may parse scientific notation as string)
+        self.real_loss_weight = float(real_weight)
+        self.interaction_loss_weight = float(interaction_weight)
         self.proportional_scaling = proportional
 
     def _get_spatial_mask(self, spatial_shape: Shape) -> Optional[SpatialMask]:
@@ -175,6 +176,7 @@ class PhysicalTrainer:
             if proportional_scaling and separated_batch.has_real and separated_batch.has_generated:
                 ratio = math.stop_gradient(real_loss / (interaction_loss + 1e-8))
                 i_weight = interaction_loss_weight * ratio
+
 
             # Gradient regularization
             grad_reg_weight = self.grad_regularization_weight

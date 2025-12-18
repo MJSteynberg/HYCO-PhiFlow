@@ -177,10 +177,19 @@ class AdvectionModel(PhysicalModel):
         @jit_compile
         def advection_step(state: Tensor, params: Tensor) -> Tuple[Tensor, Tensor]:
             # ============================================================
-            # STEP 1: Downsample input state if needed
+            # STEP 1: Get working state (downsample only if at full resolution)
             # ============================================================
-            if downsample_factor > 0:
-                # Downsample density
+            # Detect if input is at full or reduced resolution
+            # This is needed because iterate() feeds output back as input
+            first_spatial_dim = spatial_dims[0]
+            input_res = state.shape.get_size(first_spatial_dim)
+            full_res = full_grid_kwargs[first_spatial_dim]
+            
+            # Only downsample if input is at full resolution
+            needs_downsample = downsample_factor > 0 and input_res == full_res
+            
+            if needs_downsample:
+                # Downsample density from full resolution
                 density_full = state.field['density']
                 density_grid = CenteredGrid(density_full, PERIODIC, bounds=domain, **full_grid_kwargs)
                 for _ in range(downsample_factor):
@@ -199,6 +208,7 @@ class AdvectionModel(PhysicalModel):
                     velocity_grid = downsample2x(velocity_grid)
                 working_velocity = velocity_grid.values
             else:
+                # Input already at working resolution (or no downsampling needed)
                 working_density = state.field['density']
                 static = math.stack(
                     [state.field[n] for n in static_names],
