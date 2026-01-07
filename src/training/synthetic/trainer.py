@@ -156,6 +156,17 @@ class SyntheticTrainer:
         
         logger.info(f"Reconfigured for hybrid training: {self.scheduler_type} with total_epochs={total_epochs}")
 
+    def reset_best_checkpoint(self):
+        """
+        Reset best checkpoint tracking.
+        
+        Call this when transitioning between training phases (e.g., warmup -> hybrid)
+        to prevent old checkpoints from interfering with new phase evaluation.
+        """
+        self.best_val_loss = float("inf")
+        self.best_epoch = 0
+        logger.info("Reset best checkpoint tracking")
+
     def _train_batch(self, separated_batch) -> float:
         """
         Train on a batch with separate real/generated loss weighting.

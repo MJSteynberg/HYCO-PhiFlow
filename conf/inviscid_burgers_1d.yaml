@@ -86,6 +86,13 @@ trainer:
         interaction_weight: 0.1  # Physical model sees weaker interaction loss
         proportional: true      # Or use proportional scaling
 
+    # Loss-based reversion: revert parameters if loss doesn't improve enough
+    reversion:
+      enabled: true             # Enable/disable reversion 
+      synthetic: true             # Apply to synthetic model
+      physical: true              # Apply to physical model
+      min_improvement: 0.005      # Minimum relative improvement required (1%)
+
 sparsity:
   temporal:
     enabled: false

@@ -342,6 +342,11 @@ class HybridTrainer:
         logger.info(f"HYBRID PHASE: Training with data augmentation ({self.cycles} cycles)")
         logger.info(f"{'=' * 60}\n")
 
+        # Reset best checkpoint tracking after warmup
+        # This prevents warmup-era checkpoints (trained on real data only) from
+        # interfering with hybrid phase evaluation (which uses augmented data too)
+        self.synthetic_trainer.reset_best_checkpoint()
+
         # Set loss scaling once (doesn't change between cycles)
         self.physical_trainer.set_loss_scaling(
             real_weight=self.physical_loss_config['real_weight'],
