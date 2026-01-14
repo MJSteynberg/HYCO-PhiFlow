@@ -1,0 +1,307 @@
+### Starting TaskPrologue of job 1488894 on tg068 at Wed Jan 14 04:53:15 PM CET 2026
+Running on cores 4-5,12-13,20-21,28-29 with governor ondemand
+Wed Jan 14 16:53:15 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:86:00.0 Off |                  N/A |
+| 28%   35C    P8             10W /  250W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Job started on Wed Jan 14 04:53:15 PM CET 2026
+Running on node: tg068
+Job ID: 1488894
+Working directory: /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
+Loading modules...
+Loaded modules:
+Currently Loaded Modulefiles:
+ 1) python/3.12-conda(default)  
+
+Key:
+(symbolic-version)  
+Python version:
+Python 3.12.12
+PyTorch version:
+PyTorch: 2.9.1+cu130
+CUDA available: True
+CUDA version: 13.0
+GPU information:
+Wed Jan 14 16:53:41 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:86:00.0 Off |                  N/A |
+| 28%   33C    P8             14W /  250W |       1MiB /  11264MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+System information:
+Available memory: 93Gi
+Available disk space: 24T
+[Step 4/4] Running evaluation with all models...
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['evaluate']
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_1d_experiment
+[hyco_phiflow] [32mINFO[0m: === Starting task: evaluate ===
+[hyco_phiflow] [32mINFO[0m: Running evaluation
+[evaluation.evaluator] [32mINFO[0m: Loaded sample data: 1 channels, fields=['vel_x']
+[2026-01-14 16:53:58,143][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-14 16:53:58,144][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-14 16:53:58,377][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[evaluation.evaluator] [32mINFO[0m: Loaded synthetic model from results/models/inviscid_burgers_synthetic_only_1d.pth
+[evaluation.evaluator] [32mINFO[0m: Dynamic fields (will be visualized): ['vel_x']
+[2026-01-14 16:53:58,421][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-14 16:53:58,421][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-14 16:53:58,422][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[evaluation.evaluator] [32mINFO[0m: Loaded hybrid synthetic model from results/models/inviscid_burgers_hybrid_synthetic_1d.pth
+[evaluation.evaluator] [32mINFO[0m: Loaded physical parameters from results/models/inviscid_burgers_physical_only_1d.npz
+[evaluation.evaluator] [32mINFO[0m: Loaded hybrid physical parameters from results/models/inviscid_burgers_hybrid_physical_1d.npz
+[evaluation.evaluator] [32mINFO[0m: Starting evaluation...
+[evaluation.evaluator] [32mINFO[0m: Creating parameter visualizations...
+[evaluation.metrics] [33mWARNING[0m: Resolution mismatch for parameter 'potential_field': learned=(xˢ=128), ground_truth=(xˢ=256). Resampling learned field to match ground truth resolution.
+[evaluation.evaluator] [32mINFO[0m: Parameter metrics (Physical Only):
+[evaluation.evaluator] [32mINFO[0m:   Field parameter errors:
+[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=1.616532e-01, Relative=0.228612
+[evaluation.metrics] [33mWARNING[0m: Resolution mismatch for parameter 'potential_field': learned=(xˢ=128), ground_truth=(xˢ=256). Resampling learned field to match ground truth resolution.
+[evaluation.evaluator] [32mINFO[0m: Parameter metrics (Hybrid Physical):
+[evaluation.evaluator] [32mINFO[0m:   Field parameter errors:
+[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=1.583155e-01, Relative=0.223892
+[evaluation.evaluator] [32mINFO[0m: Visualizing field parameters: ('potential_field',)
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for parameter: potential_field
+[evaluation.evaluator] [32mINFO[0m: Saved potential_field comparison to results/experiments/inviscid_burgers_1d_comparison/param_potential_field_comparison.png
+[evaluation.evaluator] [32mINFO[0m: Creating gradient visualization for potential field: potential_field
+[evaluation.evaluator] [33mWARNING[0m: Failed to create gradient visualization for potential_field: Cannot merge shapes ((xˢ=128), (xˢ=256)) because dimension 'x' exists with different sizes.
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 0...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 0):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 4.849604e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.494279
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.527523e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 2.483961e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 8.145860e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 5.321701e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 0):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.238835e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.228608
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.440375e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.714130e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.118524e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.609317e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:54:03,760][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:54:03,760][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0000_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0000_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0000_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 1...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 1):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 4.007119e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.408257
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.675424e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.865842e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.638014e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 4.395657e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 1):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.963445e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.200443
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.579483e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.241365e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 3.563793e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.271210e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:54:15,623][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:54:15,624][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0001_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0001_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0001_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 2...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 2):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.041483e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.320525
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.186835e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.660361e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.556416e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.627162e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 2):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.948665e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.204816
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.703199e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 7.834556e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 3.880949e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.265973e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:54:27,078][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:54:27,079][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0002_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0002_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0002_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 3...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 3):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.545340e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.385018
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.346298e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 2.228187e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.386027e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.963207e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 3):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.439118e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.156370
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.211244e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 6.344202e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 2.623203e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 1.624604e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:54:38,646][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:54:38,646][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0003_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0003_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0003_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 4...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 4):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.508118e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.358140
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.621516e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.642618e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.228670e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 4.032567e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 4):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.543635e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.259715
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.992834e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.193986e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.822898e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.904702e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:54:50,378][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:54:50,379][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0004_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0004_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0004_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Evaluating simulation 5...
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 5):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.252614e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.329479
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.408141e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.488945e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.132081e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.502818e-01
+[evaluation.evaluator] [32mINFO[0m: Generating predictions...
+[evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
+[evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 5):
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.248703e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.228253
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.607338e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.105840e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.048409e-01
+[evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.613685e-01
+[evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
+[2026-01-14 16:55:01,045][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-14 16:55:01,046][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0005_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0005_vel_x_comparison.gif
+[evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0005_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Average metrics for Synthetic:
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.700713e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.382616
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.460956e-01
+[evaluation.evaluator] [32mINFO[0m: Average metrics for Hybrid Synthetic:
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.063734e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.213034
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.589079e-01
+[evaluation.evaluator] [32mINFO[0m: Saved aggregated metrics to results/experiments/inviscid_burgers_1d_comparison/all_metrics.json
+[evaluation.evaluator] [32mINFO[0m: Saved temporal evolution plot to results/experiments/inviscid_burgers_1d_comparison/temporal_evolution_Synthetic.png
+[evaluation.evaluator] [32mINFO[0m: Saved temporal evolution plot to results/experiments/inviscid_burgers_1d_comparison/temporal_evolution_Hybrid_Synthetic.png
+[evaluation.evaluator] [32mINFO[0m: Saved model comparison plot to results/experiments/inviscid_burgers_1d_comparison/model_comparison.png
+[evaluation.evaluator] [32mINFO[0m: Saved spatial error comparison plot to results/experiments/inviscid_burgers_1d_comparison/spatial_error_comparison.png
+[evaluation.evaluator] [32mINFO[0m: Creating consolidated spacetime heatmap for field: vel_x
+[evaluation.evaluator] [32mINFO[0m: Saved consolidated spacetime heatmap to results/experiments/inviscid_burgers_1d_comparison/vel_x_spacetime_heatmap_comparison.png
+[evaluation.evaluator] [32mINFO[0m: Evaluation complete! Results saved to results/experiments/inviscid_burgers_1d_comparison
+[hyco_phiflow] [32mINFO[0m: === Completed task: evaluate ===
+[hyco_phiflow] [32mINFO[0m: All tasks completed successfully
+
+==============================================
+  Experiment Complete!
+==============================================
+
+Results saved to: results/experiments/inviscid_burgers_1d_comparison
+
+Generated files:
+  - param_*_comparison.png         : Physical params (physical-only vs hybrid vs true)
+  - param_*_forcing_comparison.png : Forcing field comparison (-∇φ)
+  - sim_*_*_comparison.gif         : Solution animations (synthetic vs hybrid vs real)
+  - sim_*_*_comparison_t0.png      : Initial state comparison
+  - sim_*_*_comparison_t1.png      : First timestep comparison
+
+=== JOB_STATISTICS ===
+=== current date     : Wed Jan 14 04:55:18 PM CET 2026
+= Job-ID             : 1488894 on tinygpu
+= Job-Name           : burgers_1d
+= Job-Command        : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/burgers_experiment_1d.sh
+= Initial workdir    : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
+= Queue/Partition    : work
+= Slurm account      : dsaa with QOS=normal
+= Requested resources:  for 04:00:00
+= Elapsed runtime    : 00:02:04
+= Total RAM usage    : 1.7 GiB of requested  GiB (%)   
+= Node list          : tg068
+= Subm/Elig/Start/End: 2026-01-14T16:43:06 / 2026-01-14T16:43:06 / 2026-01-14T16:53:14 / 2026-01-14T16:55:18
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/woody             7.3G  1000.0G  1500.0G        N/A      51K   5,000K   7,500K        N/A    
+    /home/hpc              68.5G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 2080 Ti, 00000000:86:00.0, 762244, 0 %, 0 %, 238 MiB, 84958 ms

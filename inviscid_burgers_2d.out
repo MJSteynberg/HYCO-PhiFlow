@@ -1,0 +1,112 @@
+### Starting TaskPrologue of job 1488787 on tg084 at Wed Jan 14 02:08:21 PM CET 2026
+Running on cores 2-3,18-19,34-35,50-51 with governor powersave
+Wed Jan 14 14:08:21 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1B:00.0 Off |                  N/A |
+| 30%   36C    P8             20W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+### Finished TaskPrologue
+
+Job started on Wed Jan 14 02:08:21 PM CET 2026
+Running on node: tg084
+Job ID: 1488787
+Working directory: /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
+Loading modules...
+Loaded modules:
+Currently Loaded Modulefiles:
+ 1) python/3.12-conda(default)  
+
+Key:
+(symbolic-version)  
+Python version:
+Python 3.12.12
+PyTorch version:
+PyTorch: 2.9.1+cu130
+CUDA available: True
+CUDA version: 13.0
+GPU information:
+Wed Jan 14 14:08:39 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce RTX 3080        On  |   00000000:1B:00.0 Off |                  N/A |
+| 30%   36C    P8             27W /  300W |       1MiB /  10240MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+System information:
+Available memory: 376Gi
+Available disk space: 24T
+==============================================
+  Inviscid Burgers 2d Comparison Experiment
+==============================================
+
+Note: Synthetic-only training uses 'standalone_epochs' from config
+      which equals: epochs * (cycles + warmup) for fair comparison
+
+[Step 0/4] Checking/generating data...
+  Data already exists, skipping generation.
+
+[Step 1/4] Training SYNTHETIC model on real data...
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_2d_synthetic_only
+[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
+[hyco_phiflow] [32mINFO[0m: Running training
+[hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
+[hyco_phiflow] [32mINFO[0m: Creating trainer with 2 channels...
+[2026-01-14 14:08:51,410][UNet][INFO] - Initializing UNet: 2 dynamic, 0 static channels
+[2026-01-14 14:08:51,410][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-14 14:08:51,567][UNet][INFO] - Created U-Net: levels=4, filters=64, spatial_dims=2
+[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 8 (exponential)
+[synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
+[hyco_phiflow] [32mINFO[0m: Starting training for 20000 epochs...
+[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 64.8% visible
+=== JOB_STATISTICS ===
+=== current date     : Wed Jan 14 02:54:43 PM CET 2026
+= Job-ID             : 1488787 on tinygpu
+= Job-Name           : inviscid_burgers_2d
+= Job-Command        : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/burgers_experiment_2d.sh
+= Initial workdir    : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
+= Queue/Partition    : work
+= Slurm account      : dsaa with QOS=normal
+= Requested resources:  for 12:00:00
+= Elapsed runtime    : 00:46:20
+= Total RAM usage    : 2.0 GiB of requested  GiB (%)   
+= Node list          : tg084
+= Subm/Elig/Start/End: 2026-01-14T14:08:12 / 2026-01-14T14:08:12 / 2026-01-14T14:08:20 / 2026-01-14T14:54:40
+======================
+=== Quota infos ======
+    Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc              68.5G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
+    /home/woody             7.3G  1000.0G  1500.0G        N/A      51K   5,000K   7,500K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
+======================
+=== GPU utilization ==
+gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
+NVIDIA GeForce RTX 3080, 00000000:1B:00.0, 3492779, 33 %, 22 %, 8754 MiB, 2753239 ms

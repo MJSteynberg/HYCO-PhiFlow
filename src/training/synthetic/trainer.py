@@ -234,16 +234,19 @@ class SyntheticTrainer:
     def train(self, dataset, num_epochs: int, start_epoch: int = 0, verbose: bool = True) -> Dict[str, Any]:
         """
         Execute training for specified number of epochs.
-        
+
         Args:
             dataset: Dataset instance with iterate_batches method
             num_epochs: Number of epochs to train
             start_epoch: Starting epoch number (for hybrid training across cycles)
             verbose: Whether to show progress bar
-            
+
         Returns:
             Dictionary with training results
         """
+        # Enable training mode for input noise injection
+        self.model.training = True
+
         results = {
             "train_losses": [],
             "epochs": [],
@@ -253,9 +256,9 @@ class SyntheticTrainer:
         }
 
         pbar = tqdm(
-            range(start_epoch, start_epoch + num_epochs), 
-            desc="Synthetic Training", 
-            unit="epoch", 
+            range(start_epoch, start_epoch + num_epochs),
+            desc="Synthetic Training",
+            unit="epoch",
             disable=not verbose
         )
 
@@ -304,6 +307,10 @@ class SyntheticTrainer:
             })
 
         results["final_loss"] = results["train_losses"][-1] if results["train_losses"] else 0.0
+
+        # Disable training mode after training
+        self.model.training = False
+
         return results
 
     def save_checkpoint(self, epoch: int, loss: float):

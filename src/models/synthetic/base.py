@@ -30,10 +30,25 @@ class SyntheticModel:
         self.num_static = len(self.static_fields)
         self.num_dynamic = num_channels - self.num_static
 
+        # Input noise configuration
+        noise_config = config.get('model', {}).get('synthetic', {}).get('input_noise', {})
+        self.input_noise_enabled = noise_config.get('enabled', False)
+        self.input_noise_scale = noise_config.get('scale', 0.01)
+        self.input_noise_type = noise_config.get('type', 'gaussian')
+
+        # Training mode flag (set by trainer)
+        self.training = False
+
         self.logger.info(
             f"Initializing {self.__class__.__name__}: "
             f"{self.num_dynamic} dynamic, {self.num_static} static channels"
         )
+
+        if self.input_noise_enabled:
+            self.logger.info(
+                f"Input noise enabled: type={self.input_noise_type}, "
+                f"scale={self.input_noise_scale} (training only)"
+            )
 
         self._network = None
 
@@ -51,6 +66,14 @@ class SyntheticModel:
 
         Extracts dynamic fields, passes through network, recombines with static.
         """
+        # Apply input noise during training only
+        if self.training and self.input_noise_enabled and self.input_noise_scale > 0:
+            if self.input_noise_type == 'gaussian':
+                noise = math.random_normal(state.shape) * self.input_noise_scale
+                state = state + noise
+            else:
+                self.logger.warning(f"Unknown noise type: {self.input_noise_type}, skipping noise")
+
         if not self.static_fields:
             # No static fields - pass entire state through network
             # Extract field names to restore after network call

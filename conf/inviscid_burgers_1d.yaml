@@ -27,13 +27,17 @@ model:
     model_path: 'results/models'
     model_save_name: 'inviscid_burgers_synthetic_model_1d'
     architecture:
-      levels: 3
+      levels: 2
       filters: 32
       batch_norm: false
+    input_noise:
+      enabled: true
+      scale: 0.01  # Standard deviation of Gaussian noise
+      type: 'gaussian'  # Currently only 'gaussian' is supported
 
 trainer:
   batch_size: 128
-  rollout_steps: 6
+  rollout_steps: 12
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
@@ -42,36 +46,36 @@ trainer:
     epochs: ${trainer.physical.epochs_per_cycle}  # Default: same as per-cycle
     standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
-    downsample_factor: 2
+    downsample_factor: 1
     method: 'L-BFGS-B'
     abs_tol: 1e-12
-    max_iterations: 10
+    max_iterations: 20
     regularization:
       type: 'l2_gradient'  # or 'tv', 'laplacian'
-      weight: 1e-3  # May need less regularization than diffusion
+      weight: 1e-2  # May need less regularization than diffusion
       difference: 'forward'
   synthetic:
-    epochs_per_cycle: 100  # Base value used in hybrid training
+    epochs_per_cycle: 200  # Base value used in hybrid training
     epochs: ${trainer.synthetic.epochs_per_cycle}  # Default: same as per-cycle
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
       start: 1
-      end: 6
+      end: 12
       strategy: 'exponential'
-      exponent: 2.0
+      exponent: 1.5
     learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 50
-    warmup: 10
+    cycles: 80
+    warmup: 20
     augmentation:
       alpha: 1.0
       num_trajectories: 5
        # NEW: Variable trajectory length options
       physical_trajectory_length: 50    # Full physical trajectory for synthetic training
-      synthetic_trajectory_length: 10  # Short synthetic trajectory for physical training
+      synthetic_trajectory_length: 5  # Short synthetic trajectory for physical training
       cache_dir: data/cache_phiml
 
     # Loss scaling configuration
@@ -83,12 +87,12 @@ trainer:
 
       physical:
         real_weight: 1.0
-        interaction_weight: 0.1  # Physical model sees weaker interaction loss
-        proportional: true      # Or use proportional scaling
+        interaction_weight: 1.0  # Physical model sees weaker interaction loss
+        proportional: false      # Or use proportional scaling
 
     # Loss-based reversion: revert parameters if loss doesn't improve enough
     reversion:
-      enabled: true             # Enable/disable reversion 
+      enabled: false            # Enable/disable reversion 
       synthetic: true             # Apply to synthetic model
       physical: true              # Apply to physical model
       min_improvement: 0.005      # Minimum relative improvement required (1%)
@@ -109,7 +113,7 @@ sparsity:
 # For evaluation
 evaluation:
   # Which simulations to evaluate
-  test_sim: [0, 1,2,3,4,5]
+  test_sim: [0,1,2,3,4,5]
 
   # Primary synthetic model checkpoint (e.g., trained on real data only)
   synthetic_checkpoint: "results/models/inviscid_burgers_synthetic_model_1d.pth"
@@ -124,7 +128,7 @@ evaluation:
   physical_checkpoint_hybrid: "results/models/inviscid_burgers_hybrid_physical_1d.npz"
 
   # How many timesteps to rollout
-  num_frames: 100
+  num_frames: 50
 
   # Output directory
   output_dir: "results/evaluation/inviscid_burgers_1d"

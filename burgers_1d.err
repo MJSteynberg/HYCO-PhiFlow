@@ -1,0 +1,29 @@
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phi/vis/_vis.py:280: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:836.)
+  fin_min = lambda t: float(math.map(lambda f: math.finite_min(f.values, shape), t, dims=object).finite_min)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in scalar power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/.local/lib/python3.12/site-packages/phiml/math/_tensors.py:1409: RuntimeWarning: invalid value encountered in power
+  result = op(n1, n2)
+/home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/src/evaluation/evaluator.py:716: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  plt.tight_layout(rect=[0, 0, 0.91, 1])

@@ -1,16 +1,49 @@
 #!/bin/bash
-# =============================================================================
-# Inviscid Burgers 2d Full Experiment
-# =============================================================================
-# This script runs a complete experiment comparing:
-# 1. Synthetic model trained on real data only
-# 2. Physical model trained on real data only  
-# 3. Hybrid training (alternating physical and synthetic)
-#
-# After training, runs evaluation which generates comparison plots for:
-# - Physical parameters (physical-only vs hybrid-physical vs ground truth)
-# - Solution trajectories (synthetic-only vs hybrid-synthetic vs real)
-# =============================================================================
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:a100:1 -p a100
+#SBATCH --time=12:00:00
+#SBATCH --job-name="navier_stokes_2d"
+#SBATCH --output=navier_stokes_2d.out
+#SBATCH --error=navier_stokes_2d.err
+
+# Print job information
+echo "Job started on $(date)"
+echo "Running on node: $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Working directory: $(pwd)"
+
+# Load required modules
+echo "Loading modules..."
+module purge
+module load python 
+conda activate phi-env
+
+# Display loaded modules and Python environment info
+echo "Loaded modules:"
+module list
+
+echo "Python version:"
+python --version
+
+echo "PyTorch version:"
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda if torch.cuda.is_available() else \"N/A\"}')"
+
+# Check GPU availability
+echo "GPU information:"
+nvidia-smi
+
+# Set up environment variables
+export PYTHONPATH="${SLURM_SUBMIT_DIR}/src:${PYTHONPATH}"
+export CUDA_VISIBLE_DEVICES=0
+
+# Change to the job submission directory
+cd $SLURM_SUBMIT_DIR
+
+
+# Print system information
+echo "System information:"
+echo "Available memory: $(free -h | grep Mem | awk '{print $2}')"
+echo "Available disk space: $(df -h . | tail -1 | awk '{print $4}')"
 
 set -e  # Exit on error
 
@@ -23,6 +56,17 @@ SYNTHETIC_ONLY="navier_stokes_synthetic_only_2d"
 PHYSICAL_ONLY="navier_stokes_physical_only_2d"
 HYBRID_SYNTHETIC="navier_stokes_hybrid_synthetic_2d"
 HYBRID_PHYSICAL="navier_stokes_hybrid_physical_2d"
+
+# Clear previous results and checkpoints
+echo "[Setup] Clearing previous results and checkpoints..."
+rm -rf ${RESULTS_DIR}
+rm -f results/models/${SYNTHETIC_ONLY}.pth
+rm -f results/models/${PHYSICAL_ONLY}.npz
+rm -f results/models/${HYBRID_SYNTHETIC}.pth
+rm -f results/models/${HYBRID_PHYSICAL}.npz
+mkdir -p ${RESULTS_DIR}
+echo "  Cleanup complete."
+echo ""
 
 echo "=============================================="
 echo "  Navier-Stokes 2d Comparison Experiment"

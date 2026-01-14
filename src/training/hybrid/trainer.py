@@ -207,6 +207,9 @@ class HybridTrainer:
         self.dataset.access_policy = AccessPolicy.REAL_ONLY
         self.dataset.alpha = 1.0
 
+        # Disable training mode for evaluation (no noise injection)
+        self.synthetic_model.training = False
+
         total_loss = 0.0
         num_batches = 0
         rollout_steps = self.synthetic_trainer.rollout_steps
@@ -587,6 +590,9 @@ class HybridTrainer:
             List of trajectory tensors (each with time dimension)
         """
         trajectories = []
+
+        # Disable training mode for inference (no noise injection)
+        self.synthetic_model.training = False
 
         with torch.no_grad():
             for initial_state in initial_states:

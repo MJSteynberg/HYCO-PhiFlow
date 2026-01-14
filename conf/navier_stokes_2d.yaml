@@ -6,7 +6,7 @@ general:
 data:
   data_dir: 'data/navier_stokes_2d'
   dset_name: 'navier_stokes_2d'
-  num_simulations: 1
+  num_simulations: 6
   trajectory_length: 100
 
 model:
@@ -29,12 +29,17 @@ model:
     model_save_name: 'navier_stokes_synthetic_model_2d'
     architecture:
       levels: 4
-      filters: 64
+      filters: 128
       batch_norm: false
+    input_noise:
+      enabled: true
+      scale: 0.01  # Standard deviation of Gaussian noise
+      type: 'gaussian'  # Currently only 'gaussian' is supported
+
 
 trainer:
   batch_size: 64
-  rollout_steps: 4
+  rollout_steps: 8
   train_sim: [0]
   device: 'cuda:0'
   data_access: 'both'
@@ -43,34 +48,35 @@ trainer:
     epochs: ${trainer.physical.epochs_per_cycle}
     standalone_epochs: ${multiply:${trainer.physical.epochs_per_cycle},${trainer.hybrid.cycles}}
     rollout_steps: 1
-    downsample_factor: 0
+    downsample_factor: 1
     method: 'L-BFGS-B'
-    abs_tol: 1e-10
-    max_iterations: 1
+    abs_tol: 1e-12
+    max_iterations: 20
     regularization:
       type: 'l2_gradient'
-      weight: 1e-4
+      weight: 1e-2
+      difference: 'forward'
   synthetic:
-    epochs_per_cycle: 5
+    epochs_per_cycle: 200
     epochs: ${trainer.synthetic.epochs_per_cycle}
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
       start: 1
-      end: 4
+      end: 8
       strategy: 'exponential'
-      exponent: 2.0
+      exponent: 1.5
     learning_rate: 0.0001
     optimizer: 'adam'
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 1
-    warmup: 1
+    cycles: 80
+    warmup: 20
     augmentation:
       alpha: 1.0
-      num_trajectories: 3
+      num_trajectories: 5
       physical_trajectory_length: 100
-      synthetic_trajectory_length: 20
+      synthetic_trajectory_length: 10
       cache_dir: data/cache_phiml
 
     loss_scaling:
@@ -100,12 +106,12 @@ sparsity:
     custom_fractions: []
 
   spatial:
-    enabled: false
+    enabled: true
     mode: center
-    center_fraction: 0.6
+    center_fraction: 0.8
 
 evaluation:
-  test_sim: [0]
+  test_sim: [0,1,2,3,4,5]
 
   synthetic_checkpoint: "results/models/navier_stokes_synthetic_model_2d.pth"
   synthetic_checkpoint_hybrid: "results/models/navier_stokes_hybrid_synthetic_2d.pth"
