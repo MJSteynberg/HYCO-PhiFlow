@@ -28,20 +28,20 @@ from phiml import nn
 # ============================================================================
 CONFIG = {
     'domain_size': 100.0,
-    'resolution': 128,
+    'resolution': 64,       # Reduced for faster training
     'dt': 0.2,
-    'num_timesteps': 20,
-    'batch_size': 8,
-    
+    'num_timesteps': 15,    # Moderate trajectory length
+    'batch_size': 4,        # Smaller batch for faster iteration
+
     # Network config
-    'unet_levels': 3,
+    'unet_levels': 2,       # Smaller network
     'unet_filters': 16,
-    
+
     # Training config
-    'num_epochs': 100,
+    'num_epochs': 50,       # Reduced epochs (will do 10 cycles of 5)
     'learning_rate': 1e-3,
-    'pinn_weight': 0.1,  # Weight for physics loss
-    
+    'pinn_weight': 0.5,     # Higher physics weight for better physics compliance
+
     # Ground truth potential: sin(2πx/L)
     'potential_formula': lambda x, L: math.sin(2 * math.PI * x / L),
 }
@@ -414,128 +414,156 @@ def train_pinn_learned_params(trajectories: Tensor,
                              pinn_weight: float = 0.1) -> tuple:
     """
     Train PINN with LEARNED potential field (unknown physics).
-    
-    Jointly optimizes:
-    - Neural network parameters (via phiml optimizer)
-    - Potential field values (via simple gradient descent with finite differences)
-    
+
+    Uses ALTERNATING OPTIMIZATION:
+    1. Train network with current potential estimate (gradient descent)
+    2. Optimize potential given current network (L-BFGS inverse problem)
+
+    This approach ensures proper gradient flow through PhiML's differentiable
+    physics operations.
+
     Loss = L_data + λ * L_physics
     """
     print("\n" + "="*60)
     print("Training PINN with LEARNED potential field")
     print("="*60)
-    
+
     # Create model
     model = SimplePINNModel(
         in_channels=1,
         levels=CONFIG['unet_levels'],
         filters=CONFIG['unet_filters']
     )
-    
-    # Initialize potential field as torch tensor for autograd
+
     pot_size = physics.resolution.get_size('x')
-    learned_potential_torch = torch.zeros(pot_size, requires_grad=True, dtype=torch.float32)
-    
+
+    # Initialize learned potential (PhiML tensor)
+    learned_potential = math.zeros(spatial(x=pot_size))
+
     # Ground truth for comparison
     true_potential = physics.create_potential_field()
-    
+
     # PhiML-native optimizer for network
     net_optimizer = nn.adam(model.network, learning_rate=lr)
-    
-    # Torch optimizer for potential
-    pot_optimizer = torch.optim.Adam([learned_potential_torch], lr=lr)
-    
-    # Training loop
-    for epoch in range(num_epochs):
-        total_loss = 0.0
+
+    # Configuration for alternating optimization
+    network_epochs_per_cycle = 5  # Network updates per potential update
+    potential_update_interval = 5  # Update potential every N cycles
+    num_cycles = num_epochs // network_epochs_per_cycle
+
+    print(f"Alternating optimization: {num_cycles} cycles")
+    print(f"  - {network_epochs_per_cycle} network epochs per cycle")
+    print(f"  - Potential update every {potential_update_interval} cycles")
+
+    for cycle in range(num_cycles):
+        # ====================================================================
+        # PHASE 1: Train network with current potential estimate
+        # ====================================================================
+        cycle_loss = 0.0
         num_batches = 0
-        
-        # Iterate over trajectories
-        for traj_idx in range(trajectories.shape.get_size('batch')):
-            trajectory = trajectories.batch[traj_idx]
-            num_steps = trajectory.shape.get_size('time') - 1
-            
-            for t in range(num_steps):
-                current = trajectory.time[t]
-                target = trajectory.time[t + 1]
-                
-                # Convert potential to phiml tensor for this step
-                learned_potential = math.wrap(learned_potential_torch.detach().numpy(), spatial(x=pot_size))
-                
-                # Capture variables for closure
-                current_state = current
-                target_state = target
-                pot = learned_potential
-                res_computer = residual_computer
-                pw = pinn_weight
-                
-                # Network optimization step
-                def net_loss_fn():
-                    # Add field dimension for network
-                    state_with_field = math.expand(current_state, channel(field='vel_x'))
-                    pred_with_field = math.native_call(model.network, state_with_field)
-                    # Extract prediction (remove field dimension)
-                    if 'field' in pred_with_field.shape:
-                        pred = pred_with_field.field['vel_x']
-                    else:
-                        pred = pred_with_field
-                    
-                    data_loss = math.mean((pred - target_state) ** 2)
-                    residual = res_computer.compute_residual(
-                        current_state, pred, pot
-                    )
-                    phys_loss = math.mean(residual ** 2)
-                    return data_loss + pw * phys_loss
-                
-                loss = nn.update_weights(model.network, net_optimizer, net_loss_fn)
-                
-                # Potential optimization using torch (every few steps to save compute)
-                if t % 5 == 0:
-                    pot_optimizer.zero_grad()
-                    
-                    # Compute prediction with current network (detached)
-                    with torch.no_grad():
+
+        for net_epoch in range(network_epochs_per_cycle):
+            for traj_idx in range(trajectories.shape.get_size('batch')):
+                trajectory = trajectories.batch[traj_idx]
+                num_steps = trajectory.shape.get_size('time') - 1
+
+                for t in range(num_steps):
+                    current = trajectory.time[t]
+                    target = trajectory.time[t + 1]
+
+                    # Capture variables for closure
+                    current_state = current
+                    target_state = target
+                    pot = learned_potential
+                    res_computer = residual_computer
+                    pw = pinn_weight
+
+                    def net_loss_fn():
+                        # Forward pass
                         state_with_field = math.expand(current_state, channel(field='vel_x'))
                         pred_with_field = math.native_call(model.network, state_with_field)
                         if 'field' in pred_with_field.shape:
                             pred = pred_with_field.field['vel_x']
                         else:
                             pred = pred_with_field
-                    
-                    # Convert to native torch tensors for gradient computation
-                    current_np = current_state.numpy()
-                    pred_np = pred.numpy()
-                    target_np = target_state.numpy()
-                    
-                    # Simple physics loss using torch (approximation)
-                    # Compute gradient of potential for forcing term
-                    pot_grad = torch.gradient(learned_potential_torch, dim=0)[0]
-                    
-                    # Compute residual: du/dt - F(u) where F(u) = -u·∇u - ∇φ
-                    # For simplicity, just minimize difference from expected change
-                    time_deriv = torch.tensor((pred_np - current_np) / physics.dt, dtype=torch.float32)
-                    
-                    # Physics residual contributes to potential gradient
-                    pot_loss = pinn_weight * torch.mean(pot_grad ** 2)  # Smoothness regularization
-                    pot_loss.backward()
-                    pot_optimizer.step()
-                
-                total_loss += float(loss)
-                num_batches += 1
-        
-        if (epoch + 1) % 10 == 0:
-            avg_loss = total_loss / num_batches
-            
-            # Compute potential error
-            learned_potential = math.wrap(learned_potential_torch.detach().numpy(), spatial(x=pot_size))
+
+                        # Data loss
+                        data_loss = math.mean((pred - target_state) ** 2)
+
+                        # Physics loss with current potential estimate
+                        residual = res_computer.compute_residual(current_state, pred, pot)
+                        phys_loss = math.mean(residual ** 2)
+
+                        return data_loss + pw * phys_loss
+
+                    loss = nn.update_weights(model.network, net_optimizer, net_loss_fn)
+                    cycle_loss += float(loss)
+                    num_batches += 1
+
+        avg_cycle_loss = cycle_loss / num_batches if num_batches > 0 else 0.0
+
+        # ====================================================================
+        # PHASE 2: Optimize potential using L-BFGS (inverse problem)
+        # ====================================================================
+        if (cycle + 1) % potential_update_interval == 0:
+            def potential_loss(potential: Tensor) -> Tensor:
+                """Compute loss for potential optimization."""
+                total_loss = math.tensor(0.0)
+
+                # Use subset of data for efficiency
+                for traj_idx in range(min(trajectories.shape.get_size('batch'), 2)):
+                    trajectory = trajectories.batch[traj_idx]
+                    num_steps = min(trajectory.shape.get_size('time') - 1, 5)
+
+                    for t in range(num_steps):
+                        current = trajectory.time[t]
+                        target = trajectory.time[t + 1]
+
+                        # Simulate one step with candidate potential
+                        pred = physics.step(current, potential)
+
+                        # Data loss (prediction should match target)
+                        step_loss = math.mean((pred - target) ** 2)
+                        total_loss += step_loss
+
+                # Smoothness regularization on potential
+                pot_grid = CenteredGrid(
+                    potential, extrapolation.PERIODIC,
+                    bounds=physics.domain, x=pot_size
+                )
+                grad_pot = pot_grid.gradient(boundary=extrapolation.PERIODIC)
+                grad_reg = 0.01 * math.mean(grad_pot.values ** 2)
+
+                return total_loss + grad_reg
+
+            # L-BFGS optimization for potential
+            solver = math.Solve(
+                method='L-BFGS-B',
+                abs_tol=1e-6,
+                x0=learned_potential,
+                max_iterations=20,
+                suppress=(math.NotConverged,),
+            )
+
+            try:
+                learned_potential = math.minimize(potential_loss, solver)
+            except Exception as e:
+                # Keep current potential if optimization fails
+                pass
+
+        # ====================================================================
+        # Logging
+        # ====================================================================
+        if (cycle + 1) % 2 == 0 or cycle == 0:
             pot_error = float(math.mean((learned_potential - true_potential) ** 2))
-            
-            print(f"Epoch {epoch+1:3d}/{num_epochs}: "
-                  f"Loss={avg_loss:.6f}, Pot_MSE={pot_error:.6f}")
-    
-    # Final conversion of potential
-    learned_potential = math.wrap(learned_potential_torch.detach().numpy(), spatial(x=pot_size))
-    
+            pot_corr = float(math.sum(learned_potential * true_potential) /
+                           (math.sqrt(math.sum(learned_potential**2) + 1e-8) *
+                            math.sqrt(math.sum(true_potential**2) + 1e-8)))
+
+            epoch_num = (cycle + 1) * network_epochs_per_cycle
+            print(f"Cycle {cycle+1:2d} (Epoch {epoch_num:3d}): "
+                  f"Loss={avg_cycle_loss:.6f}, Pot_MSE={pot_error:.4f}, Pot_Corr={pot_corr:.3f}")
+
     return model, learned_potential
 
 
