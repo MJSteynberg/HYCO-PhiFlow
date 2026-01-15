@@ -38,7 +38,7 @@ model:
 
 
 trainer:
-  batch_size: 128
+  batch_size: 16
   rollout_steps: 8
   train_sim: [0]
   device: 'cuda:0'
@@ -70,8 +70,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 80
-    warmup: 20
+    cycles: 5
+    warmup: 1
     augmentation:
       alpha: 1.0
       num_trajectories: 5

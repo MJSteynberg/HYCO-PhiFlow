@@ -331,9 +331,12 @@ class AdvectionModel(PhysicalModel):
             trajectory = trajectory[0]
 
         # Upsample each timestep if requested
+        # Note: iterate() returns [initial_state, step1, step2, ...]
+        # The initial state is at FULL resolution, while subsequent steps are at REDUCED resolution
+        # So we only upsample states after the first one (which is already at full resolution)
         if upsample_output and self.downsample_factor > 0:
-            upsampled_steps = []
-            for t in range(trajectory.shape.get_size('time')):
+            upsampled_steps = [trajectory.time[0]]  # Keep initial state as-is (already full res)
+            for t in range(1, trajectory.shape.get_size('time')):
                 step = trajectory.time[t]
                 upsampled_step = self._upsample_state(step, self.field_names)
                 upsampled_steps.append(upsampled_step)

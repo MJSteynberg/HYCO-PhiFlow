@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a100:1 -p a100
+#SBATCH --gres=gpu:1
 #SBATCH --time=12:00:00
 #SBATCH --job-name="inviscid_burgers_2d"
 #SBATCH --output=inviscid_burgers_2d.out
