@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:a100:1 -p a100
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --job-name="navier_stokes_2d"
 #SBATCH --output=navier_stokes_2d.out
 #SBATCH --error=navier_stokes_2d.err
@@ -49,12 +49,12 @@ set -e  # Exit on error
 
 # Configuration
 CONFIG_NAME="navier_stokes_2d"
-RESULTS_DIR="results/experiments/navier_stokes_2d_comparison"
+RESULTS_DIR="results/experiments/navier_stokes_2d_comparison_fullres"
 
 # Model checkpoint names
-SYNTHETIC_ONLY="navier_stokes_synthetic_only_2d"
-PHYSICAL_ONLY="navier_stokes_physical_only_2d"
-HYBRID_SYNTHETIC="navier_stokes_hybrid_synthetic_2d"
+SYNTHETIC_ONLY="navier_stokes_synthetic_only_2d_fullres"
+PHYSICAL_ONLY="navier_stokes_physical_only_2d_fullres"
+HYBRID_SYNTHETIC="navier_stokes_hybrid_synthetic_2d_fullres"
 HYBRID_PHYSICAL="navier_stokes_hybrid_physical_2d"
 
 # Clear previous results and checkpoints

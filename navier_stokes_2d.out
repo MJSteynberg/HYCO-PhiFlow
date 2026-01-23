@@ -1,6 +1,6 @@
-### Starting TaskPrologue of job 1488730 on tg094 at Wed Jan 14 05:24:22 PM CET 2026
-Running on cores 0-7,16-39 with governor ondemand
-Wed Jan 14 17:24:22 2026       
+### Starting TaskPrologue of job 1514385 on tg097 at Tue Jan 20 03:04:58 PM CET 2026
+Running on cores 0-7,40-63 with governor ondemand
+Tue Jan 20 15:04:58 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -9,7 +9,7 @@ Wed Jan 14 17:24:22 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 |   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
-| N/A   43C    P0             58W /  400W |       0MiB /  40960MiB |      0%      Default |
+| N/A   39C    P0             54W /  400W |       0MiB /  40960MiB |      0%      Default |
 |                                         |                        |             Disabled |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -22,9 +22,9 @@ Wed Jan 14 17:24:22 2026
 +-----------------------------------------------------------------------------------------+
 ### Finished TaskPrologue
 
-Job started on Wed Jan 14 05:24:22 PM CET 2026
-Running on node: tg094
-Job ID: 1488730
+Job started on Tue Jan 20 03:04:58 PM CET 2026
+Running on node: tg097
+Job ID: 1514385
 Working directory: /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 Loading modules...
 Loaded modules:
@@ -40,7 +40,7 @@ PyTorch: 2.9.1+cu130
 CUDA available: True
 CUDA version: 13.0
 GPU information:
-Wed Jan 14 17:24:42 2026       
+Tue Jan 20 15:05:17 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -49,7 +49,7 @@ Wed Jan 14 17:24:42 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 |   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
-| N/A   43C    P0             61W /  400W |       0MiB /  40960MiB |      0%      Default |
+| N/A   39C    P0             54W /  400W |       0MiB /  40960MiB |      0%      Default |
 |                                         |                        |             Disabled |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -62,7 +62,7 @@ Wed Jan 14 17:24:42 2026
 +-----------------------------------------------------------------------------------------+
 System information:
 Available memory: 503Gi
-Available disk space: 24T
+Available disk space: 22T
 [Setup] Clearing previous results and checkpoints...
   Cleanup complete.
 
@@ -83,16 +83,16 @@ Note: Synthetic-only training uses 'standalone_epochs' from config
 [hyco_phiflow] [32mINFO[0m: Running training
 [hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
 [hyco_phiflow] [32mINFO[0m: Creating trainer with 3 channels...
-[2026-01-14 17:24:57,628][UNet][INFO] - Initializing UNet: 3 dynamic, 0 static channels
-[2026-01-14 17:24:57,628][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
-[2026-01-14 17:24:57,876][UNet][INFO] - Created U-Net: levels=4, filters=128, spatial_dims=2
+[2026-01-20 15:05:32,587][UNet][INFO] - Initializing UNet: 3 dynamic, 0 static channels
+[2026-01-20 15:05:32,587][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-20 15:05:32,824][UNet][INFO] - Created U-Net: levels=4, filters=128, spatial_dims=2
 [synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 8 (exponential)
 [synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
-[hyco_phiflow] [32mINFO[0m: Starting training for 20000 epochs...
-[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 66.0% visible
+[hyco_phiflow] [32mINFO[0m: Starting training for 40000 epochs...
+[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 25.0% visible
 [hyco_phiflow] [32mINFO[0m: === Completed task: train ===
 [hyco_phiflow] [32mINFO[0m: All tasks completed successfully
-  Synthetic-only model saved to results/models/navier_stokes_synthetic_only_2d.pth
+  Synthetic-only model saved to results/models/navier_stokes_synthetic_only_2d_fullres.pth
 
 [Step 2/4] Training PHYSICAL model on real data...
 [hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
@@ -101,128 +101,106 @@ Note: Synthetic-only training uses 'standalone_epochs' from config
 [hyco_phiflow] [32mINFO[0m: Running training
 [hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
 [hyco_phiflow] [32mINFO[0m: Creating physical trainer...
-[hyco_phiflow] [32mINFO[0m: Starting training for 80 epochs with batch_size=64...
-[physical.trainer] [32mINFO[0m: Spatial mask initialized: 66.0% visible
+[hyco_phiflow] [32mINFO[0m: Starting training for 180 epochs with batch_size=32...
+[physical.trainer] [32mINFO[0m: Spatial mask initialized: 25.0% visible
 [physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
 [physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
 [physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
-[hyco_phiflow] [32mINFO[0m: === Completed task: train ===
-[hyco_phiflow] [32mINFO[0m: All tasks completed successfully
-  Physical-only model saved to results/models/navier_stokes_physical_only_2d.npz
-
-[Step 3/4] Running HYBRID training...
-[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
-[hyco_phiflow] [32mINFO[0m: Experiment: navier_stokes_2d_hybrid
-[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
-[hyco_phiflow] [32mINFO[0m: Running training
-[hyco_phiflow] [32mINFO[0m: Starting hybrid training...
-[2026-01-15 02:06:31,109][UNet][INFO] - Initializing UNet: 3 dynamic, 0 static channels
-[2026-01-15 02:06:31,109][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
-[2026-01-15 02:06:31,201][UNet][INFO] - Created U-Net: levels=4, filters=128, spatial_dims=2
-[hybrid.trainer] [32mINFO[0m: Sparsity configuration:
-[hybrid.trainer] [32mINFO[0m:   Spatial: center mode
-[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 8 (exponential)
-[synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
-[hybrid.trainer] [32mINFO[0m: HybridTrainer initialized: cycles=80, warmup=20, alpha=1.0
-[hybrid.trainer] [32mINFO[0m: ============================================================
-[hybrid.trainer] [32mINFO[0m: Starting Hybrid Training
-[hybrid.trainer] [32mINFO[0m: ============================================================
-[synthetic.trainer] [32mINFO[0m: Reconfigured for hybrid training: cosine with total_epochs=20000
-[hybrid.trainer] [32mINFO[0m: 
-============================================================
-[hybrid.trainer] [32mINFO[0m: WARMUP PHASE: Training on real data only (20 cycles)
-[hybrid.trainer] [32mINFO[0m: ============================================================
-
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 1/20 ---
-[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 66.0% visible
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 1 completed in 108.01s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 2/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 2 completed in 104.30s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 3/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 3 completed in 103.83s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 4/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 4 completed in 103.56s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 5/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 5 completed in 103.41s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 6/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 6 completed in 103.40s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 7/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 7 completed in 103.77s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 8/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 8 completed in 103.74s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 9/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 9 completed in 103.01s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 10/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 10 completed in 103.22s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 11/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 11 completed in 103.14s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 12/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 12 completed in 103.39s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 13/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 13 completed in 103.30s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 14/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 14 completed in 103.52s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 15/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 15 completed in 103.34s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 16/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 16 completed in 103.47s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 17/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 17 completed in 103.42s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 18/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 18 completed in 103.36s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 19/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 19 completed in 103.35s
-[hybrid.trainer] [32mINFO[0m: 
---- Warmup Cycle 20/20 ---
-[hybrid.trainer] [32mINFO[0m: Warmup cycle 20 completed in 103.01s
-[hybrid.trainer] [32mINFO[0m: 
-============================================================
-[hybrid.trainer] [32mINFO[0m: HYBRID PHASE: Training with data augmentation (80 cycles)
-[hybrid.trainer] [32mINFO[0m: ============================================================
-
-[synthetic.trainer] [32mINFO[0m: Reset best checkpoint tracking
-[hybrid.trainer] [32mINFO[0m: 
---- Hybrid Cycle 1/80 ---
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
 === JOB_STATISTICS ===
-=== current date     : Thu Jan 15 02:41:32 AM CET 2026
-= Job-ID             : 1488730 on tinygpu
+=== current date     : Wed Jan 21 03:05:23 PM CET 2026
+= Job-ID             : 1514385 on tinygpu
 = Job-Name           : navier_stokes_2d
 = Job-Command        : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/navier_stokes_experiment_2d.sh
 = Initial workdir    : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 = Queue/Partition    : a100
 = Slurm account      : dsaa with QOS=normal
-= Requested resources:  for 12:00:00
-= Elapsed runtime    : 09:17:14
-= Total RAM usage    : 1.8 GiB of requested  GiB (%)   
-= Node list          : tg094
-= Subm/Elig/Start/End: 2026-01-14T13:17:36 / 2026-01-14T13:17:36 / 2026-01-14T17:24:18 / 2026-01-15T02:41:32
+= Requested resources:  for 1-00:00:00
+= Elapsed runtime    : 1-00:00:23
+= Total RAM usage    : 1.7 GiB of requested  GiB (%)   
+= Node list          : tg097
+= Subm/Elig/Start/End: 2026-01-20T14:11:06 / 2026-01-20T14:11:06 / 2026-01-20T15:04:57 / 2026-01-21T15:05:20
 ======================
 === Quota infos ======
     Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
-    /home/hpc              68.2G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
+    /home/hpc              68.9G   104.9G   209.7G        N/A     134K     500K   1,000K        N/A    
     /home/woody             7.3G  1000.0G  1500.0G        N/A      51K   5,000K   7,500K        N/A    
+    /home/vault             0.0K  1048.6G  2097.2G        N/A       1      200K     400K        N/A    
 ======================
 === GPU utilization ==
 gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
-NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 2544549, 70 %, 42 %, 39670 MiB, 17429207 ms
-NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 2554455, 32 %, 0 %, 504 MiB, 13829758 ms
-NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 2609008, 31 %, 18 %, 12222 MiB, 2105831 ms
+NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 3214384, 75 %, 44 %, 20214 MiB, 32298787 ms
+NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 3236485, 24 %, 0 %, 556 MiB, 54071855 ms

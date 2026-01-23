@@ -29,7 +29,7 @@ model:
     model_save_name: 'inviscid_burgers_synthetic_model_2d'
     architecture:
       levels: 4
-      filters: 64
+      filters: 128
       batch_norm: false
     input_noise:
       enabled: true
@@ -38,7 +38,7 @@ model:
 
 
 trainer:
-  batch_size: 16
+  batch_size: 32
   rollout_steps: 8
   train_sim: [0]
   device: 'cuda:0'
@@ -62,7 +62,7 @@ trainer:
     standalone_epochs: ${total_synthetic_epochs:${trainer.synthetic.epochs_per_cycle},${trainer.hybrid.cycles},${trainer.hybrid.warmup}}
     rollout_scheduler:
       start: 1
-      end: 8
+      end: 5
       strategy: 'exponential'
       exponent: 1.5
     learning_rate: 0.0001
@@ -70,8 +70,8 @@ trainer:
     scheduler: 'cosine'
     weight_decay: 0.0
   hybrid:
-    cycles: 5
-    warmup: 1
+    cycles: 180
+    warmup: 20
     augmentation:
       alpha: 1.0
       num_trajectories: 5
@@ -109,7 +109,7 @@ sparsity:
   spatial:
     enabled: true
     mode: center
-    center_fraction: 0.8
+    center_fraction: 0.5
 # For evaluation
 evaluation:
   # Which simulations to evaluate

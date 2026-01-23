@@ -17,7 +17,7 @@ model:
     domain:
       dimensions:
         x: {size: 100, resolution: 256}
-    dt: 0.2
+    dt: 0.1
     pde_params:
       name: 'potential_field'
       type: 'field'
@@ -74,7 +74,7 @@ trainer:
       alpha: 1.0
       num_trajectories: 5
        # NEW: Variable trajectory length options
-      physical_trajectory_length: 50    # Full physical trajectory for synthetic training
+      physical_trajectory_length: 100    # Full physical trajectory for synthetic training
       synthetic_trajectory_length: 5  # Short synthetic trajectory for physical training
       cache_dir: data/cache_phiml
 
@@ -108,8 +108,8 @@ sparsity:
 
   spatial:
     enabled: true
-    mode: center
-    center_fraction: 0.5
+    mode: range
+    x_range: [0, 0.5]
 # For evaluation
 evaluation:
   # Which simulations to evaluate
@@ -128,7 +128,7 @@ evaluation:
   physical_checkpoint_hybrid: "results/models/inviscid_burgers_hybrid_physical_1d.npz"
 
   # How many timesteps to rollout
-  num_frames: 50
+  num_frames: 100
 
   # Output directory
   output_dir: "results/evaluation/inviscid_burgers_1d"

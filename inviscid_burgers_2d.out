@@ -1,6 +1,6 @@
-### Starting TaskPrologue of job 1488896 on tg097 at Wed Jan 14 09:46:01 PM CET 2026
-Running on cores 0-31 with governor ondemand
-Wed Jan 14 21:46:01 2026       
+### Starting TaskPrologue of job 1515183 on tg090 at Wed Jan 21 04:19:33 PM CET 2026
+Running on cores 96-127 with governor ondemand
+Wed Jan 21 16:19:33 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -8,8 +8,8 @@ Wed Jan 14 21:46:01 2026
 | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
-|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
-| N/A   42C    P0             55W /  400W |       0MiB /  40960MiB |      0%      Default |
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   42C    P0             56W /  400W |       0MiB /  40960MiB |      0%      Default |
 |                                         |                        |             Disabled |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -22,9 +22,9 @@ Wed Jan 14 21:46:01 2026
 +-----------------------------------------------------------------------------------------+
 ### Finished TaskPrologue
 
-Job started on Wed Jan 14 09:46:02 PM CET 2026
-Running on node: tg097
-Job ID: 1488896
+Job started on Wed Jan 21 04:19:34 PM CET 2026
+Running on node: tg090
+Job ID: 1515183
 Working directory: /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 Loading modules...
 Loaded modules:
@@ -40,7 +40,7 @@ PyTorch: 2.9.1+cu130
 CUDA available: True
 CUDA version: 13.0
 GPU information:
-Wed Jan 14 21:46:22 2026       
+Wed Jan 21 16:19:52 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -48,8 +48,8 @@ Wed Jan 14 21:46:22 2026
 | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
-|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:01:00.0 Off |                    0 |
-| N/A   42C    P0             57W /  400W |       0MiB /  40960MiB |      0%      Default |
+|   0  NVIDIA A100-SXM4-40GB          On  |   00000000:C1:00.0 Off |                    0 |
+| N/A   42C    P0             56W /  400W |       0MiB /  40960MiB |      0%      Default |
 |                                         |                        |             Disabled |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -62,50 +62,602 @@ Wed Jan 14 21:46:22 2026
 +-----------------------------------------------------------------------------------------+
 System information:
 Available memory: 503Gi
-Available disk space: 24T
-==============================================
-  Inviscid Burgers 2d Comparison Experiment
-==============================================
-
-Note: Synthetic-only training uses 'standalone_epochs' from config
-      which equals: epochs * (cycles + warmup) for fair comparison
-
-[Step 0/4] Checking/generating data...
-  Data already exists, skipping generation.
-
-[Step 1/4] Training SYNTHETIC model on real data...
+Available disk space: 22T
+[Step 3/4] Running HYBRID training...
 [hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
-[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_2d_synthetic_only
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_2d_hybrid
 [hyco_phiflow] [32mINFO[0m: === Starting task: train ===
 [hyco_phiflow] [32mINFO[0m: Running training
-[hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
-[hyco_phiflow] [32mINFO[0m: Creating trainer with 2 channels...
-[2026-01-14 21:46:37,965][UNet][INFO] - Initializing UNet: 2 dynamic, 0 static channels
-[2026-01-14 21:46:37,965][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
-[2026-01-14 21:46:38,204][UNet][INFO] - Created U-Net: levels=4, filters=64, spatial_dims=2
-[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 8 (exponential)
+[hyco_phiflow] [32mINFO[0m: Starting hybrid training...
+[2026-01-21 16:20:06,774][UNet][INFO] - Initializing UNet: 2 dynamic, 0 static channels
+[2026-01-21 16:20:06,774][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-21 16:20:06,796][UNet][INFO] - Created U-Net: levels=4, filters=128, spatial_dims=2
+[hybrid.trainer] [32mINFO[0m: Sparsity configuration:
+[hybrid.trainer] [32mINFO[0m:   Spatial: center mode
+[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 5 (exponential)
 [synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
-[hyco_phiflow] [32mINFO[0m: Starting training for 20000 epochs...
-[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 64.8% visible
+[hybrid.trainer] [32mINFO[0m: HybridTrainer initialized: cycles=180, warmup=20, alpha=1.0
+[hybrid.trainer] [32mINFO[0m: ============================================================
+[hybrid.trainer] [32mINFO[0m: Starting Hybrid Training
+[hybrid.trainer] [32mINFO[0m: ============================================================
+[synthetic.trainer] [32mINFO[0m: Reconfigured for hybrid training: cosine with total_epochs=40000
+[hybrid.trainer] [32mINFO[0m: 
+============================================================
+[hybrid.trainer] [32mINFO[0m: WARMUP PHASE: Training on real data only (20 cycles)
+[hybrid.trainer] [32mINFO[0m: ============================================================
+
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 1/20 ---
+[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 25.0% visible
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 1 completed in 86.46s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 2/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 2 completed in 78.65s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 3/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 3 completed in 72.87s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 4/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 4 completed in 72.56s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 5/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 5 completed in 72.17s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 6/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 6 completed in 71.53s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 7/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 7 completed in 73.17s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 8/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 8 completed in 73.00s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 9/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 9 completed in 72.65s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 10/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 10 completed in 72.06s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 11/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 11 completed in 71.82s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 12/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 12 completed in 72.83s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 13/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 13 completed in 72.36s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 14/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 14 completed in 71.92s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 15/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 15 completed in 71.86s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 16/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 16 completed in 71.74s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 17/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 17 completed in 71.40s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 18/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 18 completed in 71.44s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 19/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 19 completed in 71.27s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 20/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 20 completed in 71.94s
+[hybrid.trainer] [32mINFO[0m: 
+============================================================
+[hybrid.trainer] [32mINFO[0m: HYBRID PHASE: Training with data augmentation (180 cycles)
+[hybrid.trainer] [32mINFO[0m: ============================================================
+
+[synthetic.trainer] [32mINFO[0m: Reset best checkpoint tracking
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 1/180 ---
+[physical.trainer] [32mINFO[0m: Spatial mask initialized: 25.0% visible
+[hybrid.trainer] [32mINFO[0m: Cycle 1 completed in 331.19s - Synthetic loss: 0.000240, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 2/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 2 completed in 328.15s - Synthetic loss: 0.000321, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 3/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 3 completed in 331.32s - Synthetic loss: 0.000101, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 4/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 4 completed in 328.96s - Synthetic loss: 0.000082, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 5/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 5 completed in 326.82s - Synthetic loss: 0.000134, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 6/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 6 completed in 324.70s - Synthetic loss: 0.001945, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 7/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 7 completed in 329.27s - Synthetic loss: 0.000195, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 8/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 8 completed in 328.74s - Synthetic loss: 0.000284, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 9/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 9 completed in 330.82s - Synthetic loss: 0.000108, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 10/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 10 completed in 333.95s - Synthetic loss: 0.000309, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 11/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 11 completed in 326.96s - Synthetic loss: 0.000177, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 12/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 12 completed in 333.02s - Synthetic loss: 0.000106, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 13/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 13 completed in 335.11s - Synthetic loss: 0.000137, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 14/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 14 completed in 332.27s - Synthetic loss: 0.000119, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 15/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 15 completed in 330.25s - Synthetic loss: 0.000150, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 16/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 16 completed in 330.47s - Synthetic loss: 0.000100, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 17/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 17 completed in 331.76s - Synthetic loss: 0.000119, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 18/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 18 completed in 326.53s - Synthetic loss: 0.000091, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 19/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 19 completed in 333.25s - Synthetic loss: 0.000076, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 20/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 20 completed in 329.30s - Synthetic loss: 0.000065, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 21/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 21 completed in 327.01s - Synthetic loss: 0.000524, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 22/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 22 completed in 327.64s - Synthetic loss: 0.000268, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 23/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 23 completed in 326.70s - Synthetic loss: 0.000333, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 24/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 24 completed in 328.47s - Synthetic loss: 0.000119, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 25/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 25 completed in 337.00s - Synthetic loss: 0.000051, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 26/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 26 completed in 330.84s - Synthetic loss: 0.000058, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 27/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 27 completed in 332.48s - Synthetic loss: 0.000054, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 28/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 28 completed in 327.28s - Synthetic loss: 0.000086, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 29/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 29 completed in 330.92s - Synthetic loss: 0.000089, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 30/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 30 completed in 332.11s - Synthetic loss: 0.000058, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 31/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 31 completed in 326.83s - Synthetic loss: 0.000465, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 32/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 32 completed in 332.62s - Synthetic loss: 0.000072, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 33/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 33 completed in 329.24s - Synthetic loss: 0.000145, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 34/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 34 completed in 328.12s - Synthetic loss: 0.000044, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 35/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 35 completed in 336.81s - Synthetic loss: 0.000051, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 36/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 36 completed in 331.07s - Synthetic loss: 0.000054, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 37/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 37 completed in 330.96s - Synthetic loss: 0.000040, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 38/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 38 completed in 335.18s - Synthetic loss: 0.000038, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 39/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 39 completed in 338.83s - Synthetic loss: 0.000047, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 40/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 40 completed in 330.30s - Synthetic loss: 0.000046, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 41/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 41 completed in 331.68s - Synthetic loss: 0.000042, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 42/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 42 completed in 332.21s - Synthetic loss: 0.000033, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 43/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 43 completed in 335.90s - Synthetic loss: 0.000034, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 44/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 44 completed in 327.40s - Synthetic loss: 0.000029, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 45/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 45 completed in 339.92s - Synthetic loss: 0.000026, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 46/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 46 completed in 333.60s - Synthetic loss: 0.000048, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 47/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 47 completed in 325.13s - Synthetic loss: 0.002561, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 48/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 48 completed in 331.18s - Synthetic loss: 0.000036, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 49/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 49 completed in 335.79s - Synthetic loss: 0.000045, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 50/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 50 completed in 331.44s - Synthetic loss: 0.000032, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 51/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 51 completed in 328.21s - Synthetic loss: 0.000114, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 52/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 52 completed in 327.60s - Synthetic loss: 0.000288, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 53/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 53 completed in 325.85s - Synthetic loss: 0.000241, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 54/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 54 completed in 326.59s - Synthetic loss: 0.000293, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 55/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 55 completed in 329.68s - Synthetic loss: 0.000211, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 56/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 56 completed in 327.38s - Synthetic loss: 0.000169, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 57/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 57 completed in 326.59s - Synthetic loss: 0.000299, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 58/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 58 completed in 332.83s - Synthetic loss: 0.000134, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 59/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 59 completed in 333.42s - Synthetic loss: 0.000115, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 60/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 60 completed in 326.52s - Synthetic loss: 0.000126, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 61/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 61 completed in 326.77s - Synthetic loss: 0.000149, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 62/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 62 completed in 327.90s - Synthetic loss: 0.000112, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 63/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 63 completed in 326.16s - Synthetic loss: 0.000634, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 64/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 64 completed in 331.69s - Synthetic loss: 0.000126, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 65/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 65 completed in 327.08s - Synthetic loss: 0.000111, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 66/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 66 completed in 328.31s - Synthetic loss: 0.000141, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 67/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 67 completed in 327.93s - Synthetic loss: 0.000080, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 68/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 68 completed in 330.10s - Synthetic loss: 0.000055, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 69/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 69 completed in 455.67s - Synthetic loss: 0.000079, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 70/180 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (1 -> 2), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 70 completed in 528.65s - Synthetic loss: 0.000180, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 71/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 71 completed in 529.39s - Synthetic loss: 0.000113, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 72/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 72 completed in 533.89s - Synthetic loss: 0.000046, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 73/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 73 completed in 531.49s - Synthetic loss: 0.000034, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 74/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 74 completed in 526.88s - Synthetic loss: 0.000565, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 75/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 75 completed in 533.73s - Synthetic loss: 0.000153, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 76/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 76 completed in 533.14s - Synthetic loss: 0.000199, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 77/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 77 completed in 537.44s - Synthetic loss: 0.000243, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 78/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 78 completed in 528.70s - Synthetic loss: 0.000374, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 79/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 79 completed in 540.76s - Synthetic loss: 0.000104, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 80/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 80 completed in 530.94s - Synthetic loss: 0.000086, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 81/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 81 completed in 531.70s - Synthetic loss: 0.000034, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 82/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 82 completed in 536.70s - Synthetic loss: 0.000032, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 83/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 83 completed in 539.18s - Synthetic loss: 0.000040, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 84/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 84 completed in 535.06s - Synthetic loss: 0.000029, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 85/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 85 completed in 539.80s - Synthetic loss: 0.000052, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 86/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 86 completed in 536.70s - Synthetic loss: 0.000183, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 87/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 87 completed in 527.85s - Synthetic loss: 0.000236, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 88/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 88 completed in 537.52s - Synthetic loss: 0.000023, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 89/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 89 completed in 529.42s - Synthetic loss: 0.000150, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 90/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 90 completed in 530.08s - Synthetic loss: 0.000090, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 91/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 91 completed in 533.31s - Synthetic loss: 0.000063, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 92/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 92 completed in 540.28s - Synthetic loss: 0.000078, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 93/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 93 completed in 534.53s - Synthetic loss: 0.000048, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 94/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 94 completed in 532.03s - Synthetic loss: 0.000064, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 95/180 ---
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[hybrid.trainer] [32mINFO[0m: Cycle 95 completed in 540.35s - Synthetic loss: 0.000021, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 96/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 96 completed in 536.60s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 97/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 97 completed in 530.64s - Synthetic loss: 0.000019, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 98/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 98 completed in 541.67s - Synthetic loss: 0.000040, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 99/180 ---
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[hybrid.trainer] [32mINFO[0m: Cycle 99 completed in 537.73s - Synthetic loss: 0.000022, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 100/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 100 completed in 537.65s - Synthetic loss: 0.000017, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 101/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 101 completed in 536.50s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 102/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 102 completed in 538.79s - Synthetic loss: 0.000023, Physical loss: 0.000106
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 103/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 103 completed in 534.75s - Synthetic loss: 0.000092, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 104/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 104 completed in 532.87s - Synthetic loss: 0.000062, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 105/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 105 completed in 528.43s - Synthetic loss: 0.000050, Physical loss: 0.000104
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 106/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 106 completed in 528.36s - Synthetic loss: 0.000066, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 107/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 107 completed in 542.59s - Synthetic loss: 0.000053, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 108/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 108 completed in 535.30s - Synthetic loss: 0.000050, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 109/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 109 completed in 616.40s - Synthetic loss: 0.000145, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 110/180 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (2 -> 3), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 110 completed in 739.42s - Synthetic loss: 0.000085, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 111/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 111 completed in 735.92s - Synthetic loss: 0.000055, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 112/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 112 completed in 737.53s - Synthetic loss: 0.000028, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 113/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 113 completed in 731.11s - Synthetic loss: 0.000157, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 114/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 114 completed in 735.69s - Synthetic loss: 0.000027, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 115/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 115 completed in 729.53s - Synthetic loss: 0.000025, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 116/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 116 completed in 740.59s - Synthetic loss: 0.000025, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 117/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 117 completed in 739.33s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 118/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 118 completed in 734.97s - Synthetic loss: 0.000022, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 119/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 119 completed in 732.51s - Synthetic loss: 0.000105, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 120/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 120 completed in 732.86s - Synthetic loss: 0.000057, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 121/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 121 completed in 735.39s - Synthetic loss: 0.000047, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 122/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 122 completed in 739.40s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 123/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 123 completed in 740.95s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 124/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 124 completed in 737.82s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 125/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 125 completed in 738.18s - Synthetic loss: 0.000019, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 126/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 126 completed in 740.23s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 127/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 127 completed in 739.38s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 128/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 128 completed in 733.48s - Synthetic loss: 0.000019, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 129/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 129 completed in 737.19s - Synthetic loss: 0.000017, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 130/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 130 completed in 743.93s - Synthetic loss: 0.000019, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 131/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 131 completed in 736.24s - Synthetic loss: 0.000018, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 132/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 132 completed in 733.62s - Synthetic loss: 0.000022, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 133/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 133 completed in 736.47s - Synthetic loss: 0.000021, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 134/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 134 completed in 736.41s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 135/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 135 completed in 740.45s - Synthetic loss: 0.000018, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 136/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 136 completed in 734.94s - Synthetic loss: 0.000018, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 137/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 137 completed in 738.77s - Synthetic loss: 0.000028, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 138/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 138 completed in 742.78s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 139/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 139 completed in 733.71s - Synthetic loss: 0.000017, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 140/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 140 completed in 739.33s - Synthetic loss: 0.000017, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 141/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 141 completed in 734.58s - Synthetic loss: 0.000017, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 142/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 142 completed in 736.31s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 143/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 143 completed in 884.41s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 144/180 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (3 -> 4), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 144 completed in 936.90s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 145/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 145 completed in 934.45s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 146/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 146 completed in 943.66s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 147/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 147 completed in 937.33s - Synthetic loss: 0.000023, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 148/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 148 completed in 936.00s - Synthetic loss: 0.000021, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 149/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 149 completed in 937.15s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 150/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 150 completed in 936.82s - Synthetic loss: 0.000020, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 151/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 151 completed in 936.89s - Synthetic loss: 0.000023, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 152/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 152 completed in 937.72s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 153/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 153 completed in 940.24s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 154/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 154 completed in 937.29s - Synthetic loss: 0.000027, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 155/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 155 completed in 951.48s - Synthetic loss: 0.000026, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 156/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 156 completed in 939.88s - Synthetic loss: 0.000030, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 157/180 ---
+[physical.trainer] [33mWARNING[0m: Optimization diverged, skipping batch
+[hybrid.trainer] [32mINFO[0m: Cycle 157 completed in 940.04s - Synthetic loss: 0.000024, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 158/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 158 completed in 946.28s - Synthetic loss: 0.000026, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 159/180 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 159 completed in 938.30s - Synthetic loss: 0.000025, Physical loss: 0.000105
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 160/180 ---
 === JOB_STATISTICS ===
-=== current date     : Thu Jan 15 12:32:32 AM CET 2026
-= Job-ID             : 1488896 on tinygpu
+=== current date     : Thu Jan 22 04:19:55 PM CET 2026
+= Job-ID             : 1515183 on tinygpu
 = Job-Name           : inviscid_burgers_2d
 = Job-Command        : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/burgers_experiment_2d.sh
 = Initial workdir    : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 = Queue/Partition    : a100
 = Slurm account      : dsaa with QOS=normal
-= Requested resources:  for 12:00:00
-= Elapsed runtime    : 02:46:33
-= Total RAM usage    : 2.5 GiB of requested  GiB (%)   
-= Node list          : tg097
-= Subm/Elig/Start/End: 2026-01-14T16:43:57 / 2026-01-14T16:43:57 / 2026-01-14T21:45:59 / 2026-01-15T00:32:32
+= Requested resources:  for 1-00:00:00
+= Elapsed runtime    : 1-00:00:21
+= Total RAM usage    : 1.8 GiB of requested  GiB (%)   
+= Node list          : tg090
+= Subm/Elig/Start/End: 2026-01-21T16:00:21 / 2026-01-21T16:00:21 / 2026-01-21T16:19:32 / 2026-01-22T16:19:53
 ======================
 === Quota infos ======
     Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
-    /home/hpc              68.3G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
+    /home/hpc              69.4G   104.9G   209.7G        N/A     134K     500K   1,000K        N/A    
     /home/woody             7.3G  1000.0G  1500.0G        N/A      51K   5,000K   7,500K        N/A    
 ======================
 === GPU utilization ==
 gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
-NVIDIA A100-SXM4-40GB, 00000000:01:00.0, 354639, 28 %, 21 %, 39744 MiB, 9959186 ms
+NVIDIA A100-SXM4-40GB, 00000000:C1:00.0, 2821494, 75 %, 44 %, 22612 MiB, 86391170 ms

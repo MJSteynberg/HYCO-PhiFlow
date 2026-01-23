@@ -58,83 +58,83 @@ PHYSICAL_ONLY="inviscid_burgers_physical_only_1d"
 HYBRID_SYNTHETIC="inviscid_burgers_hybrid_synthetic_1d"
 HYBRID_PHYSICAL="inviscid_burgers_hybrid_physical_1d"
 
-# # Clear previous results and checkpoints
-# echo "[Setup] Clearing previous results and checkpoints..."
-# rm -rf ${RESULTS_DIR}
-# rm -f results/models/${SYNTHETIC_ONLY}.pth
-# rm -f results/models/${PHYSICAL_ONLY}.npz
-# rm -f results/models/${HYBRID_SYNTHETIC}.pth
-# rm -f results/models/${HYBRID_PHYSICAL}.npz
-# mkdir -p ${RESULTS_DIR}
-# echo "  Cleanup complete."
-# echo ""
+# Clear previous results and checkpoints
+echo "[Setup] Clearing previous results and checkpoints..."
+rm -rf ${RESULTS_DIR}
+rm -f results/models/${SYNTHETIC_ONLY}.pth
+rm -f results/models/${PHYSICAL_ONLY}.npz
+rm -f results/models/${HYBRID_SYNTHETIC}.pth
+rm -f results/models/${HYBRID_PHYSICAL}.npz
+mkdir -p ${RESULTS_DIR}
+echo "  Cleanup complete."
+echo ""
 
-# echo "=============================================="
-# echo "  Inviscid Burgers 1D Comparison Experiment"
-# echo "=============================================="
-# echo ""
-# echo "Note: Synthetic-only training uses 'standalone_epochs' from config"
-# echo "      which equals: epochs * (cycles + warmup) for fair comparison"
-# echo ""
+echo "=============================================="
+echo "  Inviscid Burgers 1D Comparison Experiment"
+echo "=============================================="
+echo ""
+echo "Note: Synthetic-only training uses 'standalone_epochs' from config"
+echo "      which equals: epochs * (cycles + warmup) for fair comparison"
+echo ""
 
-# # -----------------------------------------------------------------------------
-# # Step 0: Generate data (if not already present)
-# # -----------------------------------------------------------------------------
-# echo "[Step 0/4] Checking/generating data..."
-# if [ ! -d "data/inviscid_burgers_1d" ] || [ -z "$(ls -A data/inviscid_burgers_1d 2>/dev/null)" ]; then
-#     echo "  Data not found, generating..."
-#     python run.py --config-name=${CONFIG_NAME} \
-#         general.tasks='[generate]'
-# else
-#     echo "  Data already exists, skipping generation."
-# fi
-# echo ""
+# -----------------------------------------------------------------------------
+# Step 0: Generate data (if not already present)
+# -----------------------------------------------------------------------------
+echo "[Step 0/4] Checking/generating data..."
+if [ ! -d "data/inviscid_burgers_1d" ] || [ -z "$(ls -A data/inviscid_burgers_1d 2>/dev/null)" ]; then
+    echo "  Data not found, generating..."
+    python run.py --config-name=${CONFIG_NAME} \
+        general.tasks='[generate]'
+else
+    echo "  Data already exists, skipping generation."
+fi
+echo ""
 
-# # -----------------------------------------------------------------------------
-# # Step 1: Train synthetic model on real data only
-# # Uses standalone_epochs (= epochs * (cycles + warmup)) for fair comparison
-# # -----------------------------------------------------------------------------
-# echo "[Step 1/4] Training SYNTHETIC model on real data..."
-# python run.py --config-name=${CONFIG_NAME} \
-#     general.mode='synthetic' \
-#     general.tasks='[train]' \
-#     general.experiment_name='inviscid_burgers_1d_synthetic_only' \
-#     model.synthetic.model_save_name=${SYNTHETIC_ONLY} \
-#     trainer.synthetic.epochs='${trainer.synthetic.standalone_epochs}'
+# -----------------------------------------------------------------------------
+# Step 1: Train synthetic model on real data only
+# Uses standalone_epochs (= epochs * (cycles + warmup)) for fair comparison
+# -----------------------------------------------------------------------------
+echo "[Step 1/4] Training SYNTHETIC model on real data..."
+python run.py --config-name=${CONFIG_NAME} \
+    general.mode='synthetic' \
+    general.tasks='[train]' \
+    general.experiment_name='inviscid_burgers_1d_synthetic_only' \
+    model.synthetic.model_save_name=${SYNTHETIC_ONLY} \
+    trainer.synthetic.epochs='${trainer.synthetic.standalone_epochs}'
 
-# echo "  Synthetic-only model saved to results/models/${SYNTHETIC_ONLY}.pth"
-# echo ""
+echo "  Synthetic-only model saved to results/models/${SYNTHETIC_ONLY}.pth"
+echo ""
 
-# # -----------------------------------------------------------------------------
-# # Step 2: Train physical model on real data only
-# # Uses standalone_epochs (= epochs * cycles) for fair comparison
-# # -----------------------------------------------------------------------------
-# echo "[Step 2/4] Training PHYSICAL model on real data..."
-# python run.py --config-name=${CONFIG_NAME} \
-#     general.mode='physical' \
-#     general.tasks='[train]' \
-#     general.experiment_name='inviscid_burgers_1d_physical_only' \
-#     model.physical.model_save_name=${PHYSICAL_ONLY} \
-#     trainer.physical.epochs='${trainer.physical.standalone_epochs}'
+# -----------------------------------------------------------------------------
+# Step 2: Train physical model on real data only
+# Uses standalone_epochs (= epochs * cycles) for fair comparison
+# -----------------------------------------------------------------------------
+echo "[Step 2/4] Training PHYSICAL model on real data..."
+python run.py --config-name=${CONFIG_NAME} \
+    general.mode='physical' \
+    general.tasks='[train]' \
+    general.experiment_name='inviscid_burgers_1d_physical_only' \
+    model.physical.model_save_name=${PHYSICAL_ONLY} \
+    trainer.physical.epochs='${trainer.physical.standalone_epochs}'
 
-# echo "  Physical-only model saved to results/models/${PHYSICAL_ONLY}.npz"
-# echo ""
+echo "  Physical-only model saved to results/models/${PHYSICAL_ONLY}.npz"
+echo ""
 
-# # -----------------------------------------------------------------------------
-# # Step 3: Hybrid training
-# # -----------------------------------------------------------------------------
-# echo "[Step 3/4] Running HYBRID training..."
-# python run.py --config-name=${CONFIG_NAME} \
-#     general.mode='hybrid' \
-#     general.tasks='[train]' \
-#     general.experiment_name='inviscid_burgers_1d_hybrid' \
-#     model.physical.model_save_name=${HYBRID_PHYSICAL} \
-#     model.synthetic.model_save_name=${HYBRID_SYNTHETIC}
+# -----------------------------------------------------------------------------
+# Step 3: Hybrid training
+# -----------------------------------------------------------------------------
+echo "[Step 3/4] Running HYBRID training..."
+python run.py --config-name=${CONFIG_NAME} \
+    general.mode='hybrid' \
+    general.tasks='[train]' \
+    general.experiment_name='inviscid_burgers_1d_hybrid' \
+    model.physical.model_save_name=${HYBRID_PHYSICAL} \
+    model.synthetic.model_save_name=${HYBRID_SYNTHETIC}
 
-# echo "  Hybrid models saved:"
-# echo "    - results/models/${HYBRID_SYNTHETIC}.pth"
-# echo "    - results/models/${HYBRID_PHYSICAL}.npz"
-# echo ""
+echo "  Hybrid models saved:"
+echo "    - results/models/${HYBRID_SYNTHETIC}.pth"
+echo "    - results/models/${HYBRID_PHYSICAL}.npz"
+echo ""
 
 # -----------------------------------------------------------------------------
 # Step 4: Run evaluation with all models

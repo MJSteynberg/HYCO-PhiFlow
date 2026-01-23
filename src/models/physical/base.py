@@ -142,12 +142,12 @@ class PhysicalModel(ABC):
 
     def _downsample_targets(self, targets: Tensor) -> Tensor:
         """
-        Downsample target trajectory from full resolution to working resolution.
+        Downsample target trajectory from data resolution to working resolution.
 
         Used during training to compare predictions at reduced resolution.
 
         Args:
-            targets: Tensor at full resolution with 'time' and 'field' dimensions
+            targets: Tensor at data resolution with 'time' and 'field' dimensions
 
         Returns:
             Downsampled tensor at self.resolution
@@ -155,24 +155,30 @@ class PhysicalModel(ABC):
         if self.downsample_factor == 0:
             return targets
 
-        # Get full resolution grid kwargs
-        full_grid_kwargs = {name: self.full_resolution.get_size(name) for name in self.spatial_dims}
+        # Get actual resolution from target tensor's spatial dimensions
+        # This handles cases where data resolution differs from model's full_resolution
+        target_grid_kwargs = {name: targets.shape.get_size(name) for name in self.spatial_dims}
 
         # Downsample each timestep
         downsampled_steps = []
         for t in range(targets.shape.get_size('time')):
             target_step = targets.time[t]
 
-            # Create grid from target values
+            # Create grid from target values using actual data resolution
             grid = CenteredGrid(
                 target_step,
                 extrapolation.PERIODIC,
                 bounds=self.domain,
-                **full_grid_kwargs
+                **target_grid_kwargs
             )
 
-            # Apply downsample2x repeatedly
-            for _ in range(self.downsample_factor):
+            # Calculate how many times to downsample to reach working resolution
+            # We need to match the working resolution, not just apply downsample_factor blindly
+            target_res = target_grid_kwargs[self.spatial_dims[0]]
+            working_res = self.resolution.get_size(self.spatial_dims[0])
+
+            # Downsample until we reach working resolution
+            while grid.shape.get_size(self.spatial_dims[0]) > working_res:
                 grid = downsample2x(grid)
 
             downsampled_steps.append(grid.values)

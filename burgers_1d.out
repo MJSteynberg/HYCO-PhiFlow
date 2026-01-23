@@ -1,6 +1,6 @@
-### Starting TaskPrologue of job 1488894 on tg068 at Wed Jan 14 04:53:15 PM CET 2026
-Running on cores 4-5,12-13,20-21,28-29 with governor ondemand
-Wed Jan 14 16:53:15 2026       
+### Starting TaskPrologue of job 1509828 on tg065 at Fri Jan 16 03:26:42 PM CET 2026
+Running on cores 2-3,10-11,18-19,26-27 with governor ondemand
+Fri Jan 16 15:26:42 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -8,8 +8,8 @@ Wed Jan 14 16:53:15 2026
 | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
-|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:86:00.0 Off |                  N/A |
-| 28%   35C    P8             10W /  250W |       1MiB /  11264MiB |      0%      Default |
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:3B:00.0 Off |                  N/A |
+| 27%   31C    P8             11W /  250W |       1MiB /  11264MiB |      0%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -22,9 +22,9 @@ Wed Jan 14 16:53:15 2026
 +-----------------------------------------------------------------------------------------+
 ### Finished TaskPrologue
 
-Job started on Wed Jan 14 04:53:15 PM CET 2026
-Running on node: tg068
-Job ID: 1488894
+Job started on Fri Jan 16 03:26:42 PM CET 2026
+Running on node: tg065
+Job ID: 1509828
 Working directory: /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 Loading modules...
 Loaded modules:
@@ -40,7 +40,7 @@ PyTorch: 2.9.1+cu130
 CUDA available: True
 CUDA version: 13.0
 GPU information:
-Wed Jan 14 16:53:41 2026       
+Fri Jan 16 15:26:57 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.105.08             Driver Version: 580.105.08     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -48,8 +48,8 @@ Wed Jan 14 16:53:41 2026
 | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
-|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:86:00.0 Off |                  N/A |
-| 28%   33C    P8             14W /  250W |       1MiB /  11264MiB |      0%      Default |
+|   0  NVIDIA GeForce RTX 2080 Ti     On  |   00000000:3B:00.0 Off |                  N/A |
+| 27%   30C    P8             14W /  250W |       1MiB /  11264MiB |      0%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -62,21 +62,415 @@ Wed Jan 14 16:53:41 2026
 +-----------------------------------------------------------------------------------------+
 System information:
 Available memory: 93Gi
-Available disk space: 24T
+Available disk space: 23T
+[Setup] Clearing previous results and checkpoints...
+  Cleanup complete.
+
+==============================================
+  Inviscid Burgers 1D Comparison Experiment
+==============================================
+
+Note: Synthetic-only training uses 'standalone_epochs' from config
+      which equals: epochs * (cycles + warmup) for fair comparison
+
+[Step 0/4] Checking/generating data...
+  Data already exists, skipping generation.
+
+[Step 1/4] Training SYNTHETIC model on real data...
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_1d_synthetic_only
+[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
+[hyco_phiflow] [32mINFO[0m: Running training
+[hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
+[hyco_phiflow] [32mINFO[0m: Creating trainer with 1 channels...
+[2026-01-16 15:27:06,003][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-16 15:27:06,003][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-16 15:27:06,471][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 12 (exponential)
+[synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
+[hyco_phiflow] [32mINFO[0m: Starting training for 20000 epochs...
+[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 50.0% visible
+[hyco_phiflow] [32mINFO[0m: === Completed task: train ===
+[hyco_phiflow] [32mINFO[0m: All tasks completed successfully
+  Synthetic-only model saved to results/models/inviscid_burgers_synthetic_only_1d.pth
+
+[Step 2/4] Training PHYSICAL model on real data...
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_1d_physical_only
+[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
+[hyco_phiflow] [32mINFO[0m: Running training
+[hyco_phiflow] [32mINFO[0m: Creating PhiML dataset...
+[hyco_phiflow] [32mINFO[0m: Creating physical trainer...
+[hyco_phiflow] [32mINFO[0m: Starting training for 80 epochs with batch_size=128...
+[physical.trainer] [32mINFO[0m: Spatial mask initialized: 50.0% visible
+[hyco_phiflow] [32mINFO[0m: === Completed task: train ===
+[hyco_phiflow] [32mINFO[0m: All tasks completed successfully
+  Physical-only model saved to results/models/inviscid_burgers_physical_only_1d.npz
+
+[Step 3/4] Running HYBRID training...
+[hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['train']
+[hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_1d_hybrid
+[hyco_phiflow] [32mINFO[0m: === Starting task: train ===
+[hyco_phiflow] [32mINFO[0m: Running training
+[hyco_phiflow] [32mINFO[0m: Starting hybrid training...
+[2026-01-16 15:47:12,056][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-16 15:47:12,056][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-16 15:47:12,062][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[hybrid.trainer] [32mINFO[0m: Sparsity configuration:
+[hybrid.trainer] [32mINFO[0m:   Spatial: range mode
+[synthetic.trainer] [32mINFO[0m: Rollout scheduler: 1 -> 12 (exponential)
+[synthetic.trainer] [32mINFO[0m: SyntheticTrainer ready: lr=0.0001, scheduler=cosine
+[hybrid.trainer] [32mINFO[0m: HybridTrainer initialized: cycles=80, warmup=20, alpha=1.0
+[hybrid.trainer] [32mINFO[0m: ============================================================
+[hybrid.trainer] [32mINFO[0m: Starting Hybrid Training
+[hybrid.trainer] [32mINFO[0m: ============================================================
+[synthetic.trainer] [32mINFO[0m: Reconfigured for hybrid training: cosine with total_epochs=20000
+[hybrid.trainer] [32mINFO[0m: 
+============================================================
+[hybrid.trainer] [32mINFO[0m: WARMUP PHASE: Training on real data only (20 cycles)
+[hybrid.trainer] [32mINFO[0m: ============================================================
+
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 1/20 ---
+[synthetic.trainer] [32mINFO[0m: Spatial mask initialized: 50.0% visible
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 1 completed in 4.73s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 2/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 2 completed in 4.40s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 3/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 3 completed in 3.71s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 4/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 4 completed in 3.19s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 5/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 5 completed in 3.22s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 6/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 6 completed in 3.10s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 7/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 7 completed in 3.03s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 8/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 8 completed in 2.93s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 9/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 9 completed in 3.00s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 10/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 10 completed in 3.03s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 11/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 11 completed in 2.97s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 12/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 12 completed in 2.96s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 13/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 13 completed in 2.95s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 14/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 14 completed in 2.95s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 15/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 15 completed in 2.97s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 16/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 16 completed in 3.01s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 17/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 17 completed in 2.94s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 18/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 18 completed in 3.01s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 19/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 19 completed in 2.95s
+[hybrid.trainer] [32mINFO[0m: 
+--- Warmup Cycle 20/20 ---
+[hybrid.trainer] [32mINFO[0m: Warmup cycle 20 completed in 3.65s
+[hybrid.trainer] [32mINFO[0m: 
+============================================================
+[hybrid.trainer] [32mINFO[0m: HYBRID PHASE: Training with data augmentation (80 cycles)
+[hybrid.trainer] [32mINFO[0m: ============================================================
+
+[synthetic.trainer] [32mINFO[0m: Reset best checkpoint tracking
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 1/80 ---
+[physical.trainer] [32mINFO[0m: Spatial mask initialized: 50.0% visible
+[hybrid.trainer] [32mINFO[0m: Cycle 1 completed in 45.14s - Synthetic loss: 0.000203, Physical loss: 0.000030
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 2/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (2 -> 1), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 2 completed in 43.65s - Synthetic loss: 0.000118, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 3/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 3 completed in 42.16s - Synthetic loss: 0.000098, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 4/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 4 completed in 42.04s - Synthetic loss: 0.000105, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 5/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 5 completed in 42.06s - Synthetic loss: 0.000094, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 6/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 6 completed in 42.20s - Synthetic loss: 0.000121, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 7/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 7 completed in 41.57s - Synthetic loss: 0.000098, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 8/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 8 completed in 41.68s - Synthetic loss: 0.000096, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 9/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 9 completed in 42.54s - Synthetic loss: 0.000112, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 10/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 10 completed in 42.07s - Synthetic loss: 0.000102, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 11/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 11 completed in 42.01s - Synthetic loss: 0.000123, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 12/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 12 completed in 41.17s - Synthetic loss: 0.000083, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 13/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 13 completed in 41.85s - Synthetic loss: 0.000105, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 14/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 14 completed in 42.25s - Synthetic loss: 0.000111, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 15/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 15 completed in 42.34s - Synthetic loss: 0.000086, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 16/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 16 completed in 41.86s - Synthetic loss: 0.000101, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 17/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 17 completed in 41.27s - Synthetic loss: 0.000094, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 18/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 18 completed in 41.60s - Synthetic loss: 0.000095, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 19/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 19 completed in 42.14s - Synthetic loss: 0.000090, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 20/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 20 completed in 46.02s - Synthetic loss: 0.000166, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 21/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (1 -> 2), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 21 completed in 45.32s - Synthetic loss: 0.000174, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 22/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 22 completed in 45.61s - Synthetic loss: 0.000174, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 23/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 23 completed in 45.25s - Synthetic loss: 0.000147, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 24/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 24 completed in 45.90s - Synthetic loss: 0.000164, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 25/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 25 completed in 45.33s - Synthetic loss: 0.000161, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 26/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 26 completed in 45.47s - Synthetic loss: 0.000159, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 27/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 27 completed in 45.65s - Synthetic loss: 0.000172, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 28/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 28 completed in 45.76s - Synthetic loss: 0.000163, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 29/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 29 completed in 45.64s - Synthetic loss: 0.000158, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 30/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 30 completed in 48.77s - Synthetic loss: 0.000168, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 31/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 31 completed in 48.61s - Synthetic loss: 0.000287, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 32/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (2 -> 3), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 32 completed in 49.50s - Synthetic loss: 0.000363, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 33/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 33 completed in 49.80s - Synthetic loss: 0.000323, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 34/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 34 completed in 49.65s - Synthetic loss: 0.000296, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 35/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 35 completed in 49.63s - Synthetic loss: 0.000266, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 36/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 36 completed in 50.08s - Synthetic loss: 0.000299, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 37/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 37 completed in 49.81s - Synthetic loss: 0.000249, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 38/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 38 completed in 49.40s - Synthetic loss: 0.000279, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 39/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 39 completed in 49.33s - Synthetic loss: 0.000293, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 40/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 40 completed in 50.94s - Synthetic loss: 0.000359, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 41/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (3 -> 4), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 41 completed in 53.86s - Synthetic loss: 0.000381, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 42/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 42 completed in 53.52s - Synthetic loss: 0.000414, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 43/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 43 completed in 53.81s - Synthetic loss: 0.000395, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 44/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 44 completed in 53.56s - Synthetic loss: 0.000416, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 45/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 45 completed in 53.46s - Synthetic loss: 0.000407, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 46/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 46 completed in 53.87s - Synthetic loss: 0.000399, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 47/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 47 completed in 53.71s - Synthetic loss: 0.000446, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 48/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 48 completed in 53.77s - Synthetic loss: 0.000381, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 49/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 49 completed in 55.35s - Synthetic loss: 0.000534, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 50/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (4 -> 5), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 50 completed in 55.38s - Synthetic loss: 0.000583, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 51/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 51 completed in 55.59s - Synthetic loss: 0.000502, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 52/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 52 completed in 54.97s - Synthetic loss: 0.000560, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 53/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 53 completed in 55.64s - Synthetic loss: 0.000561, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 54/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 54 completed in 55.64s - Synthetic loss: 0.000510, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 55/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 55 completed in 54.67s - Synthetic loss: 0.000577, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 56/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 56 completed in 55.63s - Synthetic loss: 0.000775, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 57/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (5 -> 6), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 57 completed in 57.97s - Synthetic loss: 0.000791, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 58/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 58 completed in 57.88s - Synthetic loss: 0.000819, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 59/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 59 completed in 57.83s - Synthetic loss: 0.000734, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 60/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 60 completed in 57.90s - Synthetic loss: 0.000748, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 61/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 61 completed in 57.76s - Synthetic loss: 0.000729, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 62/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 62 completed in 58.11s - Synthetic loss: 0.000750, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 63/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 63 completed in 57.49s - Synthetic loss: 0.000779, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 64/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 64 completed in 61.84s - Synthetic loss: 0.000874, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 65/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (6 -> 7), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 65 completed in 61.36s - Synthetic loss: 0.000963, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 66/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 66 completed in 61.47s - Synthetic loss: 0.001071, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 67/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 67 completed in 60.86s - Synthetic loss: 0.000956, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 68/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 68 completed in 61.71s - Synthetic loss: 0.000681, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 69/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 69 completed in 60.63s - Synthetic loss: 0.000920, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 70/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 70 completed in 61.32s - Synthetic loss: 0.001352, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 71/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (7 -> 8), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 71 completed in 64.86s - Synthetic loss: 0.001379, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 72/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 72 completed in 64.83s - Synthetic loss: 0.001281, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 73/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 73 completed in 64.99s - Synthetic loss: 0.001225, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 74/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 74 completed in 64.72s - Synthetic loss: 0.001102, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 75/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 75 completed in 64.71s - Synthetic loss: 0.001321, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 76/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 76 completed in 64.92s - Synthetic loss: 0.001464, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 77/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 77 completed in 67.17s - Synthetic loss: 0.001604, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 78/80 ---
+[hybrid.trainer] [32mINFO[0m:   Rollout changed (8 -> 9), resetting best synthetic loss
+[hybrid.trainer] [32mINFO[0m: Cycle 78 completed in 67.59s - Synthetic loss: 0.001705, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 79/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 79 completed in 68.59s - Synthetic loss: 0.001572, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+--- Hybrid Cycle 80/80 ---
+[hybrid.trainer] [32mINFO[0m: Cycle 80 completed in 68.25s - Synthetic loss: 0.001423, Physical loss: 0.000029
+[hybrid.trainer] [32mINFO[0m: 
+============================================================
+[hybrid.trainer] [32mINFO[0m: Hybrid Training Completed
+[hybrid.trainer] [32mINFO[0m: ============================================================
+[hyco_phiflow] [32mINFO[0m: === Completed task: train ===
+[hyco_phiflow] [32mINFO[0m: All tasks completed successfully
+  Hybrid models saved:
+    - results/models/inviscid_burgers_hybrid_synthetic_1d.pth
+    - results/models/inviscid_burgers_hybrid_physical_1d.npz
+
 [Step 4/4] Running evaluation with all models...
 [hyco_phiflow] [32mINFO[0m: Starting HYCO-PhiFlow with tasks: ['evaluate']
 [hyco_phiflow] [32mINFO[0m: Experiment: inviscid_burgers_1d_experiment
 [hyco_phiflow] [32mINFO[0m: === Starting task: evaluate ===
 [hyco_phiflow] [32mINFO[0m: Running evaluation
 [evaluation.evaluator] [32mINFO[0m: Loaded sample data: 1 channels, fields=['vel_x']
-[2026-01-14 16:53:58,143][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
-[2026-01-14 16:53:58,144][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
-[2026-01-14 16:53:58,377][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[2026-01-16 16:57:57,007][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-16 16:57:57,007][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-16 16:57:57,182][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
 [evaluation.evaluator] [32mINFO[0m: Loaded synthetic model from results/models/inviscid_burgers_synthetic_only_1d.pth
 [evaluation.evaluator] [32mINFO[0m: Dynamic fields (will be visualized): ['vel_x']
-[2026-01-14 16:53:58,421][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
-[2026-01-14 16:53:58,421][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
-[2026-01-14 16:53:58,422][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
+[2026-01-16 16:57:57,195][UNet][INFO] - Initializing UNet: 1 dynamic, 0 static channels
+[2026-01-16 16:57:57,196][UNet][INFO] - Input noise enabled: type=gaussian, scale=0.01 (training only)
+[2026-01-16 16:57:57,197][UNet][INFO] - Created U-Net: levels=2, filters=32, spatial_dims=1
 [evaluation.evaluator] [32mINFO[0m: Loaded hybrid synthetic model from results/models/inviscid_burgers_hybrid_synthetic_1d.pth
 [evaluation.evaluator] [32mINFO[0m: Loaded physical parameters from results/models/inviscid_burgers_physical_only_1d.npz
 [evaluation.evaluator] [32mINFO[0m: Loaded hybrid physical parameters from results/models/inviscid_burgers_hybrid_physical_1d.npz
@@ -85,11 +479,11 @@ Available disk space: 24T
 [evaluation.metrics] [33mWARNING[0m: Resolution mismatch for parameter 'potential_field': learned=(xˢ=128), ground_truth=(xˢ=256). Resampling learned field to match ground truth resolution.
 [evaluation.evaluator] [32mINFO[0m: Parameter metrics (Physical Only):
 [evaluation.evaluator] [32mINFO[0m:   Field parameter errors:
-[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=1.616532e-01, Relative=0.228612
+[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=3.958262e-01, Relative=0.559783
 [evaluation.metrics] [33mWARNING[0m: Resolution mismatch for parameter 'potential_field': learned=(xˢ=128), ground_truth=(xˢ=256). Resampling learned field to match ground truth resolution.
 [evaluation.evaluator] [32mINFO[0m: Parameter metrics (Hybrid Physical):
 [evaluation.evaluator] [32mINFO[0m:   Field parameter errors:
-[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=1.583155e-01, Relative=0.223892
+[evaluation.evaluator] [32mINFO[0m:     potential_field: L2=3.981601e-01, Relative=0.563083
 [evaluation.evaluator] [32mINFO[0m: Visualizing field parameters: ('potential_field',)
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for parameter: potential_field
 [evaluation.evaluator] [32mINFO[0m: Saved potential_field comparison to results/experiments/inviscid_burgers_1d_comparison/param_potential_field_comparison.png
@@ -99,166 +493,166 @@ Available disk space: 24T
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 0):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 4.849604e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.494279
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.527523e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 2.483961e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 8.145860e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 4.076336e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.415362
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.042539e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 2.500627e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.601364e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 5.321701e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 4.466537e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 0):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.238835e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.228608
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.440375e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.714130e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.118524e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.866944e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.292618
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.141371e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.434845e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.289753e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.609317e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.282999e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:54:03,760][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:54:03,760][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0000_vel_x_comparison.gif
+[2026-01-16 16:58:00,169][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:00,170][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0000_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0000_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0000_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Evaluating simulation 1...
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 1):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 4.007119e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.408257
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.675424e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.865842e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.638014e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.010204e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.306034
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.203499e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.557581e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.309597e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 4.395657e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.230790e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 1):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.963445e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.200443
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.579483e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.241365e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 3.563793e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.021527e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.307980
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.169643e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.420169e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.045321e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.271210e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.432317e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:54:15,623][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:54:15,624][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0001_vel_x_comparison.gif
+[2026-01-16 16:58:11,835][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:11,835][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0001_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0001_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0001_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Evaluating simulation 2...
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 2):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.041483e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.320525
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.186835e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.660361e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.556416e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.043883e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.320548
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.262919e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.607656e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.367663e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.627162e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.604794e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 2):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.948665e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.204816
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.703199e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 7.834556e-01
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 3.880949e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.500420e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.261751
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.016196e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 8.337025e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.378003e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.265973e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.820266e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:54:27,078][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:54:27,079][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0002_vel_x_comparison.gif
+[2026-01-16 16:58:23,051][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:23,052][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0002_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0002_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0002_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Evaluating simulation 3...
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 3):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.545340e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.385018
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.346298e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 2.228187e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.386027e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.684126e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.290077
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.915160e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.769050e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.326327e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.963207e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.941966e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 3):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 1.439118e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.156370
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.211244e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 6.344202e-01
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 2.623203e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.376942e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.257139
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.913863e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.073490e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 3.854833e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 1.624604e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.644671e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:54:38,646][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:54:38,646][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0003_vel_x_comparison.gif
+[2026-01-16 16:58:34,293][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:34,294][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0003_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0003_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0003_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Evaluating simulation 4...
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 4):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.508118e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.358140
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.621516e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.642618e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 6.228670e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.485268e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.355159
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.417032e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.815300e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.411810e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 4.032567e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.922938e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 4):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.543635e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.259715
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.992834e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.193986e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.822898e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.128180e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.319405
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.339196e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.174014e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.668600e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.904702e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.594825e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:54:50,378][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:54:50,379][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0004_vel_x_comparison.gif
+[2026-01-16 16:58:45,683][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:45,684][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0004_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0004_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0004_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Evaluating simulation 5...
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Synthetic model (sim 5):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.252614e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.329479
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.408141e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.488945e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.132081e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.301375e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.334312
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.294735e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.654392e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.095389e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.502818e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.542030e-01
 [evaluation.evaluator] [32mINFO[0m: Generating predictions...
 [evaluation.evaluator] [32mINFO[0m: Generated 50 timesteps
 [evaluation.evaluator] [32mINFO[0m: Metrics for Hybrid Synthetic model (sim 5):
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.248703e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.228253
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.607338e-01
-[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.105840e+00
-[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 4.048409e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.940144e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.298296
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.223985e-01
+[evaluation.evaluator] [32mINFO[0m:   L∞ error (mean): 1.226717e+00
+[evaluation.evaluator] [32mINFO[0m:   L2 error (final): 5.139458e-01
 [evaluation.evaluator] [32mINFO[0m:   Per-field L2 errors:
-[evaluation.evaluator] [32mINFO[0m:     vel_x: 2.613685e-01
+[evaluation.evaluator] [32mINFO[0m:     vel_x: 3.395668e-01
 [evaluation.evaluator] [32mINFO[0m: Creating visualization for dynamic field: vel_x
-[2026-01-14 16:55:01,045][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
-[2026-01-14 16:55:01,046][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0005_vel_x_comparison.gif
+[2026-01-16 16:58:56,828][matplotlib.animation][INFO] - Animation.save using <class 'matplotlib.animation.FFMpegWriter'>
+[2026-01-16 16:58:56,829][matplotlib.animation][INFO] - MovieWriter._run: running command: ffmpeg -f rawvideo -vcodec rawvideo -s 1200x500 -pix_fmt rgba -framerate 10 -loglevel error -i pipe: -filter_complex 'split [a][b];[a] palettegen [p];[b][p] paletteuse' -y results/experiments/inviscid_burgers_1d_comparison/sim_0005_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved animation to results/experiments/inviscid_burgers_1d_comparison/sim_0005_vel_x_comparison.gif
 [evaluation.evaluator] [32mINFO[0m: Saved metrics to results/experiments/inviscid_burgers_1d_comparison/sim_0005_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Average metrics for Synthetic:
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.700713e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.382616
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.460956e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 3.266865e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.336916
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.189314e-01
 [evaluation.evaluator] [32mINFO[0m: Average metrics for Hybrid Synthetic:
-[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.063734e-01
-[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.213034
-[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 1.589079e-01
+[evaluation.evaluator] [32mINFO[0m:   L2 error (mean): 2.805693e-01
+[evaluation.evaluator] [32mINFO[0m:   Relative L2 error (mean): 0.289532
+[evaluation.evaluator] [32mINFO[0m:   L1 error (mean): 2.134042e-01
 [evaluation.evaluator] [32mINFO[0m: Saved aggregated metrics to results/experiments/inviscid_burgers_1d_comparison/all_metrics.json
 [evaluation.evaluator] [32mINFO[0m: Saved temporal evolution plot to results/experiments/inviscid_burgers_1d_comparison/temporal_evolution_Synthetic.png
 [evaluation.evaluator] [32mINFO[0m: Saved temporal evolution plot to results/experiments/inviscid_burgers_1d_comparison/temporal_evolution_Hybrid_Synthetic.png
@@ -284,24 +678,27 @@ Generated files:
   - sim_*_*_comparison_t1.png      : First timestep comparison
 
 === JOB_STATISTICS ===
-=== current date     : Wed Jan 14 04:55:18 PM CET 2026
-= Job-ID             : 1488894 on tinygpu
+=== current date     : Fri Jan 16 04:59:13 PM CET 2026
+= Job-ID             : 1509828 on tinygpu
 = Job-Name           : burgers_1d
 = Job-Command        : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow/burgers_experiment_1d.sh
 = Initial workdir    : /home/hpc/dsaa/dsaa102h/HYCO-PhiFlow
 = Queue/Partition    : work
 = Slurm account      : dsaa with QOS=normal
 = Requested resources:  for 04:00:00
-= Elapsed runtime    : 00:02:04
-= Total RAM usage    : 1.7 GiB of requested  GiB (%)   
-= Node list          : tg068
-= Subm/Elig/Start/End: 2026-01-14T16:43:06 / 2026-01-14T16:43:06 / 2026-01-14T16:53:14 / 2026-01-14T16:55:18
+= Elapsed runtime    : 01:32:31
+= Total RAM usage    : 1.8 GiB of requested  GiB (%)   
+= Node list          : tg065
+= Subm/Elig/Start/End: 2026-01-16T15:26:41 / 2026-01-16T15:26:41 / 2026-01-16T15:26:42 / 2026-01-16T16:59:13
 ======================
 === Quota infos ======
     Path                 Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
     /home/woody             7.3G  1000.0G  1500.0G        N/A      51K   5,000K   7,500K        N/A    
-    /home/hpc              68.5G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
+    /home/hpc              69.5G   104.9G   209.7G        N/A     133K     500K   1,000K        N/A    
 ======================
 === GPU utilization ==
 gpu_name, gpu_bus_id, pid, gpu_utilization [%], mem_utilization [%], max_memory_usage [MiB], time [ms]
-NVIDIA GeForce RTX 2080 Ti, 00000000:86:00.0, 762244, 0 %, 0 %, 238 MiB, 84958 ms
+NVIDIA GeForce RTX 2080 Ti, 00000000:3B:00.0, 727028, 29 %, 1 %, 332 MiB, 473747 ms
+NVIDIA GeForce RTX 2080 Ti, 00000000:3B:00.0, 727157, 3 %, 0 %, 182 MiB, 725061 ms
+NVIDIA GeForce RTX 2080 Ti, 00000000:3B:00.0, 731240, 24 %, 3 %, 626 MiB, 4239279 ms
+NVIDIA GeForce RTX 2080 Ti, 00000000:3B:00.0, 735183, 14 %, 2 %, 238 MiB, 77942 ms
